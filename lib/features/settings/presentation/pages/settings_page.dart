@@ -47,8 +47,9 @@ class SettingsPage extends ConsumerWidget {
                         subtitle: Text('${device.ip}:${device.port}'),
                         trailing: TextButton(
                           onPressed: () {
-                            ref.read(connectedDeviceProvider.notifier).state =
-                                null;
+                            ref
+                                .read(connectedDeviceProvider.notifier)
+                                .setDevice(null);
                             ref.read(authStateProvider.notifier).logout();
                             context.go('/discover');
                           },
@@ -57,9 +58,7 @@ class SettingsPage extends ConsumerWidget {
                       ),
                     ],
                   ).animate().fadeIn(delay: 100.ms).slideY(begin: 0.05),
-
                 const SizedBox(height: 16),
-
                 _SettingsSection(
                   title: 'Appearance',
                   children: [
@@ -86,9 +85,7 @@ class SettingsPage extends ConsumerWidget {
                     ),
                   ],
                 ).animate().fadeIn(delay: 200.ms).slideY(begin: 0.05),
-
                 const SizedBox(height: 16),
-
                 _SettingsSection(
                   title: 'Security',
                   children: [
@@ -117,9 +114,7 @@ class SettingsPage extends ConsumerWidget {
                       ),
                   ],
                 ).animate().fadeIn(delay: 300.ms).slideY(begin: 0.05),
-
                 const SizedBox(height: 16),
-
                 _SettingsSection(
                   title: 'About',
                   children: [
@@ -136,9 +131,7 @@ class SettingsPage extends ConsumerWidget {
                     ),
                   ],
                 ).animate().fadeIn(delay: 400.ms).slideY(begin: 0.05),
-
                 const SizedBox(height: 24),
-
                 FilledButton.tonal(
                   onPressed: () async {
                     final confirmed = await showDialog<bool>(
@@ -331,7 +324,9 @@ class SettingsPage extends ConsumerWidget {
                       ),
                       child: SelectableText(
                         code.code,
-                        style: Theme.of(context).textTheme.headlineMedium
+                        style: Theme.of(context)
+                            .textTheme
+                            .headlineMedium
                             ?.copyWith(
                               fontWeight: FontWeight.bold,
                               letterSpacing: 4,

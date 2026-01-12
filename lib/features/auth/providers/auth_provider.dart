@@ -35,27 +35,25 @@ class AuthState {
   }
 }
 
-// Auth state provider
-final authStateProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
-  return AuthNotifier(ref);
-});
+// Auth state provider (Riverpod 3.x Notifier API)
+final authStateProvider =
+    NotifierProvider<AuthNotifier, AuthState>(AuthNotifier.new);
 
-class AuthNotifier extends StateNotifier<AuthState> {
-  final Ref _ref;
-
-  AuthNotifier(this._ref) : super(const AuthState()) {
+class AuthNotifier extends Notifier<AuthState> {
+  @override
+  AuthState build() {
     _checkAuthStatus();
+    return const AuthState();
   }
 
-  FlutterSecureStorage get _storage => _ref.read(secureStorageProvider);
-  ApiService get _api => _ref.read(apiServiceProvider);
+  FlutterSecureStorage get _storage => ref.read(secureStorageProvider);
+  ApiService get _api => ref.read(apiServiceProvider);
 
   Future<void> _checkAuthStatus() async {
     final accessToken = await _storage.read(key: 'access_token');
     final userJson = await _storage.read(key: 'user');
 
     if (accessToken != null && userJson != null) {
-      // TODO: Parse user from stored JSON
       state = state.copyWith(isAuthenticated: true);
     }
   }
@@ -65,7 +63,6 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
     try {
       final response = await _api.login(email: email, password: password);
-
       await _saveAuthData(response);
 
       state = state.copyWith(
@@ -73,7 +70,6 @@ class AuthNotifier extends StateNotifier<AuthState> {
         isLoading: false,
         isAuthenticated: true,
       );
-
       return true;
     } on ApiException catch (e) {
       state = state.copyWith(isLoading: false, error: e.message);
@@ -107,7 +103,6 @@ class AuthNotifier extends StateNotifier<AuthState> {
         isLoading: false,
         isAuthenticated: true,
       );
-
       return true;
     } on ApiException catch (e) {
       state = state.copyWith(isLoading: false, error: e.message);
@@ -127,7 +122,6 @@ class AuthNotifier extends StateNotifier<AuthState> {
       key: 'refresh_token',
       value: response.tokens.refreshToken,
     );
-    // Store user data as JSON string
     await _storage.write(key: 'user_id', value: response.user.id);
     await _storage.write(key: 'user_email', value: response.user.email);
     await _storage.write(key: 'user_role', value: response.user.role);
@@ -135,7 +129,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<void> logout() async {
     await _storage.deleteAll();
-    _ref.read(connectedDeviceProvider.notifier).state = null;
+    ref.read(connectedDeviceProvider.notifier).setDevice(null);
     state = const AuthState();
   }
 
@@ -145,9 +139,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
 }
 
 // Invite code provider
-final inviteCodeProvider = FutureProvider.autoDispose<InviteCodeResponse?>((
-  ref,
-) async {
+final inviteCodeProvider =
+    FutureProvider.autoDispose<InviteCodeResponse?>((ref) async {
   final authState = ref.watch(authStateProvider);
   if (!authState.isAuthenticated || authState.user?.role != 'admin') {
     return null;

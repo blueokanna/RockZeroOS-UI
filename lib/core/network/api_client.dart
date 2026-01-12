@@ -14,7 +14,7 @@ final _logger = Logger(printer: PrettyPrinter(methodCount: 0));
 // Secure storage provider
 final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
   return const FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    aOptions: AndroidOptions(),
     iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
   );
 });

@@ -10,17 +10,26 @@ import 'package:intl/intl.dart';
 import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
 
-final currentPathProvider = StateProvider<String>((ref) => '');
+// Current path notifier for Riverpod 3.x
+class CurrentPathNotifier extends Notifier<String> {
+  @override
+  String build() => '';
+
+  void setPath(String path) => state = path;
+}
+
+final currentPathProvider =
+    NotifierProvider<CurrentPathNotifier, String>(CurrentPathNotifier.new);
 
 final directoryListingProvider = FutureProvider.autoDispose
     .family<DirectoryListing?, String>((ref, path) async {
-      try {
-        final api = ref.read(apiServiceProvider);
-        return await api.listDirectory(path: path.isEmpty ? null : path);
-      } catch (_) {
-        return null;
-      }
-    });
+  try {
+    final api = ref.read(apiServiceProvider);
+    return await api.listDirectory(path: path.isEmpty ? null : path);
+  } catch (_) {
+    return null;
+  }
+});
 
 class FilesPage extends ConsumerStatefulWidget {
   const FilesPage({super.key});
@@ -140,7 +149,7 @@ class _FilesPageState extends ConsumerState<FilesPage> {
         child: Row(
           children: [
             InkWell(
-              onTap: () => ref.read(currentPathProvider.notifier).state = '',
+              onTap: () => ref.read(currentPathProvider.notifier).setPath(''),
               borderRadius: BorderRadius.circular(4),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -169,8 +178,9 @@ class _FilesPageState extends ConsumerState<FilesPage> {
                   InkWell(
                     onTap: isLast
                         ? null
-                        : () => ref.read(currentPathProvider.notifier).state =
-                              fullPath,
+                        : () => ref
+                            .read(currentPathProvider.notifier)
+                            .setPath(fullPath),
                     borderRadius: BorderRadius.circular(4),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
@@ -183,9 +193,8 @@ class _FilesPageState extends ConsumerState<FilesPage> {
                           color: isLast
                               ? colorScheme.onSurface
                               : colorScheme.primary,
-                          fontWeight: isLast
-                              ? FontWeight.w600
-                              : FontWeight.normal,
+                          fontWeight:
+                              isLast ? FontWeight.w600 : FontWeight.normal,
                         ),
                       ),
                     ),
@@ -217,16 +226,15 @@ class _FilesPageState extends ConsumerState<FilesPage> {
             childAspectRatio: 0.85,
           ),
           delegate: SliverChildBuilderDelegate(
-            (context, index) =>
-                _FileGridItem(
-                      entry: entries[index],
-                      isSelected: _selectedFiles.contains(entries[index].path),
-                      onTap: () => _handleFileTap(entries[index]),
-                      onLongPress: () => _toggleSelection(entries[index].path),
-                    )
-                    .animate(delay: (50 * index).ms)
-                    .fadeIn()
-                    .scale(begin: const Offset(0.95, 0.95)),
+            (context, index) => _FileGridItem(
+              entry: entries[index],
+              isSelected: _selectedFiles.contains(entries[index].path),
+              onTap: () => _handleFileTap(entries[index]),
+              onLongPress: () => _toggleSelection(entries[index].path),
+            )
+                .animate(delay: (50 * index).ms)
+                .fadeIn()
+                .scale(begin: const Offset(0.95, 0.95)),
             childCount: entries.length,
           ),
         ),
@@ -283,10 +291,9 @@ class _FilesPageState extends ConsumerState<FilesPage> {
       _toggleSelection(entry.path);
     } else if (entry.isDirectory) {
       final currentPath = ref.read(currentPathProvider);
-      final newPath = currentPath.isEmpty
-          ? entry.name
-          : '$currentPath/${entry.name}';
-      ref.read(currentPathProvider.notifier).state = newPath;
+      final newPath =
+          currentPath.isEmpty ? entry.name : '$currentPath/${entry.name}';
+      ref.read(currentPathProvider.notifier).setPath(newPath);
     } else {
       _showFileActions(entry);
     }
@@ -718,9 +725,8 @@ class _FileListItem extends StatelessWidget {
         ),
         child: Icon(
           entry.isDirectory ? Icons.folder : _getFileIcon(entry.mimeType),
-          color: entry.isDirectory
-              ? Colors.amber
-              : _getFileColor(entry.mimeType),
+          color:
+              entry.isDirectory ? Colors.amber : _getFileColor(entry.mimeType),
         ),
       ),
       title: Text(entry.name, maxLines: 1, overflow: TextOverflow.ellipsis),

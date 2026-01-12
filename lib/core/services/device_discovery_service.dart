@@ -85,17 +85,28 @@ final deviceDiscoveryServiceProvider = Provider<DeviceDiscoveryService>((ref) {
   return DeviceDiscoveryService(ref);
 });
 
-// Device discovery state provider
+// Device discovery state provider (Riverpod 3.x Notifier API)
 final deviceDiscoveryStateProvider =
-    StateNotifierProvider<DeviceDiscoveryNotifier, DeviceDiscoveryState>((ref) {
-      return DeviceDiscoveryNotifier();
-    });
+    NotifierProvider<DeviceDiscoveryNotifier, DeviceDiscoveryState>(
+        DeviceDiscoveryNotifier.new);
 
 // Connected device provider
-final connectedDeviceProvider = StateProvider<DiscoveredDevice?>((ref) => null);
+final connectedDeviceProvider =
+    NotifierProvider<ConnectedDeviceNotifier, DiscoveredDevice?>(
+        ConnectedDeviceNotifier.new);
 
-class DeviceDiscoveryNotifier extends StateNotifier<DeviceDiscoveryState> {
-  DeviceDiscoveryNotifier() : super(const DeviceDiscoveryState());
+class ConnectedDeviceNotifier extends Notifier<DiscoveredDevice?> {
+  @override
+  DiscoveredDevice? build() => null;
+
+  void setDevice(DiscoveredDevice? device) {
+    state = device;
+  }
+}
+
+class DeviceDiscoveryNotifier extends Notifier<DeviceDiscoveryState> {
+  @override
+  DeviceDiscoveryState build() => const DeviceDiscoveryState();
 
   void setScanning(bool scanning) {
     state = state.copyWith(isScanning: scanning);
@@ -157,7 +168,6 @@ class DeviceDiscoveryService {
       final wifiIP = await _networkInfo.getWifiIP();
       _notifier.setLocalIp(wifiIP);
     } catch (e) {
-      // Fallback for desktop platforms
       try {
         final interfaces = await NetworkInterface.list(
           type: InternetAddressType.IPv4,
@@ -210,15 +220,12 @@ class DeviceDiscoveryService {
         );
         _notifier.addDevice(device);
       }
-    } catch (_) {
-      // Invalid response, ignore
-    }
+    } catch (_) {}
   }
 
   void _startPeriodicScan() {
     _scanTimer?.cancel();
     _scanTimer = Timer.periodic(_scanInterval, (_) => scanNetwork());
-    // Initial scan
     scanNetwork();
   }
 
@@ -227,10 +234,7 @@ class DeviceDiscoveryService {
     _notifier.setError(null);
 
     try {
-      // Send UDP broadcast
       await _sendBroadcast();
-
-      // Also try direct IP scanning for local subnet
       await _scanSubnet();
     } catch (e) {
       _notifier.setError('Scan failed: $e');
@@ -266,13 +270,11 @@ class DeviceDiscoveryService {
     final subnet = '${parts[0]}.${parts[1]}.${parts[2]}';
     final futures = <Future>[];
 
-    // Scan common IP ranges (1-254)
     for (var i = 1; i <= 254; i++) {
       final ip = '$subnet.$i';
       futures.add(_checkDevice(ip));
     }
 
-    // Wait with timeout
     await Future.wait(futures).timeout(_scanTimeout, onTimeout: () => []);
   }
 
@@ -282,14 +284,13 @@ class DeviceDiscoveryService {
         ..connectionTimeout = const Duration(milliseconds: 500)
         ..badCertificateCallback = (cert, host, port) => true;
 
-      // Try HTTPS first
       try {
         final request = await client.getUrl(
           Uri.parse('https://$ip:$_servicePort/health'),
         );
         final response = await request.close().timeout(
-          const Duration(milliseconds: 800),
-        );
+              const Duration(milliseconds: 800),
+            );
 
         if (response.statusCode == 200) {
           final body = await response.transform(utf8.decoder).join();
@@ -310,14 +311,13 @@ class DeviceDiscoveryService {
           }
         }
       } catch (_) {
-        // Try HTTP fallback
         try {
           final request = await client.getUrl(
             Uri.parse('http://$ip:$_servicePort/health'),
           );
           final response = await request.close().timeout(
-            const Duration(milliseconds: 800),
-          );
+                const Duration(milliseconds: 800),
+              );
 
           if (response.statusCode == 200) {
             final body = await response.transform(utf8.decoder).join();

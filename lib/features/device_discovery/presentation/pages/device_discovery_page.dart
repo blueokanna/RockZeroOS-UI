@@ -60,7 +60,7 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
       Navigator.of(context).pop(); // Close dialog
 
       if (success) {
-        ref.read(connectedDeviceProvider.notifier).state = device;
+        ref.read(connectedDeviceProvider.notifier).setDevice(device);
         context.go('/login');
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -199,9 +199,9 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
                       final index = entry.key;
                       final device = entry.value;
                       return _DeviceCard(
-                            device: device,
-                            onTap: () => _connectToDevice(device),
-                          )
+                        device: device,
+                        onTap: () => _connectToDevice(device),
+                      )
                           .animate(delay: (100 * index).ms)
                           .fadeIn()
                           .slideY(begin: 0.1);
@@ -289,8 +289,8 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
                     onPressed: discoveryState.isScanning
                         ? null
                         : () => ref
-                              .read(deviceDiscoveryServiceProvider)
-                              .scanNetwork(),
+                            .read(deviceDiscoveryServiceProvider)
+                            .scanNetwork(),
                     icon: const Icon(Icons.refresh),
                     label: const Text('Scan Again'),
                   ).animate().fadeIn(delay: 700.ms),

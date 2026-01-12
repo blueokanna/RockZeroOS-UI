@@ -3,17 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
-// Theme mode provider
-final themeModeProvider = StateNotifierProvider<ThemeModeNotifier, ThemeMode>((
-  ref,
-) {
-  return ThemeModeNotifier();
-});
+// Theme mode provider (Riverpod 3.x Notifier API)
+final themeModeProvider =
+    NotifierProvider<ThemeModeNotifier, ThemeMode>(ThemeModeNotifier.new);
 
-class ThemeModeNotifier extends StateNotifier<ThemeMode> {
-  ThemeModeNotifier() : super(_loadThemeMode());
-
-  static ThemeMode _loadThemeMode() {
+class ThemeModeNotifier extends Notifier<ThemeMode> {
+  @override
+  ThemeMode build() {
     final box = Hive.box('settings');
     final mode = box.get('themeMode', defaultValue: 'system');
     return switch (mode) {
@@ -31,16 +27,12 @@ class ThemeModeNotifier extends StateNotifier<ThemeMode> {
 }
 
 // Seed color provider for dynamic theming
-final seedColorProvider = StateNotifierProvider<SeedColorNotifier, Color>((
-  ref,
-) {
-  return SeedColorNotifier();
-});
+final seedColorProvider =
+    NotifierProvider<SeedColorNotifier, Color>(SeedColorNotifier.new);
 
-class SeedColorNotifier extends StateNotifier<Color> {
-  SeedColorNotifier() : super(_loadSeedColor());
-
-  static Color _loadSeedColor() {
+class SeedColorNotifier extends Notifier<Color> {
+  @override
+  Color build() {
     final box = Hive.box('settings');
     final colorValue = box.get('seedColor', defaultValue: 0xFF6750A4);
     return Color(colorValue);
@@ -61,7 +53,6 @@ class AppTheme {
       seedColor: seedColor,
       brightness: Brightness.light,
     );
-
     return _buildTheme(colorScheme);
   }
 
@@ -70,7 +61,6 @@ class AppTheme {
       seedColor: seedColor,
       brightness: Brightness.dark,
     );
-
     return _buildTheme(colorScheme);
   }
 
@@ -84,8 +74,6 @@ class AppTheme {
       useMaterial3: true,
       colorScheme: colorScheme,
       textTheme: textTheme,
-
-      // AppBar
       appBarTheme: AppBarTheme(
         centerTitle: false,
         elevation: 0,
@@ -94,54 +82,39 @@ class AppTheme {
         foregroundColor: colorScheme.onSurface,
         surfaceTintColor: colorScheme.surfaceTint,
       ),
-
-      // Cards
       cardTheme: CardThemeData(
         elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         color: colorScheme.surfaceContainerLow,
       ),
-
-      // Elevated Button
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           elevation: 0,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),
-
-      // Filled Button
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),
-
-      // Outlined Button
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),
-
-      // Text Button
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
-
-      // Input Decoration
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
@@ -161,46 +134,33 @@ class AppTheme {
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide(color: colorScheme.error),
         ),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 16,
-        ),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       ),
-
-      // Navigation Bar
       navigationBarTheme: NavigationBarThemeData(
         elevation: 0,
         height: 80,
         indicatorColor: colorScheme.secondaryContainer,
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
       ),
-
-      // Navigation Rail
       navigationRailTheme: NavigationRailThemeData(
         elevation: 0,
         indicatorColor: colorScheme.secondaryContainer,
-        selectedIconTheme: IconThemeData(
-          color: colorScheme.onSecondaryContainer,
-        ),
+        selectedIconTheme:
+            IconThemeData(color: colorScheme.onSecondaryContainer),
         unselectedIconTheme: IconThemeData(color: colorScheme.onSurfaceVariant),
       ),
-
-      // Drawer
       drawerTheme: DrawerThemeData(
         elevation: 0,
         backgroundColor: colorScheme.surface,
         surfaceTintColor: colorScheme.surfaceTint,
       ),
-
-      // Dialog
       dialogTheme: DialogThemeData(
         elevation: 3,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
         backgroundColor: colorScheme.surface,
         surfaceTintColor: colorScheme.surfaceTint,
       ),
-
-      // Bottom Sheet
       bottomSheetTheme: BottomSheetThemeData(
         elevation: 1,
         shape: const RoundedRectangleBorder(
@@ -211,48 +171,34 @@ class AppTheme {
         dragHandleColor: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
         showDragHandle: true,
       ),
-
-      // Snackbar
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         backgroundColor: colorScheme.inverseSurface,
         contentTextStyle: TextStyle(color: colorScheme.onInverseSurface),
       ),
-
-      // Chip
       chipTheme: ChipThemeData(
         elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
-
-      // List Tile
       listTileTheme: ListTileThemeData(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       ),
-
-      // Floating Action Button
       floatingActionButtonTheme: FloatingActionButtonThemeData(
         elevation: 2,
         highlightElevation: 4,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
-
-      // Progress Indicator
       progressIndicatorTheme: ProgressIndicatorThemeData(
         linearTrackColor: colorScheme.surfaceContainerHighest,
         circularTrackColor: colorScheme.surfaceContainerHighest,
       ),
-
-      // Divider
       dividerTheme: DividerThemeData(
         color: colorScheme.outlineVariant,
         thickness: 1,
         space: 1,
       ),
-
-      // Page Transitions
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.android: PredictiveBackPageTransitionsBuilder(),
