@@ -17,6 +17,7 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
     with SingleTickerProviderStateMixin {
   late AnimationController _pulseController;
   final _manualIpController = TextEditingController();
+  final _portController = TextEditingController(text: '8080');
   bool _showManualInput = false;
 
   @override
@@ -32,6 +33,7 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
   void dispose() {
     _pulseController.dispose();
     _manualIpController.dispose();
+    _portController.dispose();
     super.dispose();
   }
 
@@ -74,20 +76,100 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
   }
 
   Future<void> _connectManually() async {
-    final ip = _manualIpController.text.trim();
-    if (ip.isEmpty) return;
+    final input = _manualIpController.text.trim();
+    if (input.isEmpty) return;
 
-    final device = DiscoveredDevice(
-      id: ip,
-      name: 'RockZero @ $ip',
-      ip: ip,
-      port: 8443,
-      version: 'unknown',
-      isSecure: true,
-      discoveredAt: DateTime.now(),
+    // 解析用户输入
+    String ip;
+    int? port;
+
+    // 获取端口输入
+    final portInput = _portController.text.trim();
+    final customPort = int.tryParse(portInput);
+
+    if (input.startsWith('http://') || input.startsWith('https://')) {
+      // 完整URL格式 - 直接使用指定的协议
+      try {
+        final uri = Uri.parse(input);
+        ip = uri.host;
+        port = uri.port != 0 ? uri.port : (customPort ?? 8080);
+        final isSecure = uri.scheme == 'https';
+
+        final device = DiscoveredDevice(
+          id: ip,
+          name: 'RockZero @ $ip',
+          ip: ip,
+          port: port,
+          version: 'unknown',
+          isSecure: isSecure,
+          discoveredAt: DateTime.now(),
+        );
+        await _connectToDevice(device);
+        return;
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Invalid URL format'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+    } else if (input.contains(':')) {
+      // IP:端口格式
+      final parts = input.split(':');
+      ip = parts[0];
+      port = int.tryParse(parts[1]) ?? customPort;
+    } else {
+      // 纯IP格式 - 使用端口输入框的值
+      ip = input;
+      port = customPort;
+    }
+
+    // 显示连接中对话框
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            Text('Auto-detecting $ip:${port ?? 8080}...'),
+            const SizedBox(height: 8),
+            Text(
+              'Trying HTTP and HTTPS...',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
     );
 
-    await _connectToDevice(device);
+    // 自动探测 HTTP/HTTPS
+    final service = ref.read(deviceDiscoveryServiceProvider);
+    final device = await service.autoDetectDevice(ip, port: port);
+
+    if (mounted) {
+      Navigator.of(context).pop(); // 关闭对话框
+
+      if (device != null) {
+        ref.read(connectedDeviceProvider.notifier).setDevice(device);
+        context.go('/login');
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                'Failed to connect to $ip. Make sure the server is running.'),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -255,15 +337,43 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
                               style: textTheme.titleSmall,
                             ),
                             const SizedBox(height: 12),
-                            TextField(
-                              controller: _manualIpController,
-                              decoration: const InputDecoration(
-                                labelText: 'IP Address',
-                                hintText: '192.168.1.100',
-                                prefixIcon: Icon(Icons.lan),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  flex: 3,
+                                  child: TextField(
+                                    controller: _manualIpController,
+                                    decoration: const InputDecoration(
+                                      labelText: 'IP Address',
+                                      hintText: '192.168.1.100',
+                                      prefixIcon: Icon(Icons.lan),
+                                    ),
+                                    keyboardType: TextInputType.url,
+                                    onSubmitted: (_) => _connectManually(),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  flex: 1,
+                                  child: TextField(
+                                    controller: _portController,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Port',
+                                      hintText: '8080',
+                                    ),
+                                    keyboardType: TextInputType.number,
+                                    onSubmitted: (_) => _connectManually(),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Auto-detects HTTP/HTTPS protocol',
+                              style: textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
                               ),
-                              keyboardType: TextInputType.number,
-                              onSubmitted: (_) => _connectManually(),
                             ),
                             const SizedBox(height: 12),
                             FilledButton(

@@ -1,6 +1,10 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
@@ -14,7 +18,31 @@ void main() async {
   await Hive.openBox('settings');
   await Hive.openBox('cache');
 
+  // Set window size for desktop platforms
+  if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+    await _setupDesktopWindow();
+  }
+
   runApp(const ProviderScope(child: RockZeroApp()));
+}
+
+Future<void> _setupDesktopWindow() async {
+  await windowManager.ensureInitialized();
+
+  const windowOptions = WindowOptions(
+    size: Size(800, 600),
+    minimumSize: Size(700, 700),
+    center: true,
+    backgroundColor: Colors.transparent,
+    skipTaskbar: false,
+    titleBarStyle: TitleBarStyle.normal,
+    title: 'RockZero',
+  );
+
+  await windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.show();
+    await windowManager.focus();
+  });
 }
 
 class RockZeroApp extends ConsumerStatefulWidget {

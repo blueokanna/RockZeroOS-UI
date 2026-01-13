@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 允许局域网明文HTTP访问 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.0.0.0/8</domain>
+        <domain includeSubdomains="true">172.16.0.0/12</domain>
+        <domain includeSubdomains="true">192.168.0.0/16</domain>
+        <domain includeSubdomains="true">localhost</domain>
+    </domain-config>
+    
+    <!-- 信任自签名证书（用于开发环境HTTPS） -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system"/>
+            <certificates src="user"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>

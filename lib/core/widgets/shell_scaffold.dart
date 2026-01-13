@@ -29,11 +29,6 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
       label: 'Files',
     ),
     NavigationDestination(
-      icon: Icon(Icons.play_circle_outline),
-      selectedIcon: Icon(Icons.play_circle),
-      label: 'Media',
-    ),
-    NavigationDestination(
       icon: Icon(Icons.apps_outlined),
       selectedIcon: Icon(Icons.apps),
       label: 'Apps',
@@ -53,7 +48,6 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
   static const _routes = [
     '/dashboard',
     '/files',
-    '/media',
     '/appstore',
     '/system',
     '/settings',

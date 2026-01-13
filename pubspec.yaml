@@ -43,8 +43,8 @@ dependencies:
   path_provider: ^2.1.5
   open_file: ^3.5.10
   
-  # Biometric & Security
-  local_auth: ^3.0.0
+  # Biometric & Security (mobile only - disabled for cross-platform compatibility)
+  # local_auth: ^3.0.0  # Uncomment for Android/iOS biometric support
   
   # Utils
   intl: ^0.20.2
@@ -60,6 +60,9 @@ dependencies:
   
   # Screen wake lock
   wakelock_plus: ^1.2.10
+  
+  # Desktop window management
+  window_manager: ^0.4.3
 
 dev_dependencies:
   flutter_test:

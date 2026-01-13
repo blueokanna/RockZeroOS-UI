@@ -456,17 +456,40 @@ class _FilesPageState extends ConsumerState<FilesPage> {
   }
 
   void _showFileActions(FileEntry entry) {
+    final mimeType = entry.mimeType ?? '';
+    final isImage = mimeType.startsWith('image/');
+    final isVideo = mimeType.startsWith('video/');
+    final isAudio = mimeType.startsWith('audio/');
+    final isMedia = isImage || isVideo || isAudio;
+
     showModalBottomSheet(
       context: context,
       builder: (context) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Preview option for media files
+            if (isMedia)
+              ListTile(
+                leading: Icon(
+                  isImage
+                      ? Icons.image
+                      : (isVideo ? Icons.play_circle : Icons.audiotrack),
+                ),
+                title: Text(isImage
+                    ? 'View Image'
+                    : (isVideo ? 'Play Video' : 'Play Audio')),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openMediaPreview(entry);
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.download),
               title: const Text('Download'),
               onTap: () {
                 Navigator.pop(context);
+                _downloadFile(entry);
               },
             ),
             ListTile(
@@ -499,6 +522,129 @@ class _FilesPageState extends ConsumerState<FilesPage> {
               },
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  void _openMediaPreview(FileEntry entry) {
+    final api = ref.read(apiServiceProvider);
+    final url = api.getFileManagerDownloadUrl(entry.path);
+    final mimeType = entry.mimeType ?? '';
+
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.9,
+            maxHeight: MediaQuery.of(context).size.height * 0.8,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AppBar(
+                title: Text(entry.name),
+                leading: IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+                actions: [
+                  IconButton(
+                    icon: const Icon(Icons.download),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _downloadFile(entry);
+                    },
+                  ),
+                ],
+              ),
+              Flexible(
+                child: mimeType.startsWith('image/')
+                    ? InteractiveViewer(
+                        child: Image.network(
+                          url,
+                          fit: BoxFit.contain,
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return Center(
+                              child: CircularProgressIndicator(
+                                value: loadingProgress.expectedTotalBytes !=
+                                        null
+                                    ? loadingProgress.cumulativeBytesLoaded /
+                                        loadingProgress.expectedTotalBytes!
+                                    : null,
+                              ),
+                            );
+                          },
+                          errorBuilder: (context, error, stackTrace) {
+                            return Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.error,
+                                      size: 48,
+                                      color:
+                                          Theme.of(context).colorScheme.error),
+                                  const SizedBox(height: 8),
+                                  const Text('Failed to load image'),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      )
+                    : Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              mimeType.startsWith('video/')
+                                  ? Icons.video_file
+                                  : Icons.audio_file,
+                              size: 64,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(entry.name),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Media playback requires external player',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                            const SizedBox(height: 16),
+                            FilledButton.icon(
+                              onPressed: () {
+                                Navigator.pop(context);
+                                _downloadFile(entry);
+                              },
+                              icon: const Icon(Icons.download),
+                              label: const Text('Download to play'),
+                            ),
+                          ],
+                        ),
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _downloadFile(FileEntry entry) {
+    final api = ref.read(apiServiceProvider);
+    final downloadUrl = api.getFileManagerDownloadUrl(entry.path);
+    // For now, just show the URL - in production, use url_launcher or download manager
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Download: ${entry.name}'),
+        action: SnackBarAction(
+          label: 'Open',
+          onPressed: () {
+            // Open URL in browser or download manager
+            debugPrint('Download URL: $downloadUrl');
+          },
         ),
       ),
     );

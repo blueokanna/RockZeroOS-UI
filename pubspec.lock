@@ -616,46 +616,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "6.0.0"
-  local_auth:
-    dependency: "direct main"
-    description:
-      name: local_auth
-      sha256: a4f1bf57f0236a4aeb5e8f0ec180e197f4b112a3456baa6c1e73b546630b0422
-      url: "https://pub.dev"
-    source: hosted
-    version: "3.0.0"
-  local_auth_android:
-    dependency: transitive
-    description:
-      name: local_auth_android
-      sha256: "162b8e177fd9978c4620da2a8002a5c6bed4d20f0c6daf5137e72e9a8b767d2e"
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.0.4"
-  local_auth_darwin:
-    dependency: transitive
-    description:
-      name: local_auth_darwin
-      sha256: "668ea65edaab17380956e9713f57e34f78ede505ca0cfd8d39db34e2f260bfee"
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.0.1"
-  local_auth_platform_interface:
-    dependency: transitive
-    description:
-      name: local_auth_platform_interface
-      sha256: f98b8e388588583d3f781f6806e4f4c9f9e189d898d27f0c249b93a1973dd122
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.1.0"
-  local_auth_windows:
-    dependency: transitive
-    description:
-      name: local_auth_windows
-      sha256: be12c5b8ba5e64896983123655c5f67d2484ecfcc95e367952ad6e3bff94cb16
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.0.1"
   logger:
     dependency: "direct main"
     description:
@@ -968,6 +928,46 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.28.0"
+  screen_retriever:
+    dependency: transitive
+    description:
+      name: screen_retriever
+      sha256: "570dbc8e4f70bac451e0efc9c9bb19fa2d6799a11e6ef04f946d7886d2e23d0c"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.2.0"
+  screen_retriever_linux:
+    dependency: transitive
+    description:
+      name: screen_retriever_linux
+      sha256: f7f8120c92ef0784e58491ab664d01efda79a922b025ff286e29aa123ea3dd18
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.2.0"
+  screen_retriever_macos:
+    dependency: transitive
+    description:
+      name: screen_retriever_macos
+      sha256: "71f956e65c97315dd661d71f828708bd97b6d358e776f1a30d5aa7d22d78a149"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.2.0"
+  screen_retriever_platform_interface:
+    dependency: transitive
+    description:
+      name: screen_retriever_platform_interface
+      sha256: ee197f4581ff0d5608587819af40490748e1e39e648d7680ecf95c05197240c0
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.2.0"
+  screen_retriever_windows:
+    dependency: transitive
+    description:
+      name: screen_retriever_windows
+      sha256: "449ee257f03ca98a57288ee526a301a430a344a161f9202b4fcc38576716fe13"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.2.0"
   shared_preferences:
     dependency: "direct main"
     description:
@@ -1325,6 +1325,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.0"
+  window_manager:
+    dependency: "direct main"
+    description:
+      name: window_manager
+      sha256: "732896e1416297c63c9e3fb95aea72d0355f61390263982a47fd519169dc5059"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.4.3"
   xdg_directories:
     dependency: transitive
     description:

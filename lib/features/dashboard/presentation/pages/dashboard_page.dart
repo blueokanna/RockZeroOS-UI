@@ -7,7 +7,6 @@ import '../../../../core/network/api_service.dart';
 import '../widgets/system_status_card.dart';
 import '../widgets/storage_card.dart';
 import '../widgets/quick_actions_card.dart';
-import '../widgets/recent_files_card.dart';
 
 // Dashboard data providers
 final hardwareInfoProvider = FutureProvider.autoDispose<HardwareInfo?>((
@@ -32,17 +31,6 @@ final storageInfoProvider = FutureProvider.autoDispose<StorageInfo?>((
   }
 });
 
-final recentFilesProvider = FutureProvider.autoDispose<FileListResponse?>((
-  ref,
-) async {
-  try {
-    final api = ref.read(apiServiceProvider);
-    return await api.listFiles();
-  } catch (_) {
-    return null;
-  }
-});
-
 class DashboardPage extends ConsumerWidget {
   const DashboardPage({super.key});
 
@@ -50,14 +38,12 @@ class DashboardPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final hardwareInfo = ref.watch(hardwareInfoProvider);
     final storageInfo = ref.watch(storageInfoProvider);
-    final recentFiles = ref.watch(recentFilesProvider);
 
     return Scaffold(
       body: RefreshIndicator(
         onRefresh: () async {
           ref.invalidate(hardwareInfoProvider);
           ref.invalidate(storageInfoProvider);
-          ref.invalidate(recentFilesProvider);
         },
         child: CustomScrollView(
           slivers: [
@@ -70,7 +56,6 @@ class DashboardPage extends ConsumerWidget {
                   onPressed: () {
                     ref.invalidate(hardwareInfoProvider);
                     ref.invalidate(storageInfoProvider);
-                    ref.invalidate(recentFilesProvider);
                   },
                 ),
                 IconButton(
@@ -93,14 +78,12 @@ class DashboardPage extends ConsumerWidget {
                         context,
                         hardwareInfo,
                         storageInfo,
-                        recentFiles,
                       );
                     } else {
                       return _buildNarrowLayout(
                         context,
                         hardwareInfo,
                         storageInfo,
-                        recentFiles,
                       );
                     }
                   },
@@ -117,7 +100,6 @@ class DashboardPage extends ConsumerWidget {
     BuildContext context,
     AsyncValue<HardwareInfo?> hardwareInfo,
     AsyncValue<StorageInfo?> storageInfo,
-    AsyncValue<FileListResponse?> recentFiles,
   ) {
     return Column(
       children: [
@@ -140,25 +122,8 @@ class DashboardPage extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: 16),
-        // Bottom row
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: QuickActionsCard()
-                  .animate()
-                  .fadeIn(delay: 300.ms)
-                  .slideY(begin: 0.05),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              flex: 2,
-              child: RecentFilesCard(
-                filesResponse: recentFiles,
-              ).animate().fadeIn(delay: 400.ms).slideY(begin: 0.05),
-            ),
-          ],
-        ),
+        // Bottom row - Quick Actions only
+        QuickActionsCard().animate().fadeIn(delay: 300.ms).slideY(begin: 0.05),
       ],
     );
   }
@@ -167,7 +132,6 @@ class DashboardPage extends ConsumerWidget {
     BuildContext context,
     AsyncValue<HardwareInfo?> hardwareInfo,
     AsyncValue<StorageInfo?> storageInfo,
-    AsyncValue<FileListResponse?> recentFiles,
   ) {
     return Column(
       children: [
@@ -180,10 +144,6 @@ class DashboardPage extends ConsumerWidget {
         ).animate().fadeIn(delay: 200.ms).slideY(begin: 0.05),
         const SizedBox(height: 16),
         QuickActionsCard().animate().fadeIn(delay: 300.ms).slideY(begin: 0.05),
-        const SizedBox(height: 16),
-        RecentFilesCard(
-          filesResponse: recentFiles,
-        ).animate().fadeIn(delay: 400.ms).slideY(begin: 0.05),
       ],
     );
   }

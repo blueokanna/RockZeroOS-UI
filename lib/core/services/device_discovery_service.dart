@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 
 // Discovered device model
@@ -32,9 +33,9 @@ class DiscoveredDevice {
       id: json['id'] ?? ip,
       name: json['name'] ?? 'RockZero Device',
       ip: ip,
-      port: json['port'] ?? 8443,
+      port: json['port'] ?? 8080,
       version: json['version'] ?? 'unknown',
-      isSecure: json['tls'] ?? true,
+      isSecure: json['tls'] ?? false,
       discoveredAt: DateTime.now(),
     );
   }
@@ -143,7 +144,7 @@ class DeviceDiscoveryService {
   RawDatagramSocket? _udpSocket;
 
   static const int _discoveryPort = 8444;
-  static const int _servicePort = 8443;
+  static const int _defaultServicePort = 8080;
   static const Duration _scanInterval = Duration(seconds: 5);
   static const Duration _scanTimeout = Duration(seconds: 3);
 
@@ -151,6 +152,24 @@ class DeviceDiscoveryService {
 
   DeviceDiscoveryNotifier get _notifier =>
       _ref.read(deviceDiscoveryStateProvider.notifier);
+
+  /// Get the configured service port from settings
+  int get _servicePort {
+    try {
+      final box = Hive.box('settings');
+      return box.get('defaultPort', defaultValue: _defaultServicePort) as int;
+    } catch (_) {
+      return _defaultServicePort;
+    }
+  }
+
+  /// Set the default service port
+  void setDefaultPort(int port) {
+    try {
+      final box = Hive.box('settings');
+      box.put('defaultPort', port);
+    } catch (_) {}
+  }
 
   Future<void> startDiscovery() async {
     await _getLocalIp();
@@ -284,9 +303,10 @@ class DeviceDiscoveryService {
         ..connectionTimeout = const Duration(milliseconds: 500)
         ..badCertificateCallback = (cert, host, port) => true;
 
+      // 先尝试 HTTP（默认配置）
       try {
         final request = await client.getUrl(
-          Uri.parse('https://$ip:$_servicePort/health'),
+          Uri.parse('http://$ip:$_servicePort/health'),
         );
         final response = await request.close().timeout(
               const Duration(milliseconds: 800),
@@ -304,16 +324,17 @@ class DeviceDiscoveryService {
                 ip: ip,
                 port: _servicePort,
                 version: json['version'] ?? 'unknown',
-                isSecure: true,
+                isSecure: false,
                 discoveredAt: DateTime.now(),
               ),
             );
           }
         }
       } catch (_) {
+        // HTTP 失败，尝试 HTTPS
         try {
           final request = await client.getUrl(
-            Uri.parse('http://$ip:$_servicePort/health'),
+            Uri.parse('https://$ip:$_servicePort/health'),
           );
           final response = await request.close().timeout(
                 const Duration(milliseconds: 800),
@@ -331,7 +352,7 @@ class DeviceDiscoveryService {
                   ip: ip,
                   port: _servicePort,
                   version: json['version'] ?? 'unknown',
-                  isSecure: false,
+                  isSecure: true,
                   discoveredAt: DateTime.now(),
                 ),
               );
@@ -360,5 +381,73 @@ class DeviceDiscoveryService {
     } catch (_) {
       return false;
     }
+  }
+
+  /// 自动探测设备，尝试 HTTP 和 HTTPS
+  /// 返回成功连接的设备，如果都失败则返回 null
+  Future<DiscoveredDevice?> autoDetectDevice(String ip, {int? port}) async {
+    final targetPort = port ?? _servicePort;
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 3)
+      ..badCertificateCallback = (cert, host, port) => true;
+
+    // 先尝试 HTTP
+    try {
+      final request = await client.getUrl(
+        Uri.parse('http://$ip:$targetPort/health'),
+      );
+      final response = await request.close().timeout(
+            const Duration(seconds: 3),
+          );
+
+      if (response.statusCode == 200) {
+        final body = await response.transform(utf8.decoder).join();
+        final json = jsonDecode(body) as Map<String, dynamic>;
+
+        if (json['status'] == 'healthy') {
+          client.close();
+          return DiscoveredDevice(
+            id: ip,
+            name: 'RockZero @ $ip',
+            ip: ip,
+            port: targetPort,
+            version: json['version'] ?? 'unknown',
+            isSecure: false,
+            discoveredAt: DateTime.now(),
+          );
+        }
+      }
+    } catch (_) {}
+
+    // HTTP 失败，尝试 HTTPS
+    try {
+      final request = await client.getUrl(
+        Uri.parse('https://$ip:$targetPort/health'),
+      );
+      final response = await request.close().timeout(
+            const Duration(seconds: 3),
+          );
+
+      if (response.statusCode == 200) {
+        final body = await response.transform(utf8.decoder).join();
+        final json = jsonDecode(body) as Map<String, dynamic>;
+
+        if (json['status'] == 'healthy') {
+          client.close();
+          return DiscoveredDevice(
+            id: ip,
+            name: 'RockZero @ $ip',
+            ip: ip,
+            port: targetPort,
+            version: json['version'] ?? 'unknown',
+            isSecure: true,
+            discoveredAt: DateTime.now(),
+          );
+        }
+      }
+    } catch (_) {}
+
+    client.close();
+    return null;
   }
 }

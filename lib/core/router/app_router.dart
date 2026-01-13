@@ -7,7 +7,6 @@ import '../../features/auth/presentation/pages/register_page.dart';
 import '../../features/auth/providers/auth_provider.dart';
 import '../../features/dashboard/presentation/pages/dashboard_page.dart';
 import '../../features/files/presentation/pages/files_page.dart';
-import '../../features/media/presentation/pages/media_page.dart';
 import '../../features/appstore/presentation/pages/appstore_page.dart';
 import '../../features/system/presentation/pages/system_page.dart';
 import '../../features/settings/presentation/pages/settings_page.dart';
@@ -22,8 +21,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     debugLogDiagnostics: true,
     redirect: (context, state) {
       final isLoggedIn = authState.isAuthenticated;
-      final isAuthRoute =
-          state.matchedLocation == '/login' ||
+      final isAuthRoute = state.matchedLocation == '/login' ||
           state.matchedLocation == '/register' ||
           state.matchedLocation == '/discover';
 
@@ -60,16 +58,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           child: const LoginPage(),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return SlideTransition(
-              position:
-                  Tween<Offset>(
-                    begin: const Offset(0, 0.1),
-                    end: Offset.zero,
-                  ).animate(
-                    CurvedAnimation(
-                      parent: animation,
-                      curve: Curves.easeOutCubic,
-                    ),
-                  ),
+              position: Tween<Offset>(
+                begin: const Offset(0, 0.1),
+                end: Offset.zero,
+              ).animate(
+                CurvedAnimation(
+                  parent: animation,
+                  curve: Curves.easeOutCubic,
+                ),
+              ),
               child: FadeTransition(opacity: animation, child: child),
             );
           },
@@ -83,16 +80,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           child: const RegisterPage(),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return SlideTransition(
-              position:
-                  Tween<Offset>(
-                    begin: const Offset(0, 0.1),
-                    end: Offset.zero,
-                  ).animate(
-                    CurvedAnimation(
-                      parent: animation,
-                      curve: Curves.easeOutCubic,
-                    ),
-                  ),
+              position: Tween<Offset>(
+                begin: const Offset(0, 0.1),
+                end: Offset.zero,
+              ).animate(
+                CurvedAnimation(
+                  parent: animation,
+                  curve: Curves.easeOutCubic,
+                ),
+              ),
               child: FadeTransition(opacity: animation, child: child),
             );
           },
@@ -114,12 +110,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             name: 'files',
             pageBuilder: (context, state) =>
                 _buildPageTransition(state, const FilesPage()),
-          ),
-          GoRoute(
-            path: '/media',
-            name: 'media',
-            pageBuilder: (context, state) =>
-                _buildPageTransition(state, const MediaPage()),
           ),
           GoRoute(
             path: '/appstore',
