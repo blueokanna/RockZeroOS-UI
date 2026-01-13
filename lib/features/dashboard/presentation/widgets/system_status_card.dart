@@ -325,7 +325,7 @@ class _TemperatureIndicator extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Text(
-          'Temperature',
+          'Temp.',
           style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500),
         ),
         Text(

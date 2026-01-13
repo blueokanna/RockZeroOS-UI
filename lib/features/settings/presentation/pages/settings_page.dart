@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +7,27 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/services/device_discovery_service.dart';
 import '../../../auth/providers/auth_provider.dart';
+
+// Check if running on mobile platform
+bool get _isMobilePlatform {
+  if (kIsWeb) return false;
+  return defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.android;
+}
+
+// Biometric enabled state notifier for Riverpod 3.x
+class BiometricEnabledNotifier extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void toggle() => state = !state;
+  void setEnabled(bool value) => state = value;
+}
+
+final biometricEnabledProvider =
+    NotifierProvider<BiometricEnabledNotifier, bool>(
+  BiometricEnabledNotifier.new,
+);
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -72,6 +94,7 @@ class SettingsPage extends ConsumerWidget {
                     ListTile(
                       leading: const Icon(Icons.palette),
                       title: const Text('Accent Color'),
+                      subtitle: const Text('Material You dynamic theming'),
                       trailing: Container(
                         width: 32,
                         height: 32,
@@ -83,25 +106,64 @@ class SettingsPage extends ConsumerWidget {
                       ),
                       onTap: () => _showColorPicker(context, ref, seedColor),
                     ),
+                    ListTile(
+                      leading: const Icon(Icons.auto_awesome),
+                      title: const Text('Dynamic Color'),
+                      subtitle: const Text('Use system wallpaper colors'),
+                      trailing: Switch(
+                        value: false,
+                        onChanged: (value) {
+                          // TODO: Implement dynamic color from wallpaper
+                        },
+                      ),
+                    ),
                   ],
                 ).animate().fadeIn(delay: 200.ms).slideY(begin: 0.05),
                 const SizedBox(height: 16),
+                // Security section - Biometric/FIDO2 only on mobile
                 _SettingsSection(
                   title: 'Security',
                   children: [
-                    ListTile(
-                      leading: const Icon(Icons.fingerprint),
-                      title: const Text('Biometric Authentication'),
-                      subtitle: const Text('Use fingerprint or face to unlock'),
-                      trailing: Switch(value: false, onChanged: (value) {}),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.key),
-                      title: const Text('FIDO2 / Passkeys'),
-                      subtitle: const Text('Manage security keys'),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () {},
-                    ),
+                    if (_isMobilePlatform) ...[
+                      ListTile(
+                        leading: const Icon(Icons.fingerprint),
+                        title: const Text('Biometric Authentication'),
+                        subtitle: const Text(
+                          'Use fingerprint or face to unlock',
+                        ),
+                        trailing: Consumer(
+                          builder: (context, ref, _) {
+                            final enabled = ref.watch(biometricEnabledProvider);
+                            return Switch(
+                              value: enabled,
+                              onChanged: (value) {
+                                ref
+                                    .read(biometricEnabledProvider.notifier)
+                                    .setEnabled(value);
+                                // TODO: Implement biometric setup
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.key),
+                        title: const Text('FIDO2 / Passkeys'),
+                        subtitle: const Text('Manage security keys'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _showFido2Dialog(context, ref),
+                      ),
+                    ],
+                    if (!_isMobilePlatform)
+                      ListTile(
+                        leading: const Icon(Icons.security),
+                        title: const Text('Security Keys'),
+                        subtitle: const Text(
+                          'Manage external USB security keys',
+                        ),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _showFido2Dialog(context, ref),
+                      ),
                     if (authState.user?.role == 'admin')
                       ListTile(
                         leading: const Icon(Icons.card_giftcard),
@@ -359,6 +421,90 @@ class SettingsPage extends ConsumerWidget {
             ],
           );
         },
+      ),
+    );
+  }
+
+  void _showFido2Dialog(BuildContext context, WidgetRef ref) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(
+              _isMobilePlatform ? Icons.key : Icons.usb,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(width: 12),
+            Text(_isMobilePlatform ? 'FIDO2 / Passkeys' : 'Security Keys'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_isMobilePlatform) ...[
+              const Text(
+                'Passkeys provide a more secure and convenient way to sign in without passwords.',
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                leading: const Icon(Icons.add_circle_outline),
+                title: const Text('Register new passkey'),
+                subtitle: const Text('Use Face ID, Touch ID, or device PIN'),
+                onTap: () {
+                  Navigator.pop(context);
+                  // TODO: Implement passkey registration
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Passkey registration coming soon'),
+                    ),
+                  );
+                },
+              ),
+            ] else ...[
+              const Text(
+                'Connect a USB security key (like YubiKey) to enhance your account security.',
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                leading: const Icon(Icons.usb),
+                title: const Text('Register USB security key'),
+                subtitle: const Text('FIDO2/WebAuthn compatible keys'),
+                onTap: () {
+                  Navigator.pop(context);
+                  // TODO: Implement USB key registration
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('USB key registration coming soon'),
+                    ),
+                  );
+                },
+              ),
+            ],
+            const Divider(),
+            const SizedBox(height: 8),
+            Text(
+              'Registered keys:',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Center(child: Text('No security keys registered')),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
       ),
     );
   }

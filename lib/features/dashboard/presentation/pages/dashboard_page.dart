@@ -6,7 +6,6 @@ import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
 import '../widgets/system_status_card.dart';
 import '../widgets/storage_card.dart';
-import '../widgets/quick_actions_card.dart';
 
 // Dashboard data providers
 final hardwareInfoProvider = FutureProvider.autoDispose<HardwareInfo?>((
@@ -101,29 +100,21 @@ class DashboardPage extends ConsumerWidget {
     AsyncValue<HardwareInfo?> hardwareInfo,
     AsyncValue<StorageInfo?> storageInfo,
   ) {
-    return Column(
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Top row
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              flex: 2,
-              child: SystemStatusCard(
-                hardwareInfo: hardwareInfo,
-              ).animate().fadeIn(delay: 100.ms).slideX(begin: -0.05),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: StorageCard(
-                storageInfo: storageInfo,
-              ).animate().fadeIn(delay: 200.ms).slideX(begin: 0.05),
-            ),
-          ],
+        Expanded(
+          flex: 2,
+          child: SystemStatusCard(
+            hardwareInfo: hardwareInfo,
+          ).animate().fadeIn(delay: 100.ms).slideX(begin: -0.05),
         ),
-        const SizedBox(height: 16),
-        // Bottom row - Quick Actions only
-        QuickActionsCard().animate().fadeIn(delay: 300.ms).slideY(begin: 0.05),
+        const SizedBox(width: 16),
+        Expanded(
+          child: StorageCard(
+            storageInfo: storageInfo,
+          ).animate().fadeIn(delay: 200.ms).slideX(begin: 0.05),
+        ),
       ],
     );
   }
@@ -142,8 +133,6 @@ class DashboardPage extends ConsumerWidget {
         StorageCard(
           storageInfo: storageInfo,
         ).animate().fadeIn(delay: 200.ms).slideY(begin: 0.05),
-        const SizedBox(height: 16),
-        QuickActionsCard().animate().fadeIn(delay: 300.ms).slideY(begin: 0.05),
       ],
     );
   }

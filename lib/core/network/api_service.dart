@@ -513,6 +513,46 @@ class ApiService {
     return '${_dio.options.baseUrl}/api/v1/filemanager/download?path=$path';
   }
 
+  // ============ File Preview API ============
+
+  /// Preview text file content
+  Future<FilePreviewResponse> previewTextFile(String path) async {
+    final response = await _dio.get(
+      '/api/v1/filemanager/preview',
+      queryParameters: {'path': path},
+    );
+    return FilePreviewResponse.fromJson(response.data);
+  }
+
+  /// Get media file information
+  Future<MediaFileInfo> getMediaInfo(String path) async {
+    final response = await _dio.get(
+      '/api/v1/filemanager/media/info',
+      queryParameters: {'path': path},
+    );
+    return MediaFileInfo.fromJson(response.data);
+  }
+
+  /// Get media stream URL (for video/audio playback)
+  String getMediaStreamUrl(String path) {
+    return '${_dio.options.baseUrl}/api/v1/filemanager/media/stream?path=${Uri.encodeComponent(path)}';
+  }
+
+  /// Get image URL (for image viewing)
+  String getImageUrl(String path) {
+    return '${_dio.options.baseUrl}/api/v1/filemanager/media/image?path=${Uri.encodeComponent(path)}';
+  }
+
+  /// Get thumbnail URL
+  String getThumbnailUrlForFile(String path, {String? timestamp}) {
+    final url =
+        '${_dio.options.baseUrl}/api/v1/filemanager/media/thumbnail?path=${Uri.encodeComponent(path)}';
+    if (timestamp != null) {
+      return '$url&quality=$timestamp';
+    }
+    return url;
+  }
+
   // ============ WebDAV API ============
 
   String getWebDavUrl() {

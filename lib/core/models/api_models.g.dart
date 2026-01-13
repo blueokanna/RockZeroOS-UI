@@ -493,6 +493,53 @@ Map<String, dynamic> _$StorageInfoToJson(StorageInfo instance) =>
       'usage_percentage': instance.usagePercentage,
     };
 
+FilePreviewResponse _$FilePreviewResponseFromJson(Map<String, dynamic> json) =>
+    FilePreviewResponse(
+      content: json['content'] as String,
+      mimeType: json['mime_type'] as String,
+      size: (json['size'] as num).toInt(),
+      truncated: json['truncated'] as bool,
+      encoding: json['encoding'] as String,
+    );
+
+Map<String, dynamic> _$FilePreviewResponseToJson(
+        FilePreviewResponse instance) =>
+    <String, dynamic>{
+      'content': instance.content,
+      'mime_type': instance.mimeType,
+      'size': instance.size,
+      'truncated': instance.truncated,
+      'encoding': instance.encoding,
+    };
+
+MediaFileInfo _$MediaFileInfoFromJson(Map<String, dynamic> json) =>
+    MediaFileInfo(
+      filename: json['filename'] as String,
+      mimeType: json['mime_type'] as String,
+      size: (json['size'] as num).toInt(),
+      duration: (json['duration'] as num?)?.toDouble(),
+      width: (json['width'] as num?)?.toInt(),
+      height: (json['height'] as num?)?.toInt(),
+      videoCodec: json['video_codec'] as String?,
+      audioCodec: json['audio_codec'] as String?,
+      bitrate: (json['bitrate'] as num?)?.toInt(),
+      supportsStreaming: json['supports_streaming'] as bool,
+    );
+
+Map<String, dynamic> _$MediaFileInfoToJson(MediaFileInfo instance) =>
+    <String, dynamic>{
+      'filename': instance.filename,
+      'mime_type': instance.mimeType,
+      'size': instance.size,
+      'duration': instance.duration,
+      'width': instance.width,
+      'height': instance.height,
+      'video_codec': instance.videoCodec,
+      'audio_codec': instance.audioCodec,
+      'bitrate': instance.bitrate,
+      'supports_streaming': instance.supportsStreaming,
+    };
+
 StorageDevice _$StorageDeviceFromJson(Map<String, dynamic> json) =>
     StorageDevice(
       id: json['id'] as String,

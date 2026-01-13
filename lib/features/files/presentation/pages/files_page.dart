@@ -18,8 +18,9 @@ class CurrentPathNotifier extends Notifier<String> {
   void setPath(String path) => state = path;
 }
 
-final currentPathProvider =
-    NotifierProvider<CurrentPathNotifier, String>(CurrentPathNotifier.new);
+final currentPathProvider = NotifierProvider<CurrentPathNotifier, String>(
+  CurrentPathNotifier.new,
+);
 
 final directoryListingProvider = FutureProvider.autoDispose
     .family<DirectoryListing?, String>((ref, path) async {
@@ -28,6 +29,18 @@ final directoryListingProvider = FutureProvider.autoDispose
     return await api.listDirectory(path: path.isEmpty ? null : path);
   } catch (_) {
     return null;
+  }
+});
+
+// Disk info provider
+final diskInfoProvider = FutureProvider.autoDispose<List<DiskInfo>>((
+  ref,
+) async {
+  try {
+    final api = ref.read(apiServiceProvider);
+    return await api.getDiskInfo();
+  } catch (_) {
+    return [];
   }
 });
 
@@ -45,52 +58,65 @@ class _FilesPageState extends ConsumerState<FilesPage> {
   final Set<String> _selectedFiles = {};
   bool _isUploading = false;
   double _uploadProgress = 0;
+  bool _showDisks = true; // Start with disk view
 
   @override
   Widget build(BuildContext context) {
     final currentPath = ref.watch(currentPathProvider);
     final listing = ref.watch(directoryListingProvider(currentPath));
+    final disks = ref.watch(diskInfoProvider);
+
+    // Show disk view when at root (empty path)
+    final showDiskView = _showDisks && currentPath.isEmpty;
 
     return Scaffold(
       body: CustomScrollView(
         slivers: [
           SliverAppBar.medium(
-            title: const Text('Files'),
+            title: Text(showDiskView ? 'Storage' : 'Files'),
             actions: [
-              IconButton(
-                icon: Icon(_isGridView ? Icons.view_list : Icons.grid_view),
-                onPressed: () => setState(() => _isGridView = !_isGridView),
-              ),
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.sort),
-                onSelected: (value) {
-                  if (value == _sortBy) {
-                    setState(() => _sortAsc = !_sortAsc);
-                  } else {
-                    setState(() {
-                      _sortBy = value;
-                      _sortAsc = true;
-                    });
-                  }
-                },
-                itemBuilder: (context) => [
-                  const PopupMenuItem(value: 'name', child: Text('Name')),
-                  const PopupMenuItem(value: 'size', child: Text('Size')),
-                  const PopupMenuItem(
-                    value: 'modified',
-                    child: Text('Modified'),
-                  ),
-                  const PopupMenuItem(value: 'type', child: Text('Type')),
-                ],
-              ),
+              if (!showDiskView) ...[
+                IconButton(
+                  icon: Icon(_isGridView ? Icons.view_list : Icons.grid_view),
+                  onPressed: () => setState(() => _isGridView = !_isGridView),
+                ),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.sort),
+                  onSelected: (value) {
+                    if (value == _sortBy) {
+                      setState(() => _sortAsc = !_sortAsc);
+                    } else {
+                      setState(() {
+                        _sortBy = value;
+                        _sortAsc = true;
+                      });
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(value: 'name', child: Text('Name')),
+                    const PopupMenuItem(value: 'size', child: Text('Size')),
+                    const PopupMenuItem(
+                      value: 'modified',
+                      child: Text('Modified'),
+                    ),
+                    const PopupMenuItem(value: 'type', child: Text('Type')),
+                  ],
+                ),
+              ],
               IconButton(
                 icon: const Icon(Icons.refresh),
-                onPressed: () =>
-                    ref.invalidate(directoryListingProvider(currentPath)),
+                onPressed: () {
+                  if (showDiskView) {
+                    ref.invalidate(diskInfoProvider);
+                  } else {
+                    ref.invalidate(directoryListingProvider(currentPath));
+                  }
+                },
               ),
             ],
           ),
-          SliverToBoxAdapter(child: _buildBreadcrumb(currentPath)),
+          if (!showDiskView)
+            SliverToBoxAdapter(child: _buildBreadcrumb(currentPath)),
           if (_isUploading)
             SliverToBoxAdapter(
               child: Padding(
@@ -104,37 +130,49 @@ class _FilesPageState extends ConsumerState<FilesPage> {
                 ),
               ),
             ),
-          listing.when(
-            data: (data) {
-              if (data == null) {
-                return SliverFillRemaining(child: _buildErrorState());
-              }
-              return _buildFileList(data);
-            },
-            loading: () => const SliverFillRemaining(
-              child: Center(child: CircularProgressIndicator()),
+          // Show disk view or file list based on current state
+          if (showDiskView)
+            disks.when(
+              data: (diskList) => _buildDiskList(diskList),
+              loading: () => const SliverFillRemaining(
+                child: Center(child: CircularProgressIndicator()),
+              ),
+              error: (e, s) => SliverFillRemaining(child: _buildErrorState()),
+            )
+          else
+            listing.when(
+              data: (data) {
+                if (data == null) {
+                  return SliverFillRemaining(child: _buildErrorState());
+                }
+                return _buildFileList(data);
+              },
+              loading: () => const SliverFillRemaining(
+                child: Center(child: CircularProgressIndicator()),
+              ),
+              error: (e, s) => SliverFillRemaining(child: _buildErrorState()),
             ),
-            error: (e, s) => SliverFillRemaining(child: _buildErrorState()),
-          ),
         ],
       ),
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton.small(
-            heroTag: 'new_folder',
-            onPressed: () => _showCreateFolderDialog(),
-            child: const Icon(Icons.create_new_folder),
-          ),
-          const SizedBox(height: 8),
-          FloatingActionButton.extended(
-            heroTag: 'upload',
-            onPressed: _pickAndUploadFiles,
-            icon: const Icon(Icons.upload),
-            label: const Text('Upload'),
-          ),
-        ],
-      ),
+      floatingActionButton: showDiskView
+          ? null
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FloatingActionButton.small(
+                  heroTag: 'new_folder',
+                  onPressed: () => _showCreateFolderDialog(),
+                  child: const Icon(Icons.create_new_folder),
+                ),
+                const SizedBox(height: 8),
+                FloatingActionButton.extended(
+                  heroTag: 'upload',
+                  onPressed: _pickAndUploadFiles,
+                  icon: const Icon(Icons.upload),
+                  label: const Text('Upload'),
+                ),
+              ],
+            ),
     );
   }
 
@@ -149,15 +187,21 @@ class _FilesPageState extends ConsumerState<FilesPage> {
         child: Row(
           children: [
             InkWell(
-              onTap: () => ref.read(currentPathProvider.notifier).setPath(''),
+              onTap: () {
+                ref.read(currentPathProvider.notifier).setPath('');
+                setState(() => _showDisks = true);
+              },
               borderRadius: BorderRadius.circular(4),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 child: Row(
                   children: [
-                    Icon(Icons.home, size: 18, color: colorScheme.primary),
+                    Icon(Icons.storage, size: 18, color: colorScheme.primary),
                     const SizedBox(width: 4),
-                    Text('Home', style: TextStyle(color: colorScheme.primary)),
+                    Text(
+                      'Storage',
+                      style: TextStyle(color: colorScheme.primary),
+                    ),
                   ],
                 ),
               ),
@@ -204,6 +248,58 @@ class _FilesPageState extends ConsumerState<FilesPage> {
             }),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildDiskList(List<DiskInfo> disks) {
+    if (disks.isEmpty) {
+      return SliverFillRemaining(
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.storage,
+                size: 64,
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'No storage devices found',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Windows-style grid layout for disks
+    return SliverPadding(
+      padding: const EdgeInsets.all(16),
+      sliver: SliverGrid(
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 320,
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          childAspectRatio: 2.2,
+        ),
+        delegate: SliverChildBuilderDelegate((context, index) {
+          final disk = disks[index];
+          return _WindowsDiskCard(
+            disk: disk,
+            onTap: () {
+              ref.read(currentPathProvider.notifier).setPath(disk.mountPoint);
+              setState(() => _showDisks = false);
+            },
+          )
+              .animate(delay: (50 * index).ms)
+              .fadeIn()
+              .scale(begin: const Offset(0.95, 0.95));
+        }, childCount: disks.length),
       ),
     );
   }
@@ -460,6 +556,7 @@ class _FilesPageState extends ConsumerState<FilesPage> {
     final isImage = mimeType.startsWith('image/');
     final isVideo = mimeType.startsWith('video/');
     final isAudio = mimeType.startsWith('audio/');
+    final isText = _isTextFile(entry.name, mimeType);
     final isMedia = isImage || isVideo || isAudio;
 
     showModalBottomSheet(
@@ -468,6 +565,16 @@ class _FilesPageState extends ConsumerState<FilesPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Preview option for text files
+            if (isText)
+              ListTile(
+                leading: const Icon(Icons.description),
+                title: const Text('View Content'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openTextPreview(entry);
+                },
+              ),
             // Preview option for media files
             if (isMedia)
               ListTile(
@@ -476,9 +583,11 @@ class _FilesPageState extends ConsumerState<FilesPage> {
                       ? Icons.image
                       : (isVideo ? Icons.play_circle : Icons.audiotrack),
                 ),
-                title: Text(isImage
-                    ? 'View Image'
-                    : (isVideo ? 'Play Video' : 'Play Audio')),
+                title: Text(
+                  isImage
+                      ? 'View Image'
+                      : (isVideo ? 'Play Video' : 'Play Audio'),
+                ),
                 onTap: () {
                   Navigator.pop(context);
                   _openMediaPreview(entry);
@@ -527,109 +636,219 @@ class _FilesPageState extends ConsumerState<FilesPage> {
     );
   }
 
-  void _openMediaPreview(FileEntry entry) {
+  bool _isTextFile(String filename, String mimeType) {
+    final textExtensions = [
+      'txt',
+      'md',
+      'json',
+      'xml',
+      'yaml',
+      'yml',
+      'toml',
+      'ini',
+      'cfg',
+      'conf',
+      'log',
+      'csv',
+      'html',
+      'htm',
+      'css',
+      'js',
+      'ts',
+      'jsx',
+      'tsx',
+      'vue',
+      'py',
+      'rs',
+      'go',
+      'java',
+      'c',
+      'cpp',
+      'h',
+      'hpp',
+      'sh',
+      'bash',
+      'zsh',
+      'sql',
+      'dockerfile',
+      'makefile',
+      'gitignore',
+      'env',
+      'properties',
+    ];
+    final ext = filename.split('.').last.toLowerCase();
+    return textExtensions.contains(ext) || mimeType.startsWith('text/');
+  }
+
+  void _openTextPreview(FileEntry entry) async {
     final api = ref.read(apiServiceProvider);
-    final url = api.getFileManagerDownloadUrl(entry.path);
-    final mimeType = entry.mimeType ?? '';
 
     showDialog(
       context: context,
-      builder: (context) => Dialog(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.9,
-            maxHeight: MediaQuery.of(context).size.height * 0.8,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppBar(
-                title: Text(entry.name),
-                leading: IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.pop(context),
-                ),
-                actions: [
-                  IconButton(
-                    icon: const Icon(Icons.download),
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _downloadFile(entry);
-                    },
-                  ),
-                ],
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final preview = await api.previewTextFile(entry.path);
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+
+      showDialog(
+        context: context,
+        builder: (context) => Dialog.fullscreen(
+          child: Scaffold(
+            appBar: AppBar(
+              title: Text(entry.name),
+              leading: IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.pop(context),
               ),
-              Flexible(
-                child: mimeType.startsWith('image/')
-                    ? InteractiveViewer(
-                        child: Image.network(
-                          url,
-                          fit: BoxFit.contain,
-                          loadingBuilder: (context, child, loadingProgress) {
-                            if (loadingProgress == null) return child;
-                            return Center(
-                              child: CircularProgressIndicator(
-                                value: loadingProgress.expectedTotalBytes !=
-                                        null
-                                    ? loadingProgress.cumulativeBytesLoaded /
-                                        loadingProgress.expectedTotalBytes!
-                                    : null,
-                              ),
-                            );
-                          },
-                          errorBuilder: (context, error, stackTrace) {
-                            return Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.error,
-                                      size: 48,
-                                      color:
-                                          Theme.of(context).colorScheme.error),
-                                  const SizedBox(height: 8),
-                                  const Text('Failed to load image'),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                      )
-                    : Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              mimeType.startsWith('video/')
-                                  ? Icons.video_file
-                                  : Icons.audio_file,
-                              size: 64,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(entry.name),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Media playback requires external player',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                            const SizedBox(height: 16),
-                            FilledButton.icon(
-                              onPressed: () {
-                                Navigator.pop(context);
-                                _downloadFile(entry);
-                              },
-                              icon: const Icon(Icons.download),
-                              label: const Text('Download to play'),
-                            ),
-                          ],
-                        ),
-                      ),
+              actions: [
+                if (preview.truncated)
+                  Chip(
+                    label: const Text('Truncated'),
+                    backgroundColor: Theme.of(
+                      context,
+                    ).colorScheme.errorContainer,
+                  ),
+                IconButton(
+                  icon: const Icon(Icons.download),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _downloadFile(entry);
+                  },
+                ),
+              ],
+            ),
+            body: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: SelectableText(
+                preview.content,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+              ),
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading dialog
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to preview file: $e')));
+    }
+  }
+
+  void _openMediaPreview(FileEntry entry) {
+    final api = ref.read(apiServiceProvider);
+    final mimeType = entry.mimeType ?? '';
+
+    if (mimeType.startsWith('image/')) {
+      _openImageViewer(entry, api);
+    } else if (mimeType.startsWith('video/') || mimeType.startsWith('audio/')) {
+      _openMediaPlayer(entry, api, mimeType);
+    }
+  }
+
+  void _openImageViewer(FileEntry entry, ApiService api) {
+    final imageUrl = api.getImageUrl(entry.path);
+
+    showDialog(
+      context: context,
+      builder: (context) => Dialog.fullscreen(
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          appBar: AppBar(
+            backgroundColor: Colors.black.withValues(alpha: 0.7),
+            foregroundColor: Colors.white,
+            title: Text(entry.name),
+            leading: IconButton(
+              icon: const Icon(Icons.close),
+              onPressed: () => Navigator.pop(context),
+            ),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.download),
+                onPressed: () {
+                  Navigator.pop(context);
+                  _downloadFile(entry);
+                },
               ),
             ],
+          ),
+          body: InteractiveViewer(
+            minScale: 0.5,
+            maxScale: 4.0,
+            child: Center(
+              child: Image.network(
+                imageUrl,
+                fit: BoxFit.contain,
+                headers: _getAuthHeaders(api),
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return Center(
+                    child: CircularProgressIndicator(
+                      value: loadingProgress.expectedTotalBytes != null
+                          ? loadingProgress.cumulativeBytesLoaded /
+                              loadingProgress.expectedTotalBytes!
+                          : null,
+                      color: Colors.white,
+                    ),
+                  );
+                },
+                errorBuilder: (context, error, stackTrace) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.error, size: 64, color: Colors.red),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Failed to load image',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _downloadFile(entry);
+                          },
+                          icon: const Icon(Icons.download),
+                          label: const Text('Download instead'),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
           ),
         ),
       ),
     );
+  }
+
+  void _openMediaPlayer(FileEntry entry, ApiService api, String mimeType) {
+    final streamUrl = api.getMediaStreamUrl(entry.path);
+    final isVideo = mimeType.startsWith('video/');
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => _MediaPlayerPage(
+          entry: entry,
+          streamUrl: streamUrl,
+          isVideo: isVideo,
+          onDownload: () => _downloadFile(entry),
+        ),
+      ),
+    );
+  }
+
+  Map<String, String> _getAuthHeaders(ApiService api) {
+    // Headers will be added by the API client interceptor
+    return {};
   }
 
   void _downloadFile(FileEntry entry) {
@@ -920,5 +1139,706 @@ class _FileListItem extends StatelessWidget {
   String _formatDate(int timestamp) {
     final date = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000);
     return DateFormat('MMM d, yyyy').format(date);
+  }
+}
+
+// Windows-style Disk card widget
+class _WindowsDiskCard extends StatelessWidget {
+  final DiskInfo disk;
+  final VoidCallback onTap;
+
+  const _WindowsDiskCard({required this.disk, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    final usedPercent = disk.usagePercentage;
+    final isAlmostFull = usedPercent > 90;
+    final isWarning = usedPercent > 75;
+
+    // Progress bar color like Windows
+    final progressColor = isAlmostFull
+        ? Colors.red
+        : isWarning
+            ? Colors.orange
+            : Colors.blue;
+
+    return Card(
+      elevation: isDark ? 0 : 1,
+      color: isDark ? colorScheme.surfaceContainerHigh : colorScheme.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(4),
+        side: BorderSide(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+          width: 1,
+        ),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(4),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              // Disk icon (Windows style)
+              _buildDiskIcon(context),
+              const SizedBox(width: 12),
+              // Disk info
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Disk name with mount point
+                    Text(
+                      _getDiskDisplayName(disk),
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w500,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 6),
+                    // Progress bar (Windows style)
+                    Container(
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? colorScheme.surfaceContainerHighest
+                            : Colors.grey.shade200,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(2),
+                        child: Stack(
+                          children: [
+                            FractionallySizedBox(
+                              widthFactor: usedPercent / 100,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: progressColor,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    // Storage info text (Windows style: "XXX GB 可用, 共 XXX GB")
+                    Text(
+                      '${_formatBytes(disk.availableSpace)} free of ${_formatBytes(disk.totalSpace)}',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDiskIcon(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    IconData icon;
+    Color iconColor;
+
+    if (disk.mountPoint == '/' ||
+        disk.mountPoint.toLowerCase().contains('system')) {
+      // System drive - Windows logo style
+      icon = Icons.window;
+      iconColor = Colors.blue;
+    } else if (disk.mountPoint == '/boot') {
+      icon = Icons.settings;
+      iconColor = Colors.purple;
+    } else if (disk.isRemovable) {
+      icon = Icons.usb;
+      iconColor = Colors.green;
+    } else {
+      // Regular HDD
+      icon = Icons.storage;
+      iconColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
+    }
+
+    return Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        color: iconColor.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Icon(icon, size: 32, color: iconColor),
+    );
+  }
+
+  String _getDiskDisplayName(DiskInfo disk) {
+    String name;
+    String mountPoint = disk.mountPoint;
+
+    if (mountPoint == '/') {
+      name = 'System';
+    } else if (mountPoint == '/boot') {
+      name = 'Boot';
+    } else if (disk.name.isNotEmpty && disk.name != 'Unknown') {
+      name = disk.name;
+    } else if (mountPoint.startsWith('/mnt/')) {
+      name = mountPoint.split('/').last;
+    } else if (mountPoint.startsWith('/media/')) {
+      name = mountPoint.split('/').last;
+    } else {
+      name = 'Local Disk';
+    }
+
+    // Format like Windows: "Name (X:)" -> "Name (mount_point)"
+    return '$name ($mountPoint)';
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes >= 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(0)} GB';
+    } else if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(0)} MB';
+    } else if (bytes >= 1024) {
+      return '${(bytes / 1024).toStringAsFixed(0)} KB';
+    }
+    return '$bytes B';
+  }
+}
+
+// Disk card widget for storage view (legacy, kept for reference)
+// ignore: unused_element
+class _DiskCard extends StatelessWidget {
+  final DiskInfo disk;
+  final VoidCallback onTap;
+
+  const _DiskCard({required this.disk, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    // Determine disk icon and color based on type
+    final (IconData icon, Color color) = _getDiskIconAndColor(disk);
+
+    final usedPercent = disk.usagePercentage;
+    final isAlmostFull = usedPercent > 90;
+    final isWarning = usedPercent > 75;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(icon, color: color, size: 28),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _getDiskDisplayName(disk),
+                          style: textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          disk.mountPoint,
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    Icons.chevron_right,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              // Storage usage bar
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: usedPercent / 100,
+                  minHeight: 8,
+                  backgroundColor: colorScheme.surfaceContainerHighest,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    isAlmostFull
+                        ? colorScheme.error
+                        : isWarning
+                            ? Colors.orange
+                            : colorScheme.primary,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    '${_formatBytes(disk.usedSpace)} used',
+                    style: textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  Text(
+                    '${_formatBytes(disk.availableSpace)} free',
+                    style: textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  Text(
+                    _formatBytes(disk.totalSpace),
+                    style: textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // Disk info chips
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  _InfoChip(
+                    label: disk.fileSystem,
+                    icon: Icons.description_outlined,
+                  ),
+                  _InfoChip(label: disk.diskType, icon: Icons.memory),
+                  if (disk.isRemovable)
+                    _InfoChip(
+                      label: 'Removable',
+                      icon: Icons.usb,
+                      color: Colors.orange,
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  (IconData, Color) _getDiskIconAndColor(DiskInfo disk) {
+    if (disk.mountPoint == '/') {
+      return (Icons.computer, Colors.blue);
+    } else if (disk.mountPoint == '/boot') {
+      return (Icons.settings_applications, Colors.purple);
+    } else if (disk.isRemovable) {
+      return (Icons.usb, Colors.orange);
+    } else if (disk.diskType.toLowerCase().contains('ssd')) {
+      return (Icons.flash_on, Colors.green);
+    } else {
+      return (Icons.storage, Colors.teal);
+    }
+  }
+
+  String _getDiskDisplayName(DiskInfo disk) {
+    if (disk.mountPoint == '/') {
+      return 'System';
+    } else if (disk.mountPoint == '/boot') {
+      return 'Boot';
+    } else if (disk.name.isNotEmpty && disk.name != 'Unknown') {
+      return disk.name;
+    } else if (disk.mountPoint.startsWith('/mnt/')) {
+      return disk.mountPoint.split('/').last;
+    } else if (disk.mountPoint.startsWith('/media/')) {
+      return disk.mountPoint.split('/').last;
+    }
+    return disk.mountPoint;
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes >= 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    } else if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    } else if (bytes >= 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
+    return '$bytes B';
+  }
+}
+
+class _InfoChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color? color;
+
+  const _InfoChip({required this.label, required this.icon, this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final chipColor = color ?? colorScheme.primary;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: chipColor.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: chipColor),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: chipColor,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ============ Media Player Page ============
+
+class _MediaPlayerPage extends StatefulWidget {
+  final FileEntry entry;
+  final String streamUrl;
+  final bool isVideo;
+  final VoidCallback onDownload;
+
+  const _MediaPlayerPage({
+    required this.entry,
+    required this.streamUrl,
+    required this.isVideo,
+    required this.onDownload,
+  });
+
+  @override
+  State<_MediaPlayerPage> createState() => _MediaPlayerPageState();
+}
+
+class _MediaPlayerPageState extends State<_MediaPlayerPage> {
+  bool _isPlaying = false;
+  bool _isLoading = true;
+  bool _hasError = false;
+  double _currentPosition = 0;
+  double _duration = 0;
+  double _volume = 1.0;
+  bool _showControls = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initPlayer();
+  }
+
+  Future<void> _initPlayer() async {
+    // In a real implementation, you would initialize video_player or audioplayers here
+    // For now, we'll show a placeholder that indicates the stream URL
+    try {
+      setState(() {
+        _isLoading = false;
+        _duration = 100; // Placeholder duration
+      });
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _hasError = true;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Scaffold(
+      backgroundColor: widget.isVideo ? Colors.black : colorScheme.surface,
+      appBar: AppBar(
+        backgroundColor:
+            widget.isVideo ? Colors.black.withValues(alpha: 0.7) : null,
+        foregroundColor: widget.isVideo ? Colors.white : null,
+        title: Text(
+          widget.entry.name,
+          style: TextStyle(
+            color: widget.isVideo ? Colors.white : null,
+          ),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.download),
+            onPressed: () {
+              Navigator.pop(context);
+              widget.onDownload();
+            },
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // Video/Audio display area
+          Expanded(
+            child: _buildMediaDisplay(),
+          ),
+          // Controls
+          _buildControls(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMediaDisplay() {
+    if (_isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+
+    if (_hasError) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.error_outline,
+              size: 64,
+              color: widget.isVideo ? Colors.white54 : Colors.red,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Failed to load media',
+              style: TextStyle(
+                color: widget.isVideo ? Colors.white : null,
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.pop(context);
+                widget.onDownload();
+              },
+              icon: const Icon(Icons.download),
+              label: const Text('Download instead'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (widget.isVideo) {
+      // Video placeholder - in production, use video_player package
+      return GestureDetector(
+        onTap: () => setState(() => _showControls = !_showControls),
+        child: Container(
+          color: Colors.black,
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  _isPlaying
+                      ? Icons.pause_circle_filled
+                      : Icons.play_circle_filled,
+                  size: 80,
+                  color: Colors.white70,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  widget.entry.name,
+                  style: const TextStyle(color: Colors.white70),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Stream URL: ${widget.streamUrl}',
+                  style: const TextStyle(color: Colors.white38, fontSize: 10),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                const Text(
+                  'Video playback requires video_player package',
+                  style: TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } else {
+      // Audio player UI
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 200,
+              height: 200,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Icon(
+                Icons.music_note,
+                size: 100,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 32),
+            Text(
+              widget.entry.name,
+              style: Theme.of(context).textTheme.titleLarge,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Audio file',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  Widget _buildControls() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isVideo = widget.isVideo;
+    final controlColor = isVideo ? Colors.white : colorScheme.onSurface;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      color: isVideo ? Colors.black.withValues(alpha: 0.8) : null,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Progress bar
+          Row(
+            children: [
+              Text(
+                _formatDuration(_currentPosition),
+                style: TextStyle(color: controlColor, fontSize: 12),
+              ),
+              Expanded(
+                child: Slider(
+                  value: _currentPosition,
+                  max: _duration > 0 ? _duration : 1,
+                  onChanged: (value) {
+                    setState(() => _currentPosition = value);
+                  },
+                  activeColor: isVideo ? Colors.white : colorScheme.primary,
+                  inactiveColor: isVideo
+                      ? Colors.white24
+                      : colorScheme.surfaceContainerHighest,
+                ),
+              ),
+              Text(
+                _formatDuration(_duration),
+                style: TextStyle(color: controlColor, fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Playback controls
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton(
+                icon: Icon(Icons.replay_10, color: controlColor),
+                onPressed: () {
+                  setState(() {
+                    _currentPosition =
+                        (_currentPosition - 10).clamp(0, _duration);
+                  });
+                },
+              ),
+              const SizedBox(width: 16),
+              IconButton(
+                icon: Icon(
+                  _isPlaying
+                      ? Icons.pause_circle_filled
+                      : Icons.play_circle_filled,
+                  color: controlColor,
+                  size: 56,
+                ),
+                onPressed: () {
+                  setState(() => _isPlaying = !_isPlaying);
+                },
+              ),
+              const SizedBox(width: 16),
+              IconButton(
+                icon: Icon(Icons.forward_10, color: controlColor),
+                onPressed: () {
+                  setState(() {
+                    _currentPosition =
+                        (_currentPosition + 10).clamp(0, _duration);
+                  });
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Volume control
+          Row(
+            children: [
+              Icon(
+                _volume == 0 ? Icons.volume_off : Icons.volume_up,
+                color: controlColor,
+                size: 20,
+              ),
+              Expanded(
+                child: Slider(
+                  value: _volume,
+                  onChanged: (value) {
+                    setState(() => _volume = value);
+                  },
+                  activeColor: isVideo ? Colors.white : colorScheme.primary,
+                  inactiveColor: isVideo
+                      ? Colors.white24
+                      : colorScheme.surfaceContainerHighest,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDuration(double seconds) {
+    final duration = Duration(seconds: seconds.toInt());
+    final minutes = duration.inMinutes;
+    final secs = duration.inSeconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
   }
 }

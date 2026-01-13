@@ -638,6 +638,88 @@ class StorageInfo {
   Map<String, dynamic> toJson() => _$StorageInfoToJson(this);
 }
 
+// ============ File Preview Models ============
+
+@JsonSerializable()
+class FilePreviewResponse {
+  final String content;
+  @JsonKey(name: 'mime_type')
+  final String mimeType;
+  final int size;
+  final bool truncated;
+  final String encoding;
+
+  FilePreviewResponse({
+    required this.content,
+    required this.mimeType,
+    required this.size,
+    required this.truncated,
+    required this.encoding,
+  });
+
+  factory FilePreviewResponse.fromJson(Map<String, dynamic> json) =>
+      _$FilePreviewResponseFromJson(json);
+  Map<String, dynamic> toJson() => _$FilePreviewResponseToJson(this);
+}
+
+@JsonSerializable()
+class MediaFileInfo {
+  final String filename;
+  @JsonKey(name: 'mime_type')
+  final String mimeType;
+  final int size;
+  final double? duration;
+  final int? width;
+  final int? height;
+  @JsonKey(name: 'video_codec')
+  final String? videoCodec;
+  @JsonKey(name: 'audio_codec')
+  final String? audioCodec;
+  final int? bitrate;
+  @JsonKey(name: 'supports_streaming')
+  final bool supportsStreaming;
+
+  MediaFileInfo({
+    required this.filename,
+    required this.mimeType,
+    required this.size,
+    this.duration,
+    this.width,
+    this.height,
+    this.videoCodec,
+    this.audioCodec,
+    this.bitrate,
+    required this.supportsStreaming,
+  });
+
+  factory MediaFileInfo.fromJson(Map<String, dynamic> json) =>
+      _$MediaFileInfoFromJson(json);
+  Map<String, dynamic> toJson() => _$MediaFileInfoToJson(this);
+
+  bool get isVideo => mimeType.startsWith('video/');
+  bool get isAudio => mimeType.startsWith('audio/');
+  bool get isImage => mimeType.startsWith('image/');
+
+  String get formattedDuration {
+    if (duration == null) return '--:--';
+    final totalSeconds = duration!.toInt();
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  String get resolution {
+    if (width != null && height != null) {
+      return '${width}x$height';
+    }
+    return 'Unknown';
+  }
+}
+
 // ============ Utility Extensions ============
 
 extension FileSizeFormatter on int {
