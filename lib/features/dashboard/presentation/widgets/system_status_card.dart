@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 
 import '../../../../core/models/api_models.dart';
+import '../../../../core/theme/app_theme.dart';
 
 class SystemStatusCard extends StatelessWidget {
   final AsyncValue<HardwareInfo?> hardwareInfo;
@@ -21,12 +23,40 @@ class SystemStatusCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.monitor_heart, color: colorScheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  'System Status',
-                  style: textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [colorScheme.primary, colorScheme.tertiary],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.monitor_heart_rounded,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'System Status',
+                        style: textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        'Real-time monitoring',
+                        style: textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -34,12 +64,10 @@ class SystemStatusCard extends StatelessWidget {
             const SizedBox(height: 20),
             hardwareInfo.when(
               data: (info) {
-                if (info == null) {
-                  return _buildErrorState(context);
-                }
+                if (info == null) return _buildErrorState(context);
                 return _buildContent(context, info);
               },
-              loading: () => _buildLoadingState(),
+              loading: () => _buildLoadingState(context),
               error: (e, s) => _buildErrorState(context),
             ),
           ],
@@ -53,61 +81,84 @@ class SystemStatusCard extends StatelessWidget {
 
     return Column(
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: _InfoTile(
-                icon: Icons.computer,
-                label: 'Hostname',
-                value: info.system.hostname,
+        // System info row
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: _InfoTile(
+                  icon: Icons.computer_rounded,
+                  label: 'Hostname',
+                  value: info.system.hostname,
+                ),
               ),
-            ),
-            Expanded(
-              child: _InfoTile(
-                icon: Icons.memory,
-                label: 'Architecture',
-                value: info.system.architecture,
+              Container(
+                width: 1,
+                height: 40,
+                color: colorScheme.outlineVariant,
               ),
-            ),
-            Expanded(
-              child: _InfoTile(
-                icon: Icons.schedule,
-                label: 'Uptime',
-                value: _formatUptime(info.system.uptime),
+              Expanded(
+                child: _InfoTile(
+                  icon: Icons.memory_rounded,
+                  label: 'Architecture',
+                  value: info.system.architecture,
+                ),
               ),
-            ),
-          ],
-        ),
+              Container(
+                width: 1,
+                height: 40,
+                color: colorScheme.outlineVariant,
+              ),
+              Expanded(
+                child: _InfoTile(
+                  icon: Icons.schedule_rounded,
+                  label: 'Uptime',
+                  value: _formatUptime(info.system.uptime),
+                ),
+              ),
+            ],
+          ),
+        ).animate().fadeIn(delay: 100.ms, curve: M3Curves.emphasizedDecelerate),
         const SizedBox(height: 20),
-        Divider(color: colorScheme.outlineVariant),
-        const SizedBox(height: 20),
+
+        // Usage indicators
         Row(
           children: [
             Expanded(
               child: _UsageIndicator(
                 label: 'CPU',
                 value: info.cpu.usage,
-                icon: Icons.speed,
+                icon: Icons.speed_rounded,
                 color: _getUsageColor(info.cpu.usage),
                 subtitle: '${info.cpu.cores} cores',
-              ),
+              )
+                  .animate()
+                  .fadeIn(delay: 150.ms, curve: M3Curves.emphasizedDecelerate),
             ),
             const SizedBox(width: 16),
             Expanded(
               child: _UsageIndicator(
                 label: 'Memory',
                 value: info.memory.usagePercentage,
-                icon: Icons.memory,
+                icon: Icons.memory_rounded,
                 color: _getUsageColor(info.memory.usagePercentage),
                 subtitle: _formatBytes(info.memory.used),
-              ),
+              )
+                  .animate()
+                  .fadeIn(delay: 200.ms, curve: M3Curves.emphasizedDecelerate),
             ),
             if (info.cpu.temperature != null) ...[
               const SizedBox(width: 16),
               Expanded(
                 child: _TemperatureIndicator(
                   temperature: info.cpu.temperature!,
-                ),
+                ).animate().fadeIn(
+                    delay: 250.ms, curve: M3Curves.emphasizedDecelerate),
               ),
             ],
           ],
@@ -116,26 +167,35 @@ class SystemStatusCard extends StatelessWidget {
     );
   }
 
-  Widget _buildLoadingState() {
+  Widget _buildLoadingState(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Column(
       children: [
+        Container(
+          height: 72,
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+        const SizedBox(height: 20),
         Row(
           children: List.generate(
             3,
             (index) => Expanded(
               child: Container(
-                height: 60,
-                margin: EdgeInsets.only(right: index < 2 ? 8 : 0),
+                height: 140,
+                margin: EdgeInsets.only(right: index < 2 ? 16 : 0),
                 decoration: BoxDecoration(
-                  color: Colors.grey.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
+                  color: colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(16),
                 ),
+                child: const Center(child: CircularProgressIndicator()),
               ),
             ),
           ),
         ),
-        const SizedBox(height: 20),
-        const LinearProgressIndicator(),
       ],
     );
   }
@@ -145,8 +205,17 @@ class SystemStatusCard extends StatelessWidget {
     return Center(
       child: Column(
         children: [
-          Icon(Icons.error_outline, size: 48, color: colorScheme.error),
-          const SizedBox(height: 8),
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: colorScheme.errorContainer,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(Icons.error_outline_rounded,
+                size: 32, color: colorScheme.onErrorContainer),
+          ),
+          const SizedBox(height: 12),
           Text(
             'Failed to load system info',
             style: TextStyle(color: colorScheme.error),
@@ -183,7 +252,7 @@ class SystemStatusCard extends StatelessWidget {
   Color _getUsageColor(double usage) {
     if (usage >= 90) return Colors.red;
     if (usage >= 70) return Colors.orange;
-    if (usage >= 50) return Colors.yellow.shade700;
+    if (usage >= 50) return Colors.amber.shade700;
     return Colors.green;
   }
 }
@@ -206,15 +275,15 @@ class _InfoTile extends StatelessWidget {
 
     return Column(
       children: [
-        Icon(icon, color: colorScheme.primary, size: 24),
-        const SizedBox(height: 8),
+        Icon(icon, color: colorScheme.primary, size: 22),
+        const SizedBox(height: 6),
         Text(
           label,
           style: textTheme.bodySmall?.copyWith(
             color: colorScheme.onSurfaceVariant,
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 2),
         Text(
           value,
           style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
@@ -245,47 +314,69 @@ class _UsageIndicator extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
-    return Column(
-      children: [
-        Stack(
-          alignment: Alignment.center,
-          children: [
-            SizedBox(
-              width: 80,
-              height: 80,
-              child: CircularProgressIndicator(
-                value: value / 100,
-                strokeWidth: 8,
-                backgroundColor: colorScheme.surfaceContainerHighest,
-                valueColor: AlwaysStoppedAnimation(color),
-              ),
-            ),
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 20, color: color),
-                Text(
-                  '${value.toStringAsFixed(0)}%',
-                  style: textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: color.withValues(alpha: 0.2),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        children: [
+          TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: value / 100),
+            duration: M3Durations.long2,
+            curve: M3Curves.emphasized,
+            builder: (context, animValue, child) {
+              return Stack(
+                alignment: Alignment.center,
+                children: [
+                  SizedBox(
+                    width: 72,
+                    height: 72,
+                    child: CircularProgressIndicator(
+                      value: animValue,
+                      strokeWidth: 8,
+                      backgroundColor: colorScheme.surfaceContainerHighest,
+                      valueColor: AlwaysStoppedAnimation(color),
+                      strokeCap: StrokeCap.round,
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Text(
-          label,
-          style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500),
-        ),
-        Text(
-          subtitle,
-          style: textTheme.bodySmall?.copyWith(
-            color: colorScheme.onSurfaceVariant,
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(icon, size: 18, color: color),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${(animValue * 100).toStringAsFixed(0)}%',
+                        style: textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: color,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            },
           ),
-        ),
-      ],
+          const SizedBox(height: 12),
+          Text(
+            label,
+            style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            subtitle,
+            style: textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -300,46 +391,59 @@ class _TemperatureIndicator extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     final color = _getTemperatureColor(temperature);
 
-    return Column(
-      children: [
-        Container(
-          width: 80,
-          height: 80,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: color, width: 4),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.thermostat, size: 20, color: color),
-              Text(
-                '${temperature.toStringAsFixed(0)}°C',
-                style: textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: color,
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: color.withValues(alpha: 0.2),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: color, width: 4),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.thermostat_rounded, size: 18, color: color),
+                const SizedBox(height: 2),
+                Text(
+                  '${temperature.toStringAsFixed(0)}°C',
+                  style: textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Temp.',
-          style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500),
-        ),
-        Text(
-          _getTemperatureStatus(temperature),
-          style: textTheme.bodySmall?.copyWith(color: color),
-        ),
-      ],
+          const SizedBox(height: 12),
+          Text(
+            'Temperature',
+            style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            _getTemperatureStatus(temperature),
+            style: textTheme.bodySmall?.copyWith(color: color),
+          ),
+        ],
+      ),
     );
   }
 
   Color _getTemperatureColor(double temp) {
     if (temp >= 80) return Colors.red;
     if (temp >= 60) return Colors.orange;
-    if (temp >= 40) return Colors.yellow.shade700;
+    if (temp >= 40) return Colors.amber.shade700;
     return Colors.green;
   }
 

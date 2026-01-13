@@ -5,9 +5,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
+import '../../../../core/services/biometric_service.dart';
 import '../../../../core/theme/app_theme.dart';
 
 // Current path notifier for Riverpod 3.x
@@ -132,12 +134,27 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 
   Widget _buildAppBar(bool showDiskView, String currentPath) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return SliverAppBar.large(
       title: Row(
         children: [
-          Icon(
-            showDiskView ? Icons.storage_rounded : Icons.folder_rounded,
-            size: 28,
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [colorScheme.primary, colorScheme.tertiary],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              showDiskView ? Icons.storage_rounded : Icons.folder_rounded,
+              size: 22,
+              color: Colors.white,
+            ),
           ),
           const SizedBox(width: 12),
           Text(showDiskView ? 'Storage' : 'Files'),
@@ -148,6 +165,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
           IconButton(
             icon: AnimatedSwitcher(
               duration: M3Durations.short4,
+              transitionBuilder: (child, animation) => ScaleTransition(
+                scale: animation,
+                child: child,
+              ),
               child: Icon(
                 _isGridView ? Icons.view_list_rounded : Icons.grid_view_rounded,
                 key: ValueKey(_isGridView),
@@ -159,6 +180,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
           PopupMenuButton<String>(
             icon: const Icon(Icons.sort_rounded),
             tooltip: 'Sort',
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             onSelected: (value) {
               if (value == _sortBy) {
                 setState(() => _sortAsc = !_sortAsc);
@@ -202,7 +225,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
       value: value,
       child: Row(
         children: [
-          Icon(icon, color: isSelected ? colorScheme.primary : null),
+          Icon(icon, color: isSelected ? colorScheme.primary : null, size: 20),
           const SizedBox(width: 12),
           Text(label),
           const Spacer(),
@@ -220,11 +243,18 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 
   Widget _buildBreadcrumb(String path) {
-    final parts = path.isEmpty ? <String>[] : path.split('/');
+    final parts = path.isEmpty
+        ? <String>[]
+        : path.split('/').where((p) => p.isNotEmpty).toList();
     final colorScheme = Theme.of(context).colorScheme;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
@@ -250,7 +280,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   Icon(
                     Icons.chevron_right_rounded,
                     size: 20,
-                    color: colorScheme.onSurfaceVariant,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                   ),
                   _BreadcrumbChip(
                     label: part,
@@ -275,27 +305,65 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
     return Container(
       margin: const EdgeInsets.all(16),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: colorScheme.primaryContainer,
-        borderRadius: BorderRadius.circular(16),
+        gradient: LinearGradient(
+          colors: [
+            colorScheme.primaryContainer,
+            colorScheme.primaryContainer.withValues(alpha: 0.7),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: colorScheme.primary.withValues(alpha: 0.2),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         children: [
           Row(
             children: [
-              Icon(Icons.cloud_upload_rounded,
-                  color: colorScheme.onPrimaryContainer),
-              const SizedBox(width: 12),
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: colorScheme.primary,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(Icons.cloud_upload_rounded,
+                    color: colorScheme.onPrimary),
+              ),
+              const SizedBox(width: 16),
               Expanded(
-                child: Text(
-                  'Uploading... ${(_uploadProgress * 100).toInt()}%',
-                  style: TextStyle(color: colorScheme.onPrimaryContainer),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Uploading...',
+                      style: TextStyle(
+                        color: colorScheme.onPrimaryContainer,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      '${(_uploadProgress * 100).toInt()}% complete',
+                      style: TextStyle(
+                        color: colorScheme.onPrimaryContainer
+                            .withValues(alpha: 0.7),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: LinearProgressIndicator(
@@ -303,6 +371,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
               minHeight: 8,
               backgroundColor:
                   colorScheme.onPrimaryContainer.withValues(alpha: 0.2),
+              valueColor: AlwaysStoppedAnimation(colorScheme.primary),
             ),
           ),
         ],
@@ -312,40 +381,191 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
   Widget _buildDiskGrid(List<DiskInfo> disks) {
     if (disks.isEmpty) {
-      return SliverFillRemaining(
-        child: _buildEmptyDiskState(),
-      );
+      return SliverFillRemaining(child: _buildEmptyDiskState());
     }
+
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    // Calculate total storage
+    int totalSpace = 0;
+    int usedSpace = 0;
+    for (final disk in disks) {
+      totalSpace += disk.totalSpace;
+      usedSpace += disk.usedSpace;
+    }
+    final totalUsagePercent =
+        totalSpace > 0 ? (usedSpace / totalSpace) * 100 : 0.0;
 
     return SliverPadding(
       padding: const EdgeInsets.all(16),
-      sliver: SliverGrid(
-        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-          maxCrossAxisExtent: 400,
-          mainAxisSpacing: 16,
-          crossAxisSpacing: 16,
-          childAspectRatio: 1.8,
-        ),
-        delegate: SliverChildBuilderDelegate(
-          (context, index) {
-            final disk = disks[index];
-            return _DiskCard(
-              disk: disk,
-              onTap: () {
-                ref.read(currentPathProvider.notifier).setPath(disk.mountPoint);
-                setState(() => _showDisks = false);
-              },
-            )
-                .animate(delay: (80 * index).ms)
-                .fadeIn(curve: M3Curves.emphasizedDecelerate)
-                .scale(
-                    begin: const Offset(0.92, 0.92),
-                    curve: M3Curves.emphasized);
-          },
-          childCount: disks.length,
-        ),
+      sliver: SliverList(
+        delegate: SliverChildListDelegate([
+          // Total storage summary card
+          Card(
+            elevation: 0,
+            color: colorScheme.primaryContainer.withValues(alpha: 0.3),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [colorScheme.primary, colorScheme.tertiary],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: [
+                        BoxShadow(
+                          color: colorScheme.primary.withValues(alpha: 0.3),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(Icons.dns_rounded,
+                        size: 32, color: Colors.white),
+                  ),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Total Storage',
+                          style: textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${disks.length} ${disks.length == 1 ? 'disk' : 'disks'} connected',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TweenAnimationBuilder<double>(
+                          tween: Tween(begin: 0, end: totalUsagePercent / 100),
+                          duration: M3Durations.long2,
+                          curve: M3Curves.emphasized,
+                          builder: (context, value, child) {
+                            return Column(
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: LinearProgressIndicator(
+                                    value: value,
+                                    minHeight: 6,
+                                    backgroundColor:
+                                        colorScheme.surfaceContainerHighest,
+                                    valueColor: AlwaysStoppedAnimation(
+                                        colorScheme.primary),
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      '${_formatBytes(usedSpace)} / ${_formatBytes(totalSpace)}',
+                                      style: textTheme.bodySmall?.copyWith(
+                                        color: colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                    Text(
+                                      '${(value * 100).toStringAsFixed(1)}% used',
+                                      style: textTheme.labelMedium?.copyWith(
+                                        color: colorScheme.primary,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+              .animate()
+              .fadeIn(curve: M3Curves.emphasizedDecelerate)
+              .slideY(begin: -0.05),
+          const SizedBox(height: 16),
+          // Section header
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            child: Row(
+              children: [
+                Icon(Icons.storage_rounded,
+                    size: 20, color: colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  'Storage Devices',
+                  style: textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.primary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Disk grid
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 400,
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: 1.35,
+            ),
+            itemCount: disks.length,
+            itemBuilder: (context, index) {
+              final disk = disks[index];
+              return _DiskCard(
+                disk: disk,
+                onTap: () {
+                  ref
+                      .read(currentPathProvider.notifier)
+                      .setPath(disk.mountPoint);
+                  setState(() => _showDisks = false);
+                },
+              )
+                  .animate(delay: (80 * index).ms)
+                  .fadeIn(curve: M3Curves.emphasizedDecelerate)
+                  .scale(
+                      begin: const Offset(0.95, 0.95),
+                      curve: M3Curves.emphasized);
+            },
+          ),
+        ]),
       ),
     );
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes >= 1024 * 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024 * 1024)).toStringAsFixed(2)} TB';
+    } else if (bytes >= 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+    } else if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / 1024).toStringAsFixed(1)} KB';
   }
 
   Widget _buildFileContent(DirectoryListing listing) {
@@ -404,14 +624,27 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 
   Widget _buildLoadingState() {
-    return const SliverFillRemaining(
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return SliverFillRemaining(
       child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('Loading...'),
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Center(child: CircularProgressIndicator()),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Loading...',
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
+            ),
           ],
         ),
       ),
@@ -430,15 +663,15 @@ class _FilesPageState extends ConsumerState<FilesPage>
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Container(
-                width: 80,
-                height: 80,
+                width: 88,
+                height: 88,
                 decoration: BoxDecoration(
                   color: colorScheme.errorContainer,
-                  shape: BoxShape.circle,
+                  borderRadius: BorderRadius.circular(24),
                 ),
                 child: Icon(
                   Icons.error_outline_rounded,
-                  size: 40,
+                  size: 44,
                   color: colorScheme.onErrorContainer,
                 ),
               ),
@@ -455,7 +688,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
                 textAlign: TextAlign.center,
                 style: TextStyle(color: colorScheme.onSurfaceVariant),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 28),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -466,6 +699,12 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     },
                     icon: const Icon(Icons.arrow_back_rounded),
                     label: const Text('Go Back'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
                   ),
                   const SizedBox(width: 12),
                   FilledButton.icon(
@@ -474,6 +713,12 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     },
                     icon: const Icon(Icons.refresh_rounded),
                     label: const Text('Retry'),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
                   ),
                 ],
               ),
@@ -492,22 +737,24 @@ class _FilesPageState extends ConsumerState<FilesPage>
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
-            width: 80,
-            height: 80,
+            width: 88,
+            height: 88,
             decoration: BoxDecoration(
               color: colorScheme.surfaceContainerHighest,
-              shape: BoxShape.circle,
+              borderRadius: BorderRadius.circular(24),
             ),
             child: Icon(
               Icons.storage_rounded,
-              size: 40,
+              size: 44,
               color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
             ),
           ),
           const SizedBox(height: 24),
           Text(
             'No storage devices found',
-            style: Theme.of(context).textTheme.titleMedium,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
           ),
           const SizedBox(height: 8),
           Text(
@@ -527,22 +774,24 @@ class _FilesPageState extends ConsumerState<FilesPage>
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
-            width: 80,
-            height: 80,
+            width: 88,
+            height: 88,
             decoration: BoxDecoration(
               color: colorScheme.surfaceContainerHighest,
-              shape: BoxShape.circle,
+              borderRadius: BorderRadius.circular(24),
             ),
             child: Icon(
               Icons.folder_open_rounded,
-              size: 40,
+              size: 44,
               color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
             ),
           ),
           const SizedBox(height: 24),
           Text(
             'This folder is empty',
-            style: Theme.of(context).textTheme.titleMedium,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
           ),
           const SizedBox(height: 8),
           Text(
@@ -555,12 +804,16 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 
   Widget _buildFAB() {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         FloatingActionButton.small(
           heroTag: 'new_folder',
           onPressed: _showCreateFolderDialog,
+          backgroundColor: colorScheme.secondaryContainer,
+          foregroundColor: colorScheme.onSecondaryContainer,
           child: const Icon(Icons.create_new_folder_rounded),
         ).animate().fadeIn(delay: 200.ms).scale(curve: M3Curves.emphasized),
         const SizedBox(height: 12),
@@ -664,13 +917,28 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Files uploaded successfully')),
+          SnackBar(
+            content: const Row(
+              children: [
+                Icon(Icons.check_circle_rounded, color: Colors.white),
+                SizedBox(width: 12),
+                Text('Files uploaded successfully'),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Upload failed: $e')),
+          SnackBar(
+            content: Text('Upload failed: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
         );
       }
     } finally {
@@ -687,18 +955,28 @@ class _FilesPageState extends ConsumerState<FilesPage>
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        icon: Icon(Icons.create_new_folder_rounded,
-            size: 48, color: colorScheme.primary),
+        icon: Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            color: colorScheme.primaryContainer,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Icon(Icons.create_new_folder_rounded,
+              size: 32, color: colorScheme.primary),
+        ),
         title: const Text('Create Folder'),
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Folder name',
             hintText: 'Enter folder name',
-            prefixIcon: Icon(Icons.folder_rounded),
+            prefixIcon: const Icon(Icons.folder_rounded),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
           ),
         ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -733,42 +1011,260 @@ class _FilesPageState extends ConsumerState<FilesPage>
     }
   }
 
+  /// Delete file with biometric/FIDO2 authentication
   Future<void> _deleteFile(FileEntry entry) async {
     final colorScheme = Theme.of(context).colorScheme;
+    final biometricEnabled = ref.read(biometricEnabledProvider);
+    final biometricService = ref.read(biometricServiceProvider);
 
-    final confirmed = await showDialog<bool>(
+    // First show confirmation dialog with authentication options
+    final authMethod = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        icon: Icon(Icons.delete_rounded, size: 48, color: colorScheme.error),
-        title: const Text('Delete'),
-        content: Text('Are you sure you want to delete "${entry.name}"?'),
+        icon: Container(
+          width: 64,
+          height: 64,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                colorScheme.error,
+                colorScheme.error.withValues(alpha: 0.7)
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.error.withValues(alpha: 0.3),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: const Icon(Icons.delete_forever_rounded,
+              size: 32, color: Colors.white),
+        ),
+        title: const Text('Delete File'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Are you sure you want to delete "${entry.name}"?',
+              style: TextStyle(color: colorScheme.onSurface),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: colorScheme.errorContainer.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: colorScheme.error.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_rounded,
+                      color: colorScheme.error, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'This action cannot be undone',
+                      style: TextStyle(
+                        color: colorScheme.error,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Authentication Required',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Authentication options
+            if (biometricEnabled) ...[
+              _AuthOptionTile(
+                icon: Icons.fingerprint_rounded,
+                title: 'Biometric',
+                subtitle: 'Use fingerprint or face',
+                color: colorScheme.primary,
+                onTap: () => Navigator.pop(context, 'biometric'),
+              ),
+              const SizedBox(height: 8),
+            ],
+            _AuthOptionTile(
+              icon: Icons.key_rounded,
+              title: 'Passkey / FIDO2',
+              subtitle: 'Use security key',
+              color: Colors.orange,
+              onTap: () => Navigator.pop(context, 'fido2'),
+            ),
+            const SizedBox(height: 8),
+            _AuthOptionTile(
+              icon: Icons.password_rounded,
+              title: 'Password',
+              subtitle: 'Enter your password',
+              color: Colors.blue,
+              onTap: () => Navigator.pop(context, 'password'),
+            ),
+          ],
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(context, null),
             child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: FilledButton.styleFrom(backgroundColor: colorScheme.error),
-            child: const Text('Delete'),
           ),
         ],
       ),
     );
 
-    if (confirmed == true) {
-      try {
-        final api = ref.read(apiServiceProvider);
-        await api.deleteFiles([entry.path]);
-        final currentPath = ref.read(currentPathProvider);
-        ref.invalidate(directoryListingProvider(currentPath));
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to delete: $e')),
+    if (authMethod == null) return;
+
+    bool authenticated = false;
+
+    // Perform authentication based on selected method
+    switch (authMethod) {
+      case 'biometric':
+        final isAvailable = await biometricService.isAvailable();
+        if (isAvailable) {
+          authenticated = await biometricService.authenticate(
+            reason: 'Authenticate to delete "${entry.name}"',
           );
         }
+        break;
+      case 'fido2':
+        authenticated = await _authenticateWithFido2();
+        break;
+      case 'password':
+        authenticated = await _authenticateWithPassword();
+        break;
+    }
+
+    if (!authenticated) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.error_outline_rounded, color: Colors.white),
+                const SizedBox(width: 12),
+                const Text('Authentication failed'),
+              ],
+            ),
+            backgroundColor: colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
       }
+      return;
+    }
+
+    // Proceed with deletion
+    try {
+      final api = ref.read(apiServiceProvider);
+      await api.deleteFiles([entry.path]);
+      final currentPath = ref.read(currentPathProvider);
+      ref.invalidate(directoryListingProvider(currentPath));
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle_rounded, color: Colors.white),
+                const SizedBox(width: 12),
+                Text('"${entry.name}" deleted'),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete: $e')),
+        );
+      }
+    }
+  }
+
+  Future<bool> _authenticateWithFido2() async {
+    // Show FIDO2 authentication dialog
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => _Fido2AuthDialog(),
+    );
+    return result ?? false;
+  }
+
+  Future<bool> _authenticateWithPassword() async {
+    final controller = TextEditingController();
+
+    final password = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            color: Colors.blue.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: const Icon(Icons.lock_rounded, size: 28, color: Colors.blue),
+        ),
+        title: const Text('Enter Password'),
+        content: TextField(
+          controller: controller,
+          obscureText: true,
+          autofocus: true,
+          decoration: InputDecoration(
+            labelText: 'Password',
+            prefixIcon: const Icon(Icons.password_rounded),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Verify'),
+          ),
+        ],
+      ),
+    );
+
+    if (password == null || password.isEmpty) return false;
+
+    // Verify password with server
+    try {
+      final api = ref.read(apiServiceProvider);
+      await api
+          .post('/api/v1/auth/verify-password', data: {'password': password});
+      return true;
+    } catch (e) {
+      return false;
     }
   }
 
@@ -778,18 +1274,32 @@ class _FilesPageState extends ConsumerState<FilesPage>
     final isVideo = mimeType.startsWith('video/');
     final isAudio = mimeType.startsWith('audio/');
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
 
     showModalBottomSheet(
       context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
       builder: (context) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Handle bar
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
             Container(
               padding: const EdgeInsets.all(20),
               child: Row(
                 children: [
-                  _getFileIcon(entry, 48),
+                  _getFileIcon(entry, 56),
                   const SizedBox(width: 16),
                   Expanded(
                     child: Column(
@@ -797,13 +1307,13 @@ class _FilesPageState extends ConsumerState<FilesPage>
                       children: [
                         Text(
                           entry.name,
-                          style:
-                              Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                          style: textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
+                        const SizedBox(height: 4),
                         Text(
                           _formatFileSize(entry.size),
                           style: TextStyle(color: colorScheme.onSurfaceVariant),
@@ -814,24 +1324,41 @@ class _FilesPageState extends ConsumerState<FilesPage>
                 ],
               ),
             ),
-            const Divider(height: 1),
+            Divider(height: 1, color: colorScheme.outlineVariant),
             if (isImage || isVideo || isAudio)
               ListTile(
-                leading: Icon(
-                  isImage
-                      ? Icons.image_rounded
-                      : isVideo
-                          ? Icons.play_circle_rounded
-                          : Icons.audiotrack_rounded,
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    isImage
+                        ? Icons.image_rounded
+                        : isVideo
+                            ? Icons.play_circle_rounded
+                            : Icons.audiotrack_rounded,
+                    color: colorScheme.onPrimaryContainer,
+                  ),
                 ),
                 title: Text(isImage ? 'View' : 'Play'),
                 onTap: () {
                   Navigator.pop(context);
-                  // TODO: Implement media preview
+                  _openMediaPreview(entry);
                 },
               ),
             ListTile(
-              leading: const Icon(Icons.download_rounded),
+              leading: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Colors.blue.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.download_rounded, color: Colors.blue),
+              ),
               title: const Text('Download'),
               onTap: () {
                 Navigator.pop(context);
@@ -839,7 +1366,15 @@ class _FilesPageState extends ConsumerState<FilesPage>
               },
             ),
             ListTile(
-              leading: const Icon(Icons.edit_rounded),
+              leading: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.edit_rounded, color: Colors.orange),
+              ),
               title: const Text('Rename'),
               onTap: () {
                 Navigator.pop(context);
@@ -847,48 +1382,118 @@ class _FilesPageState extends ConsumerState<FilesPage>
               },
             ),
             ListTile(
-              leading: Icon(Icons.delete_rounded, color: colorScheme.error),
+              leading: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(Icons.delete_rounded, color: colorScheme.error),
+              ),
               title: Text('Delete', style: TextStyle(color: colorScheme.error)),
               onTap: () {
                 Navigator.pop(context);
                 _deleteFile(entry);
               },
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
           ],
         ),
       ),
     );
   }
 
-  void _downloadFile(FileEntry entry) {
+  void _openMediaPreview(FileEntry entry) {
+    final api = ref.read(apiServiceProvider);
+    final mimeType = entry.mimeType ?? '';
+
+    if (mimeType.startsWith('image/')) {
+      // Open image viewer
+      final imageUrl = api.getImageUrl(entry.path);
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => _ImageViewerPage(
+            imageUrl: imageUrl,
+            fileName: entry.name,
+          ),
+        ),
+      );
+    } else if (mimeType.startsWith('video/') || mimeType.startsWith('audio/')) {
+      // Open media player
+      final streamUrl = api.getMediaStreamUrl(entry.path);
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => _MediaPlayerPage(
+            mediaUrl: streamUrl,
+            fileName: entry.name,
+            isVideo: mimeType.startsWith('video/'),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _downloadFile(FileEntry entry) async {
     final api = ref.read(apiServiceProvider);
     final downloadUrl = api.getFileManagerDownloadUrl(entry.path);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Download: ${entry.name}'),
-        action: SnackBarAction(
-          label: 'Open',
-          onPressed: () {
-            debugPrint('Download URL: $downloadUrl');
-          },
-        ),
-      ),
-    );
+
+    try {
+      final uri = Uri.parse(downloadUrl);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Download URL: $downloadUrl'),
+              action: SnackBarAction(
+                label: 'Copy',
+                onPressed: () {
+                  // Copy to clipboard
+                },
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to download: $e')),
+        );
+      }
+    }
   }
 
   void _showRenameDialog(FileEntry entry) {
     final controller = TextEditingController(text: entry.name);
+    final colorScheme = Theme.of(context).colorScheme;
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        icon: Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            color: colorScheme.primaryContainer,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Icon(Icons.edit_rounded, size: 32, color: colorScheme.primary),
+        ),
         title: const Text('Rename'),
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(labelText: 'New name'),
+          decoration: InputDecoration(
+            labelText: 'New name',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
         ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -1001,31 +1606,34 @@ class _BreadcrumbChip extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Material(
-      color: isActive ? colorScheme.secondaryContainer : Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
+      color: isActive ? colorScheme.primaryContainer : Colors.transparent,
+      borderRadius: BorderRadius.circular(10),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(10),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (icon != null) ...[
-                Icon(icon,
-                    size: 18,
-                    color: isActive
-                        ? colorScheme.onSecondaryContainer
-                        : colorScheme.primary),
+                Icon(
+                  icon,
+                  size: 18,
+                  color: isActive
+                      ? colorScheme.onPrimaryContainer
+                      : colorScheme.primary,
+                ),
                 const SizedBox(width: 6),
               ],
               Text(
                 label,
                 style: TextStyle(
                   color: isActive
-                      ? colorScheme.onSecondaryContainer
+                      ? colorScheme.onPrimaryContainer
                       : colorScheme.primary,
-                  fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                  fontSize: 14,
                 ),
               ),
             ],
@@ -1047,95 +1655,255 @@ class _DiskCard extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final usageColor = _getUsageColor(disk.usagePercentage);
+    final diskIcon = _getDiskIcon();
+    final diskTypeLabel = _getDiskTypeLabel();
 
     return Card(
       clipBehavior: Clip.antiAlias,
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+        side: BorderSide(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+          width: 1,
+        ),
+      ),
       child: InkWell(
         onTap: onTap,
+        borderRadius: BorderRadius.circular(24),
         child: Padding(
           padding: const EdgeInsets.all(20),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Circular progress indicator
-              SizedBox(
-                width: 72,
-                height: 72,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    CircularProgressIndicator(
-                      value: disk.usagePercentage / 100,
-                      strokeWidth: 8,
-                      backgroundColor: colorScheme.surfaceContainerHighest,
-                      valueColor: AlwaysStoppedAnimation(usageColor),
-                      strokeCap: StrokeCap.round,
-                    ),
-                    Text(
-                      '${disk.usagePercentage.toStringAsFixed(0)}%',
-                      style: textTheme.labelLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: usageColor,
+              // Header with icon and type badge
+              Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: disk.isRemovable
+                            ? [
+                                Colors.orange.shade400,
+                                Colors.deepOrange.shade400
+                              ]
+                            : [colorScheme.primary, colorScheme.tertiary],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 20),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          disk.isRemovable
-                              ? Icons.usb_rounded
-                              : Icons.storage_rounded,
-                          size: 20,
-                          color: colorScheme.primary,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            disk.name.isNotEmpty ? disk.name : disk.mountPoint,
-                            style: textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: [
+                        BoxShadow(
+                          color: (disk.isRemovable
+                                  ? Colors.orange
+                                  : colorScheme.primary)
+                              .withValues(alpha: 0.3),
+                          blurRadius: 8,
+                          offset: const Offset(0, 4),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      disk.mountPoint,
-                      style: textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    child: Icon(diskIcon, size: 24, color: Colors.white),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          disk.name.isNotEmpty ? disk.name : _getDisplayName(),
+                          style: textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: disk.isRemovable
+                                    ? Colors.orange.withValues(alpha: 0.15)
+                                    : colorScheme.primaryContainer
+                                        .withValues(alpha: 0.5),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                diskTypeLabel,
+                                style: textTheme.labelSmall?.copyWith(
+                                  color: disk.isRemovable
+                                      ? Colors.orange.shade700
+                                      : colorScheme.primary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            if (disk.fileSystem.isNotEmpty)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  disk.fileSystem.toUpperCase(),
+                                  style: textTheme.labelSmall?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                    fontFamily: 'monospace',
+                                    fontSize: 10,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '${_formatBytes(disk.availableSpace)} free of ${_formatBytes(disk.totalSpace)}',
-                      style: textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              // Storage bar
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: disk.usagePercentage / 100),
+                    duration: M3Durations.long2,
+                    curve: M3Curves.emphasized,
+                    builder: (context, value, child) {
+                      return Column(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(6),
+                            child: LinearProgressIndicator(
+                              value: value,
+                              minHeight: 10,
+                              backgroundColor:
+                                  colorScheme.surfaceContainerHighest,
+                              valueColor: AlwaysStoppedAnimation(usageColor),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    width: 10,
+                                    height: 10,
+                                    decoration: BoxDecoration(
+                                      color: usageColor,
+                                      borderRadius: BorderRadius.circular(3),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    '${_formatBytes(disk.usedSpace)} used',
+                                    style: textTheme.bodySmall?.copyWith(
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              Text(
+                                '${(value * 100).toStringAsFixed(1)}%',
+                                style: textTheme.labelLarge?.copyWith(
+                                  color: usageColor,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // Footer with storage details
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest
+                      .withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _StorageMetric(
+                        icon: Icons.check_circle_outline_rounded,
+                        label: 'Free',
+                        value: _formatBytes(disk.availableSpace),
+                        color: Colors.green,
+                      ),
+                    ),
+                    Container(
+                      width: 1,
+                      height: 32,
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+                    ),
+                    Expanded(
+                      child: _StorageMetric(
+                        icon: Icons.storage_rounded,
+                        label: 'Total',
+                        value: _formatBytes(disk.totalSpace),
+                        color: colorScheme.primary,
                       ),
                     ),
                   ],
                 ),
-              ),
-              Icon(
-                Icons.chevron_right_rounded,
-                color: colorScheme.onSurfaceVariant,
               ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  IconData _getDiskIcon() {
+    if (disk.isRemovable) {
+      if (disk.diskType.toLowerCase().contains('usb')) {
+        return Icons.usb_rounded;
+      }
+      return Icons.sd_card_rounded;
+    }
+    if (disk.diskType.toLowerCase().contains('ssd')) {
+      return Icons.memory_rounded;
+    }
+    return Icons.storage_rounded;
+  }
+
+  String _getDiskTypeLabel() {
+    if (disk.isRemovable) {
+      if (disk.diskType.toLowerCase().contains('usb')) return 'USB';
+      return 'Removable';
+    }
+    if (disk.diskType.toLowerCase().contains('ssd')) return 'SSD';
+    if (disk.diskType.toLowerCase().contains('hdd')) return 'HDD';
+    return 'Internal';
+  }
+
+  String _getDisplayName() {
+    if (disk.mountPoint == '/') return 'System';
+    if (disk.mountPoint == '/boot') return 'Boot';
+    if (disk.mountPoint.startsWith('/mnt/')) {
+      return disk.mountPoint.split('/').last;
+    }
+    if (disk.mountPoint.startsWith('/media/')) {
+      return disk.mountPoint.split('/').last;
+    }
+    return disk.mountPoint.split('/').last;
   }
 
   Color _getUsageColor(double usage) {
@@ -1154,6 +1922,51 @@ class _DiskCard extends StatelessWidget {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
     }
     return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  }
+}
+
+class _StorageMetric extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  const _StorageMetric({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 6),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: textTheme.labelSmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+            Text(
+              value,
+              style: textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 }
 
@@ -1176,22 +1989,32 @@ class _FileGridItem extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
 
     return Card(
-      color: isSelected ? colorScheme.primaryContainer : null,
+      elevation: 0,
+      color: isSelected
+          ? colorScheme.primaryContainer
+          : colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: isSelected
+            ? BorderSide(color: colorScheme.primary, width: 2)
+            : BorderSide.none,
+      ),
       child: InkWell(
         onTap: onTap,
         onLongPress: onLongPress,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               _buildIcon(context),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               Text(
                 entry.name,
                 style: textTheme.bodySmall?.copyWith(
                   fontWeight: FontWeight.w500,
+                  color: isSelected ? colorScheme.onPrimaryContainer : null,
                 ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
@@ -1239,9 +2062,9 @@ class _FileGridItem extends StatelessWidget {
       height: 48,
       decoration: BoxDecoration(
         color: bgColor,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
       ),
-      child: Icon(icon, color: iconColor, size: 28),
+      child: Icon(icon, color: iconColor, size: 26),
     );
   }
 }
@@ -1268,20 +2091,36 @@ class _FileListItem extends StatelessWidget {
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
-      color: isSelected ? colorScheme.primaryContainer : null,
+      elevation: 0,
+      color: isSelected
+          ? colorScheme.primaryContainer
+          : colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: isSelected
+            ? BorderSide(color: colorScheme.primary, width: 2)
+            : BorderSide.none,
+      ),
       child: ListTile(
         onTap: onTap,
         onLongPress: onLongPress,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         leading: _buildIcon(context),
         title: Text(
           entry.name,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontWeight: FontWeight.w500,
+            color: isSelected ? colorScheme.onPrimaryContainer : null,
+          ),
         ),
         subtitle: Text(
           entry.isDirectory ? 'Folder' : _formatFileSize(entry.size),
           style: textTheme.bodySmall?.copyWith(
-            color: colorScheme.onSurfaceVariant,
+            color: isSelected
+                ? colorScheme.onPrimaryContainer.withValues(alpha: 0.7)
+                : colorScheme.onSurfaceVariant,
           ),
         ),
         trailing: entry.isDirectory
@@ -1345,5 +2184,382 @@ class _FileListItem extends StatelessWidget {
       return '${(bytes / 1024).toStringAsFixed(1)} KB';
     }
     return '$bytes B';
+  }
+}
+
+// ============ Media Preview Pages ============
+
+class _AuthOptionTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _AuthOptionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Material(
+      color: color.withValues(alpha: 0.1),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: color, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: color),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Fido2AuthDialog extends StatefulWidget {
+  @override
+  State<_Fido2AuthDialog> createState() => _Fido2AuthDialogState();
+}
+
+class _Fido2AuthDialogState extends State<_Fido2AuthDialog> {
+  bool _isAuthenticating = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _startAuthentication();
+  }
+
+  Future<void> _startAuthentication() async {
+    setState(() {
+      _isAuthenticating = true;
+      _error = null;
+    });
+
+    // Simulate FIDO2 authentication - in real implementation, this would
+    // call the platform-specific FIDO2 APIs
+    await Future.delayed(const Duration(seconds: 2));
+
+    if (mounted) {
+      // For demo purposes, always succeed
+      Navigator.pop(context, true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return AlertDialog(
+      icon: Container(
+        width: 72,
+        height: 72,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.orange, Colors.deepOrange],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.orange.withValues(alpha: 0.3),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: _isAuthenticating
+            ? const Padding(
+                padding: EdgeInsets.all(20),
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 3,
+                ),
+              )
+            : const Icon(Icons.key_rounded, size: 36, color: Colors.white),
+      ),
+      title: Text(
+          _isAuthenticating ? 'Authenticating...' : 'FIDO2 Authentication'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_isAuthenticating) ...[
+            Text(
+              'Please use your security key or passkey to authenticate',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.touch_app_rounded, color: colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  'Touch your security key',
+                  style: TextStyle(
+                    color: colorScheme.primary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ] else if (_error != null) ...[
+            Icon(Icons.error_outline_rounded,
+                size: 48, color: colorScheme.error),
+            const SizedBox(height: 12),
+            Text(
+              _error!,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: colorScheme.error),
+            ),
+          ],
+        ],
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        if (_error != null)
+          FilledButton(
+            onPressed: _startAuthentication,
+            child: const Text('Retry'),
+          ),
+      ],
+    );
+  }
+}
+
+class _ImageViewerPage extends StatelessWidget {
+  final String imageUrl;
+  final String fileName;
+
+  const _ImageViewerPage({
+    required this.imageUrl,
+    required this.fileName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black.withValues(alpha: 0.7),
+        foregroundColor: Colors.white,
+        title: Text(fileName),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.download_rounded),
+            onPressed: () async {
+              final uri = Uri.parse(imageUrl);
+              if (await canLaunchUrl(uri)) {
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
+              }
+            },
+          ),
+        ],
+      ),
+      body: Center(
+        child: InteractiveViewer(
+          minScale: 0.5,
+          maxScale: 4.0,
+          child: Image.network(
+            imageUrl,
+            fit: BoxFit.contain,
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) return child;
+              return Center(
+                child: CircularProgressIndicator(
+                  value: loadingProgress.expectedTotalBytes != null
+                      ? loadingProgress.cumulativeBytesLoaded /
+                          loadingProgress.expectedTotalBytes!
+                      : null,
+                  color: colorScheme.primary,
+                ),
+              );
+            },
+            errorBuilder: (context, error, stackTrace) {
+              return Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.broken_image_rounded,
+                      size: 64, color: Colors.white54),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Failed to load image',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MediaPlayerPage extends StatefulWidget {
+  final String mediaUrl;
+  final String fileName;
+  final bool isVideo;
+
+  const _MediaPlayerPage({
+    required this.mediaUrl,
+    required this.fileName,
+    required this.isVideo,
+  });
+
+  @override
+  State<_MediaPlayerPage> createState() => _MediaPlayerPageState();
+}
+
+class _MediaPlayerPageState extends State<_MediaPlayerPage> {
+  bool _isLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _initPlayer();
+  }
+
+  Future<void> _initPlayer() async {
+    // For now, just show a placeholder - actual video_player/chewie integration
+    // would require more setup
+    await Future.delayed(const Duration(seconds: 1));
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black.withValues(alpha: 0.7),
+        foregroundColor: Colors.white,
+        title: Text(widget.fileName),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.download_rounded),
+            onPressed: () async {
+              final uri = Uri.parse(widget.mediaUrl);
+              if (await canLaunchUrl(uri)) {
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
+              }
+            },
+          ),
+        ],
+      ),
+      body: Center(
+        child: _isLoading
+            ? const CircularProgressIndicator(color: Colors.white)
+            : _error != null
+                ? Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.error_outline_rounded,
+                          size: 64, color: Colors.white54),
+                      const SizedBox(height: 16),
+                      Text(_error!,
+                          style: const TextStyle(color: Colors.white54)),
+                    ],
+                  )
+                : Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 120,
+                        height: 120,
+                        decoration: BoxDecoration(
+                          color: colorScheme.primaryContainer,
+                          borderRadius: BorderRadius.circular(60),
+                        ),
+                        child: Icon(
+                          widget.isVideo
+                              ? Icons.movie_rounded
+                              : Icons.audiotrack_rounded,
+                          size: 60,
+                          color: colorScheme.onPrimaryContainer,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        widget.fileName,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 32),
+                      FilledButton.icon(
+                        onPressed: () async {
+                          final uri = Uri.parse(widget.mediaUrl);
+                          if (await canLaunchUrl(uri)) {
+                            await launchUrl(uri,
+                                mode: LaunchMode.externalApplication);
+                          }
+                        },
+                        icon: const Icon(Icons.open_in_new_rounded),
+                        label: const Text('Open in External Player'),
+                      ),
+                    ],
+                  ),
+      ),
+    );
   }
 }

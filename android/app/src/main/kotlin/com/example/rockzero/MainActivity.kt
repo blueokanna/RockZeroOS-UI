@@ -392,10 +392,14 @@ class MainActivity : FlutterFragmentActivity() {
             }
             
             try {
+                val responseBytes = data.getByteArrayExtra(Fido.FIDO2_KEY_RESPONSE_EXTRA)
+                if (responseBytes == null) {
+                    result.error("FIDO2_ERROR", "No response data received", null)
+                    return
+                }
+                
                 if (operation == "register") {
-                    val response = AuthenticatorAttestationResponse.deserializeFromBytes(
-                        data.getByteArrayExtra(Fido.FIDO2_KEY_RESPONSE_EXTRA)
-                    )
+                    val response = AuthenticatorAttestationResponse.deserializeFromBytes(responseBytes)
                     result.success(mapOf(
                         "credentialId" to android.util.Base64.encodeToString(
                             response.keyHandle, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP
@@ -408,9 +412,7 @@ class MainActivity : FlutterFragmentActivity() {
                         )
                     ))
                 } else if (operation == "authenticate") {
-                    val response = AuthenticatorAssertionResponse.deserializeFromBytes(
-                        data.getByteArrayExtra(Fido.FIDO2_KEY_RESPONSE_EXTRA)
-                    )
+                    val response = AuthenticatorAssertionResponse.deserializeFromBytes(responseBytes)
                     result.success(mapOf(
                         "credentialId" to android.util.Base64.encodeToString(
                             response.keyHandle, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP

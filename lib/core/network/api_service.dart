@@ -117,6 +117,105 @@ class ApiService {
     return InviteCodeResponse.fromJson(response.data);
   }
 
+  /// 登出
+  Future<void> logout() async {
+    await _dio.post('/api/v1/auth/logout');
+  }
+
+  // ============ ZKP API (零知识证明) ============
+
+  /// 生成 ZKP 密码证明
+  Future<ZkpProofResponse> generateZkpProof(String password) async {
+    final response = await _dio.post(
+      '/api/v1/auth/zkp/proof',
+      data: {'password': password},
+    );
+    return ZkpProofResponse.fromJson(response.data);
+  }
+
+  /// 生成增强的 ZKP 密码证明
+  Future<EnhancedZkpProofResponse> generateEnhancedZkpProof(
+      String password) async {
+    final response = await _dio.post(
+      '/api/v1/auth/zkp/proof-enhanced',
+      data: {'password': password},
+    );
+    return EnhancedZkpProofResponse.fromJson(response.data);
+  }
+
+  /// 使用 ZKP 登录
+  Future<AuthResponse> loginWithZkp({
+    required String email,
+    required ZkpPasswordProof proof,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/auth/login/zkp',
+      data: {
+        'email': email,
+        'proof': proof.toJson(),
+      },
+    );
+    return AuthResponse.fromJson(response.data);
+  }
+
+  /// 使用增强 ZKP 登录
+  Future<AuthResponse> loginWithEnhancedZkp({
+    required String email,
+    required EnhancedZkpProof proof,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/auth/login/zkp-enhanced',
+      data: {
+        'email': email,
+        'proof': proof.toJson(),
+      },
+    );
+    return AuthResponse.fromJson(response.data);
+  }
+
+  /// 检查密码强度
+  Future<PasswordStrengthResponse> checkPasswordStrength(
+      String password) async {
+    final response = await _dio.post(
+      '/api/v1/auth/zkp/password-strength',
+      data: {'password': password},
+    );
+    return PasswordStrengthResponse.fromJson(response.data);
+  }
+
+  /// 生成范围证明
+  Future<RangeProofResponse> generateRangeProof({
+    required int value,
+    required int nBits,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/auth/zkp/range-proof',
+      data: {'value': value, 'n_bits': nBits},
+    );
+    return RangeProofResponse.fromJson(response.data);
+  }
+
+  /// 验证范围证明
+  Future<bool> verifyRangeProof(RangeProofData proof) async {
+    final response = await _dio.post(
+      '/api/v1/auth/zkp/range-proof/verify',
+      data: {'proof': proof.toJson()},
+    );
+    return response.data['valid'] ?? false;
+  }
+
+  /// 派生加密密钥
+  Future<String> deriveEncryptionKey({
+    required String password,
+    required String context,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/auth/zkp/derive-key',
+      data: {'password': password, 'context': context},
+    );
+    return response.data['key'] ?? '';
+  }
+
   // ============ Files API ============
 
   Future<List<FileResponse>> uploadFiles(
@@ -1017,5 +1116,161 @@ class MediaStreamInfo {
       bitrate: json['bitrate'],
       supportsRange: json['supports_range'] ?? false,
     );
+  }
+}
+
+// ============ Secure Storage API (零知识加密存储) ============
+
+/// 安全存储响应
+class SecureStorageResponse {
+  final int blockId;
+  final String message;
+
+  SecureStorageResponse({required this.blockId, required this.message});
+
+  factory SecureStorageResponse.fromJson(Map<String, dynamic> json) {
+    return SecureStorageResponse(
+      blockId: json['block_id'] ?? 0,
+      message: json['message'] ?? '',
+    );
+  }
+}
+
+/// 安全存储数据响应
+class SecureDataResponse {
+  final String data;
+  final int blockId;
+
+  SecureDataResponse({required this.data, required this.blockId});
+
+  factory SecureDataResponse.fromJson(Map<String, dynamic> json) {
+    return SecureDataResponse(
+      data: json['data'] ?? '',
+      blockId: json['block_id'] ?? 0,
+    );
+  }
+}
+
+/// 完整性检查响应
+class IntegrityCheckResponse {
+  final int totalBlocks;
+  final List<int> corruptedBlocks;
+  final bool isHealthy;
+
+  IntegrityCheckResponse({
+    required this.totalBlocks,
+    required this.corruptedBlocks,
+    required this.isHealthy,
+  });
+
+  factory IntegrityCheckResponse.fromJson(Map<String, dynamic> json) {
+    return IntegrityCheckResponse(
+      totalBlocks: json['total_blocks'] ?? 0,
+      corruptedBlocks: List<int>.from(json['corrupted_blocks'] ?? []),
+      isHealthy: json['is_healthy'] ?? true,
+    );
+  }
+}
+
+/// 数据库统计响应
+class DatabaseStatsResponse {
+  final int totalBlocks;
+  final int totalSize;
+  final String dbPath;
+  final String recoveryPath;
+
+  DatabaseStatsResponse({
+    required this.totalBlocks,
+    required this.totalSize,
+    required this.dbPath,
+    required this.recoveryPath,
+  });
+
+  factory DatabaseStatsResponse.fromJson(Map<String, dynamic> json) {
+    return DatabaseStatsResponse(
+      totalBlocks: json['total_blocks'] ?? 0,
+      totalSize: json['total_size'] ?? 0,
+      dbPath: json['db_path'] ?? '',
+      recoveryPath: json['recovery_path'] ?? '',
+    );
+  }
+}
+
+extension SecureStorageApiExtension on ApiService {
+  /// 初始化安全数据库
+  Future<DatabaseStatsResponse> initSecureDatabase(
+      String masterPassword) async {
+    final response = await post(
+      '/api/v1/secure-storage/init',
+      data: {'master_password': masterPassword},
+    );
+    return DatabaseStatsResponse.fromJson(response.data);
+  }
+
+  /// 存储加密数据
+  Future<SecureStorageResponse> storeSecureData({
+    required String masterPassword,
+    required String data,
+  }) async {
+    final response = await post(
+      '/api/v1/secure-storage/store',
+      data: {'master_password': masterPassword, 'data': data},
+    );
+    return SecureStorageResponse.fromJson(response.data);
+  }
+
+  /// 读取加密数据
+  Future<SecureDataResponse> retrieveSecureData({
+    required String masterPassword,
+    required int blockId,
+  }) async {
+    final response = await post(
+      '/api/v1/secure-storage/retrieve',
+      data: {'master_password': masterPassword, 'block_id': blockId},
+    );
+    return SecureDataResponse.fromJson(response.data);
+  }
+
+  /// 删除加密数据
+  Future<void> deleteSecureData({
+    required String masterPassword,
+    required int blockId,
+  }) async {
+    await post(
+      '/api/v1/secure-storage/delete',
+      data: {'master_password': masterPassword, 'block_id': blockId},
+    );
+  }
+
+  /// 检查数据完整性
+  Future<IntegrityCheckResponse> checkSecureStorageIntegrity(
+    String masterPassword,
+  ) async {
+    final response = await post(
+      '/api/v1/secure-storage/integrity',
+      data: {'master_password': masterPassword},
+    );
+    return IntegrityCheckResponse.fromJson(response.data);
+  }
+
+  /// 修复损坏的数据
+  Future<Map<String, dynamic>> repairSecureStorage(
+      String masterPassword) async {
+    final response = await post(
+      '/api/v1/secure-storage/repair',
+      data: {'master_password': masterPassword},
+    );
+    return response.data;
+  }
+
+  /// 获取数据库统计信息
+  Future<DatabaseStatsResponse> getSecureStorageStats(
+    String masterPassword,
+  ) async {
+    final response = await post(
+      '/api/v1/secure-storage/stats',
+      data: {'master_password': masterPassword},
+    );
+    return DatabaseStatsResponse.fromJson(response.data);
   }
 }

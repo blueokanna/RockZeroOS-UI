@@ -80,6 +80,66 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
+  /// Login with biometric - uses stored credentials
+  Future<bool> loginWithBiometric() async {
+    state = state.copyWith(isLoading: true, error: null);
+
+    try {
+      // Check if we have stored credentials
+      final accessToken = await _storage.read(key: 'access_token');
+      final refreshToken = await _storage.read(key: 'refresh_token');
+      final userId = await _storage.read(key: 'user_id');
+      final userEmail = await _storage.read(key: 'user_email');
+      final userRole = await _storage.read(key: 'user_role');
+
+      if (accessToken != null && userId != null && userEmail != null) {
+        // We have stored session, validate it
+        try {
+          // Try to refresh the token to ensure it's valid
+          if (refreshToken != null) {
+            final newTokens = await _api.refreshToken(refreshToken);
+            await _storage.write(
+                key: 'access_token', value: newTokens.accessToken);
+            await _storage.write(
+                key: 'refresh_token', value: newTokens.refreshToken);
+          }
+
+          // Create user from stored data
+          final user = User(
+            id: userId,
+            username: userEmail.split('@').first,
+            email: userEmail,
+            role: userRole ?? 'user',
+            createdAt: DateTime.now(),
+          );
+
+          state = state.copyWith(
+            user: user,
+            isLoading: false,
+            isAuthenticated: true,
+          );
+          return true;
+        } catch (_) {
+          // Token refresh failed, need to login again
+          state = state.copyWith(
+            isLoading: false,
+            error: 'Session expired. Please sign in with password.',
+          );
+          return false;
+        }
+      }
+
+      state = state.copyWith(
+        isLoading: false,
+        error: 'No stored credentials. Please sign in first.',
+      );
+      return false;
+    } catch (e) {
+      state = state.copyWith(isLoading: false, error: 'Biometric login failed');
+      return false;
+    }
+  }
+
   Future<bool> register({
     required String username,
     required String email,

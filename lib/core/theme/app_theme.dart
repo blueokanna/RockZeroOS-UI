@@ -48,7 +48,6 @@ class SeedColorNotifier extends Notifier<Color> {
   }
 }
 
-// Dynamic color enabled provider
 final dynamicColorEnabledProvider =
     NotifierProvider<DynamicColorNotifier, bool>(DynamicColorNotifier.new);
 
@@ -61,12 +60,10 @@ class DynamicColorNotifier extends Notifier<bool> {
 
   Future<void> setEnabled(bool enabled) async {
     if (enabled) {
-      // Check if dynamic color is available
       final available = await DynamicColorService.isDynamicColorAvailable();
       if (!available) {
         return;
       }
-      // Fetch and apply system color
       final systemColor = await DynamicColorService.getAccentColor();
       if (systemColor != null) {
         ref.read(systemAccentColorProvider.notifier).setColor(systemColor);
@@ -78,7 +75,6 @@ class DynamicColorNotifier extends Notifier<bool> {
   }
 }
 
-// System accent color provider (from Android/iOS)
 final systemAccentColorProvider =
     NotifierProvider<SystemAccentColorNotifier, Color?>(
         SystemAccentColorNotifier.new);

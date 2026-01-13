@@ -61,6 +61,105 @@ Map<String, dynamic> _$InviteCodeResponseToJson(InviteCodeResponse instance) =>
       'expires_in_seconds': instance.expiresInSeconds,
     };
 
+ZkpPasswordProof _$ZkpPasswordProofFromJson(Map<String, dynamic> json) =>
+    ZkpPasswordProof(
+      commitment: json['commitment'] as String,
+      challenge: json['challenge'] as String,
+      response: json['response'] as String,
+      blindingCommitment: json['blinding_commitment'] as String,
+    );
+
+Map<String, dynamic> _$ZkpPasswordProofToJson(ZkpPasswordProof instance) =>
+    <String, dynamic>{
+      'commitment': instance.commitment,
+      'challenge': instance.challenge,
+      'response': instance.response,
+      'blinding_commitment': instance.blindingCommitment,
+    };
+
+EnhancedZkpProof _$EnhancedZkpProofFromJson(Map<String, dynamic> json) =>
+    EnhancedZkpProof(
+      schnorrProof: ZkpPasswordProof.fromJson(
+          json['schnorr_proof'] as Map<String, dynamic>),
+      strengthProof: json['strength_proof'] as String?,
+      timestamp: (json['timestamp'] as num).toInt(),
+      nonce: json['nonce'] as String,
+    );
+
+Map<String, dynamic> _$EnhancedZkpProofToJson(EnhancedZkpProof instance) =>
+    <String, dynamic>{
+      'schnorr_proof': instance.schnorrProof,
+      'strength_proof': instance.strengthProof,
+      'timestamp': instance.timestamp,
+      'nonce': instance.nonce,
+    };
+
+ZkpProofResponse _$ZkpProofResponseFromJson(Map<String, dynamic> json) =>
+    ZkpProofResponse(
+      proof: ZkpPasswordProof.fromJson(json['proof'] as Map<String, dynamic>),
+    );
+
+Map<String, dynamic> _$ZkpProofResponseToJson(ZkpProofResponse instance) =>
+    <String, dynamic>{
+      'proof': instance.proof,
+    };
+
+EnhancedZkpProofResponse _$EnhancedZkpProofResponseFromJson(
+        Map<String, dynamic> json) =>
+    EnhancedZkpProofResponse(
+      proof: EnhancedZkpProof.fromJson(json['proof'] as Map<String, dynamic>),
+    );
+
+Map<String, dynamic> _$EnhancedZkpProofResponseToJson(
+        EnhancedZkpProofResponse instance) =>
+    <String, dynamic>{
+      'proof': instance.proof,
+    };
+
+PasswordStrengthResponse _$PasswordStrengthResponseFromJson(
+        Map<String, dynamic> json) =>
+    PasswordStrengthResponse(
+      entropy: (json['entropy'] as num).toInt(),
+      entropyBits: (json['entropy_bits'] as num).toDouble(),
+      strength: json['strength'] as String,
+      suggestions: (json['suggestions'] as List<dynamic>)
+          .map((e) => e as String)
+          .toList(),
+    );
+
+Map<String, dynamic> _$PasswordStrengthResponseToJson(
+        PasswordStrengthResponse instance) =>
+    <String, dynamic>{
+      'entropy': instance.entropy,
+      'entropy_bits': instance.entropyBits,
+      'strength': instance.strength,
+      'suggestions': instance.suggestions,
+    };
+
+RangeProofData _$RangeProofDataFromJson(Map<String, dynamic> json) =>
+    RangeProofData(
+      proof: json['proof'] as String,
+      commitment: json['commitment'] as String,
+      nBits: (json['n_bits'] as num).toInt(),
+    );
+
+Map<String, dynamic> _$RangeProofDataToJson(RangeProofData instance) =>
+    <String, dynamic>{
+      'proof': instance.proof,
+      'commitment': instance.commitment,
+      'n_bits': instance.nBits,
+    };
+
+RangeProofResponse _$RangeProofResponseFromJson(Map<String, dynamic> json) =>
+    RangeProofResponse(
+      proof: RangeProofData.fromJson(json['proof'] as Map<String, dynamic>),
+    );
+
+Map<String, dynamic> _$RangeProofResponseToJson(RangeProofResponse instance) =>
+    <String, dynamic>{
+      'proof': instance.proof,
+    };
+
 FileResponse _$FileResponseFromJson(Map<String, dynamic> json) => FileResponse(
       id: json['id'] as String,
       filename: json['filename'] as String,
@@ -293,6 +392,9 @@ HardwareInfo _$HardwareInfoFromJson(Map<String, dynamic> json) => HardwareInfo(
       usbDevices: (json['usb_devices'] as List<dynamic>)
           .map((e) => UsbDevice.fromJson(e as Map<String, dynamic>))
           .toList(),
+      networkInterfaces: (json['network_interfaces'] as List<dynamic>?)
+          ?.map((e) => NetworkInterfaceInfo.fromJson(e as Map<String, dynamic>))
+          .toList(),
     );
 
 Map<String, dynamic> _$HardwareInfoToJson(HardwareInfo instance) =>
@@ -302,6 +404,35 @@ Map<String, dynamic> _$HardwareInfoToJson(HardwareInfo instance) =>
       'memory': instance.memory,
       'disks': instance.disks,
       'usb_devices': instance.usbDevices,
+      'network_interfaces': instance.networkInterfaces,
+    };
+
+NetworkInterfaceInfo _$NetworkInterfaceInfoFromJson(
+        Map<String, dynamic> json) =>
+    NetworkInterfaceInfo(
+      name: json['name'] as String,
+      macAddress: json['mac_address'] as String,
+      ipAddresses: (json['ip_addresses'] as List<dynamic>)
+          .map((e) => e as String)
+          .toList(),
+      isUp: json['is_up'] as bool,
+      speedMbps: (json['speed_mbps'] as num?)?.toInt(),
+      interfaceType: json['interface_type'] as String,
+      rxBytes: (json['rx_bytes'] as num).toInt(),
+      txBytes: (json['tx_bytes'] as num).toInt(),
+    );
+
+Map<String, dynamic> _$NetworkInterfaceInfoToJson(
+        NetworkInterfaceInfo instance) =>
+    <String, dynamic>{
+      'name': instance.name,
+      'mac_address': instance.macAddress,
+      'ip_addresses': instance.ipAddresses,
+      'is_up': instance.isUp,
+      'speed_mbps': instance.speedMbps,
+      'interface_type': instance.interfaceType,
+      'rx_bytes': instance.rxBytes,
+      'tx_bytes': instance.txBytes,
     };
 
 UsbDevice _$UsbDeviceFromJson(Map<String, dynamic> json) => UsbDevice(

@@ -683,13 +683,20 @@ class _AppIcon extends StatelessWidget {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: colorScheme.primaryContainer,
-        borderRadius: BorderRadius.circular(size * 0.25),
+        gradient: LinearGradient(
+          colors: [
+            colorScheme.primaryContainer,
+            colorScheme.secondaryContainer,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(size * 0.22),
         boxShadow: [
           BoxShadow(
-            color: colorScheme.shadow.withValues(alpha: 0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+            color: colorScheme.shadow.withValues(alpha: 0.15),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
@@ -698,19 +705,16 @@ class _AppIcon extends StatelessWidget {
           ? Image.network(
               iconUrl,
               fit: BoxFit.cover,
-              errorBuilder: (c, e, s) => Icon(
-                Icons.apps_rounded,
-                size: size * 0.5,
-                color: colorScheme.onPrimaryContainer,
-              ),
+              errorBuilder: (c, e, s) => _buildFallbackIcon(context),
               loadingBuilder: (context, child, loadingProgress) {
                 if (loadingProgress == null) return child;
                 return Center(
                   child: SizedBox(
-                    width: size * 0.4,
-                    height: size * 0.4,
+                    width: size * 0.35,
+                    height: size * 0.35,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
+                      color: colorScheme.primary,
                       value: loadingProgress.expectedTotalBytes != null
                           ? loadingProgress.cumulativeBytesLoaded /
                               loadingProgress.expectedTotalBytes!
@@ -720,11 +724,28 @@ class _AppIcon extends StatelessWidget {
                 );
               },
             )
-          : Icon(
-              Icons.apps_rounded,
-              size: size * 0.5,
-              color: colorScheme.onPrimaryContainer,
-            ),
+          : _buildFallbackIcon(context),
+    );
+  }
+
+  Widget _buildFallbackIcon(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            colorScheme.primary.withValues(alpha: 0.8),
+            colorScheme.tertiary.withValues(alpha: 0.8),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Icon(
+        Icons.apps_rounded,
+        size: size * 0.5,
+        color: Colors.white,
+      ),
     );
   }
 }

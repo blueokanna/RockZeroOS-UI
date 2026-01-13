@@ -73,6 +73,127 @@ class InviteCodeResponse {
   Map<String, dynamic> toJson() => _$InviteCodeResponseToJson(this);
 }
 
+// ============ ZKP Models (零知识证明) ============
+
+/// ZKP 密码证明数据
+@JsonSerializable()
+class ZkpPasswordProof {
+  final String commitment;
+  final String challenge;
+  final String response;
+  @JsonKey(name: 'blinding_commitment')
+  final String blindingCommitment;
+
+  ZkpPasswordProof({
+    required this.commitment,
+    required this.challenge,
+    required this.response,
+    required this.blindingCommitment,
+  });
+
+  factory ZkpPasswordProof.fromJson(Map<String, dynamic> json) =>
+      _$ZkpPasswordProofFromJson(json);
+  Map<String, dynamic> toJson() => _$ZkpPasswordProofToJson(this);
+}
+
+/// 增强的 ZKP 证明
+@JsonSerializable()
+class EnhancedZkpProof {
+  @JsonKey(name: 'schnorr_proof')
+  final ZkpPasswordProof schnorrProof;
+  @JsonKey(name: 'strength_proof')
+  final String? strengthProof;
+  final int timestamp;
+  final String nonce;
+
+  EnhancedZkpProof({
+    required this.schnorrProof,
+    this.strengthProof,
+    required this.timestamp,
+    required this.nonce,
+  });
+
+  factory EnhancedZkpProof.fromJson(Map<String, dynamic> json) =>
+      _$EnhancedZkpProofFromJson(json);
+  Map<String, dynamic> toJson() => _$EnhancedZkpProofToJson(this);
+}
+
+/// ZKP 证明响应
+@JsonSerializable()
+class ZkpProofResponse {
+  final ZkpPasswordProof proof;
+
+  ZkpProofResponse({required this.proof});
+
+  factory ZkpProofResponse.fromJson(Map<String, dynamic> json) =>
+      _$ZkpProofResponseFromJson(json);
+  Map<String, dynamic> toJson() => _$ZkpProofResponseToJson(this);
+}
+
+/// 增强 ZKP 证明响应
+@JsonSerializable()
+class EnhancedZkpProofResponse {
+  final EnhancedZkpProof proof;
+
+  EnhancedZkpProofResponse({required this.proof});
+
+  factory EnhancedZkpProofResponse.fromJson(Map<String, dynamic> json) =>
+      _$EnhancedZkpProofResponseFromJson(json);
+  Map<String, dynamic> toJson() => _$EnhancedZkpProofResponseToJson(this);
+}
+
+/// 密码强度响应
+@JsonSerializable()
+class PasswordStrengthResponse {
+  final int entropy;
+  @JsonKey(name: 'entropy_bits')
+  final double entropyBits;
+  final String strength;
+  final List<String> suggestions;
+
+  PasswordStrengthResponse({
+    required this.entropy,
+    required this.entropyBits,
+    required this.strength,
+    required this.suggestions,
+  });
+
+  factory PasswordStrengthResponse.fromJson(Map<String, dynamic> json) =>
+      _$PasswordStrengthResponseFromJson(json);
+  Map<String, dynamic> toJson() => _$PasswordStrengthResponseToJson(this);
+}
+
+/// 范围证明数据
+@JsonSerializable()
+class RangeProofData {
+  final String proof;
+  final String commitment;
+  @JsonKey(name: 'n_bits')
+  final int nBits;
+
+  RangeProofData({
+    required this.proof,
+    required this.commitment,
+    required this.nBits,
+  });
+
+  factory RangeProofData.fromJson(Map<String, dynamic> json) =>
+      _$RangeProofDataFromJson(json);
+  Map<String, dynamic> toJson() => _$RangeProofDataToJson(this);
+}
+
+/// 范围证明响应
+@JsonSerializable()
+class RangeProofResponse {
+  final RangeProofData proof;
+
+  RangeProofResponse({required this.proof});
+
+  factory RangeProofResponse.fromJson(Map<String, dynamic> json) =>
+      _$RangeProofResponseFromJson(json);
+  Map<String, dynamic> toJson() => _$RangeProofResponseToJson(this);
+}
+
 // ============ File Models ============
 
 @JsonSerializable()
@@ -382,6 +503,8 @@ class HardwareInfo {
   final List<DiskInfo> disks;
   @JsonKey(name: 'usb_devices')
   final List<UsbDevice> usbDevices;
+  @JsonKey(name: 'network_interfaces')
+  final List<NetworkInterfaceInfo>? networkInterfaces;
 
   HardwareInfo({
     required this.system,
@@ -389,11 +512,46 @@ class HardwareInfo {
     required this.memory,
     required this.disks,
     required this.usbDevices,
+    this.networkInterfaces,
   });
 
   factory HardwareInfo.fromJson(Map<String, dynamic> json) =>
       _$HardwareInfoFromJson(json);
   Map<String, dynamic> toJson() => _$HardwareInfoToJson(this);
+}
+
+@JsonSerializable()
+class NetworkInterfaceInfo {
+  final String name;
+  @JsonKey(name: 'mac_address')
+  final String macAddress;
+  @JsonKey(name: 'ip_addresses')
+  final List<String> ipAddresses;
+  @JsonKey(name: 'is_up')
+  final bool isUp;
+  @JsonKey(name: 'speed_mbps')
+  final int? speedMbps;
+  @JsonKey(name: 'interface_type')
+  final String interfaceType;
+  @JsonKey(name: 'rx_bytes')
+  final int rxBytes;
+  @JsonKey(name: 'tx_bytes')
+  final int txBytes;
+
+  NetworkInterfaceInfo({
+    required this.name,
+    required this.macAddress,
+    required this.ipAddresses,
+    required this.isUp,
+    this.speedMbps,
+    required this.interfaceType,
+    required this.rxBytes,
+    required this.txBytes,
+  });
+
+  factory NetworkInterfaceInfo.fromJson(Map<String, dynamic> json) =>
+      _$NetworkInterfaceInfoFromJson(json);
+  Map<String, dynamic> toJson() => _$NetworkInterfaceInfoToJson(this);
 }
 
 @JsonSerializable()
