@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 
 import '../../../../core/models/api_models.dart';
+import '../../../../core/theme/app_theme.dart';
 
 class StorageCard extends StatelessWidget {
   final AsyncValue<StorageInfo?> storageInfo;
@@ -15,14 +17,25 @@ class StorageCard extends StatelessWidget {
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(Icons.storage, color: colorScheme.primary),
-                const SizedBox(width: 8),
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.storage_rounded,
+                    color: colorScheme.onPrimaryContainer,
+                  ),
+                ),
+                const SizedBox(width: 12),
                 Text(
                   'Storage',
                   style: textTheme.titleMedium?.copyWith(
@@ -31,7 +44,7 @@ class StorageCard extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 24),
             storageInfo.when(
               data: (info) {
                 if (info == null) {
@@ -39,7 +52,7 @@ class StorageCard extends StatelessWidget {
                 }
                 return _buildContent(context, info);
               },
-              loading: () => _buildLoadingState(),
+              loading: () => _buildLoadingState(context),
               error: (e, s) => _buildErrorState(context),
             ),
           ],
@@ -55,85 +68,126 @@ class StorageCard extends StatelessWidget {
 
     return Column(
       children: [
-        Stack(
-          alignment: Alignment.center,
-          children: [
-            SizedBox(
-              width: 120,
-              height: 120,
-              child: CircularProgressIndicator(
-                value: info.usagePercentage / 100,
-                strokeWidth: 12,
-                backgroundColor: colorScheme.surfaceContainerHighest,
-                valueColor: AlwaysStoppedAnimation(usageColor),
-              ),
-            ),
-            Column(
-              mainAxisSize: MainAxisSize.min,
+        // Circular progress with animated value
+        TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0, end: info.usagePercentage / 100),
+          duration: M3Durations.long2,
+          curve: M3Curves.emphasized,
+          builder: (context, value, child) {
+            return Stack(
+              alignment: Alignment.center,
               children: [
-                Text(
-                  '${info.usagePercentage.toStringAsFixed(1)}%',
-                  style: textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: usageColor,
+                SizedBox(
+                  width: 140,
+                  height: 140,
+                  child: CircularProgressIndicator(
+                    value: value,
+                    strokeWidth: 14,
+                    backgroundColor: colorScheme.surfaceContainerHighest,
+                    valueColor: AlwaysStoppedAnimation(usageColor),
+                    strokeCap: StrokeCap.round,
                   ),
                 ),
-                Text(
-                  'Used',
-                  style: textTheme.bodySmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${(value * 100).toStringAsFixed(1)}%',
+                      style: textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: usageColor,
+                      ),
+                    ),
+                    Text(
+                      'Used',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
               ],
-            ),
-          ],
+            );
+          },
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 28),
         _StorageRow(
+          icon: Icons.pie_chart_rounded,
           label: 'Used',
           value: _formatBytes(info.usedSpace),
           color: usageColor,
-        ),
-        const SizedBox(height: 8),
+        ).animate().fadeIn(delay: 100.ms).slideX(begin: -0.05),
+        const SizedBox(height: 12),
         _StorageRow(
+          icon: Icons.check_circle_rounded,
           label: 'Available',
           value: _formatBytes(info.availableSpace),
           color: Colors.green,
-        ),
-        const SizedBox(height: 8),
+        ).animate().fadeIn(delay: 200.ms).slideX(begin: -0.05),
+        const SizedBox(height: 12),
         _StorageRow(
+          icon: Icons.storage_rounded,
           label: 'Total',
           value: _formatBytes(info.totalSpace),
           color: colorScheme.onSurfaceVariant,
-        ),
+        ).animate().fadeIn(delay: 300.ms).slideX(begin: -0.05),
       ],
     );
   }
 
-  Widget _buildLoadingState() {
+  Widget _buildLoadingState(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Column(
       children: [
         Container(
-          width: 120,
-          height: 120,
+          width: 140,
+          height: 140,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: Colors.grey.withValues(alpha: 0.1),
+            color: colorScheme.surfaceContainerHighest,
+          ),
+          child: const Center(
+            child: CircularProgressIndicator(),
           ),
         ),
-        const SizedBox(height: 20),
-        const LinearProgressIndicator(),
+        const SizedBox(height: 28),
+        ...List.generate(
+            3,
+            (index) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Container(
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                )),
       ],
     );
   }
 
   Widget _buildErrorState(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+
     return Center(
       child: Column(
         children: [
-          Icon(Icons.error_outline, size: 48, color: colorScheme.error),
-          const SizedBox(height: 8),
+          Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: colorScheme.errorContainer,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.error_outline_rounded,
+              size: 40,
+              color: colorScheme.onErrorContainer,
+            ),
+          ),
+          const SizedBox(height: 16),
           Text(
             'Failed to load storage info',
             style: TextStyle(color: colorScheme.error),
@@ -158,17 +212,19 @@ class StorageCard extends StatelessWidget {
   Color _getUsageColor(double usage) {
     if (usage >= 90) return Colors.red;
     if (usage >= 70) return Colors.orange;
-    if (usage >= 50) return Colors.yellow.shade700;
+    if (usage >= 50) return Colors.amber.shade700;
     return Colors.green;
   }
 }
 
 class _StorageRow extends StatelessWidget {
+  final IconData icon;
   final String label;
   final String value;
   final Color color;
 
   const _StorageRow({
+    required this.icon,
     required this.label,
     required this.value,
     required this.color,
@@ -177,27 +233,32 @@ class _StorageRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
 
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Row(
-          children: [
-            Container(
-              width: 12,
-              height: 12,
-              decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(3),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(label, style: textTheme.bodyMedium),
-          ],
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, size: 18, color: color),
         ),
+        const SizedBox(width: 12),
+        Text(
+          label,
+          style: textTheme.bodyMedium?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const Spacer(),
         Text(
           value,
-          style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+          style: textTheme.bodyMedium?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ],
     );

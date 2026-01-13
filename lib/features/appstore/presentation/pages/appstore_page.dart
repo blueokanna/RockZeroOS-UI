@@ -4,17 +4,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
+import '../../../../core/theme/app_theme.dart';
 
-final storeAppsProvider = FutureProvider.autoDispose<List<AppStoreItem>>((
-  ref,
-) async {
+final storeAppsProvider =
+    FutureProvider.autoDispose<List<AppStoreItem>>((ref) async {
   final api = ref.read(apiServiceProvider);
   return await api.listStoreApps();
 });
 
-final installedAppsProvider = FutureProvider.autoDispose<List<DockerApp>>((
-  ref,
-) async {
+final installedAppsProvider =
+    FutureProvider.autoDispose<List<DockerApp>>((ref) async {
   final api = ref.read(apiServiceProvider);
   return await api.listInstalledApps();
 });
@@ -47,10 +46,16 @@ class _AppStorePageState extends ConsumerState<AppStorePage>
       body: NestedScrollView(
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           SliverAppBar.large(
-            title: const Text('App Store'),
+            title: Row(
+              children: [
+                Icon(Icons.store_rounded, size: 28),
+                const SizedBox(width: 12),
+                const Text('App Store'),
+              ],
+            ),
             actions: [
               IconButton(
-                icon: const Icon(Icons.refresh),
+                icon: const Icon(Icons.refresh_rounded),
                 onPressed: () {
                   ref.invalidate(storeAppsProvider);
                   ref.invalidate(installedAppsProvider);
@@ -59,9 +64,17 @@ class _AppStorePageState extends ConsumerState<AppStorePage>
             ],
             bottom: TabBar(
               controller: _tabController,
-              tabs: const [
-                Tab(icon: Icon(Icons.store), text: 'Store'),
-                Tab(icon: Icon(Icons.apps), text: 'Installed'),
+              indicatorSize: TabBarIndicatorSize.label,
+              dividerColor: Colors.transparent,
+              tabs: [
+                Tab(
+                  icon: Icon(Icons.store_rounded),
+                  text: 'Store',
+                ),
+                Tab(
+                  icon: Icon(Icons.apps_rounded),
+                  text: 'Installed',
+                ),
               ],
             ),
           ),
@@ -79,54 +92,52 @@ class _StoreTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final storeApps = ref.watch(storeAppsProvider);
+
     return storeApps.when(
       data: (apps) {
         if (apps.isEmpty) return _buildEmptyState(context, 'No apps available');
+
         final categories = <String, List<AppStoreItem>>{};
         for (final app in apps) {
           categories.putIfAbsent(app.category, () => []).add(app);
         }
+
+        // Sort categories
+        final sortedCategories = categories.keys.toList()
+          ..sort((a, b) {
+            const order = [
+              'Media',
+              'Cloud Storage',
+              'Download',
+              'Smart Home',
+              'Network',
+              'Database',
+              'Productivity',
+              'Management'
+            ];
+            final aIndex = order.indexOf(a);
+            final bIndex = order.indexOf(b);
+            if (aIndex == -1 && bIndex == -1) return a.compareTo(b);
+            if (aIndex == -1) return 1;
+            if (bIndex == -1) return -1;
+            return aIndex.compareTo(bIndex);
+          });
+
         return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: categories.length,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          itemCount: sortedCategories.length,
           itemBuilder: (context, index) {
-            final category = categories.keys.elementAt(index);
+            final category = sortedCategories[index];
             final categoryApps = categories[category]!;
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    category,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                SizedBox(
-                  height: 200,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: categoryApps.length,
-                    itemBuilder: (context, appIndex) {
-                      return _StoreAppCard(
-                            app: categoryApps[appIndex],
-                            onInstall: () => _installApp(
-                              context,
-                              ref,
-                              categoryApps[appIndex],
-                            ),
-                          )
-                          .animate(delay: (50 * appIndex).ms)
-                          .fadeIn()
-                          .slideX(begin: 0.1);
-                    },
-                  ),
-                ),
-                const SizedBox(height: 16),
-              ],
-            );
+
+            return _CategorySection(
+              category: category,
+              apps: categoryApps,
+              onInstall: (app) => _installApp(context, ref, app),
+            )
+                .animate(delay: (80 * index).ms)
+                .fadeIn(curve: M3Curves.emphasizedDecelerate)
+                .slideY(begin: 0.05, curve: M3Curves.emphasized);
           },
         );
       },
@@ -136,27 +147,28 @@ class _StoreTab extends ConsumerWidget {
   }
 
   Future<void> _installApp(
-    BuildContext context,
-    WidgetRef ref,
-    AppStoreItem app,
-  ) async {
+      BuildContext context, WidgetRef ref, AppStoreItem app) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        icon: _AppIcon(iconUrl: app.icon, size: 64),
         title: Text('Install ${app.displayName}?'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(app.description),
-            const SizedBox(height: 16),
-            Text('Image: ${app.dockerImage}:${app.recommendedTag}'),
-            if (app.defaultPorts.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Ports: ${app.defaultPorts.map((p) => "${p.hostPort}:${p.containerPort}").join(", ")}',
+            const SizedBox(height: 20),
+            _InfoRow(
+                icon: Icons.image_rounded,
+                label: 'Image',
+                value: '${app.dockerImage}:${app.recommendedTag}'),
+            if (app.defaultPorts.isNotEmpty)
+              _InfoRow(
+                icon: Icons.lan_rounded,
+                label: 'Ports',
+                value: app.defaultPorts.map((p) => '${p.hostPort}').join(', '),
               ),
-            ],
           ],
         ),
         actions: [
@@ -164,54 +176,81 @@ class _StoreTab extends ConsumerWidget {
             onPressed: () => Navigator.pop(dialogContext, false),
             child: const Text('Cancel'),
           ),
-          FilledButton(
+          FilledButton.icon(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Install'),
+            icon: const Icon(Icons.download_rounded),
+            label: const Text('Install'),
           ),
         ],
       ),
     );
+
     if (confirmed == true && context.mounted) {
-      try {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (loadingContext) => const AlertDialog(
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
+      _performInstall(context, ref, app);
+    }
+  }
+
+  Future<void> _performInstall(
+      BuildContext context, WidgetRef ref, AppStoreItem app) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (loadingContext) => AlertDialog(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 20),
+            Text('Installing ${app.displayName}...'),
+            const SizedBox(height: 8),
+            Text(
+              'Pulling image...',
+              style: TextStyle(
+                color: Theme.of(loadingContext).colorScheme.onSurfaceVariant,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      final api = ref.read(apiServiceProvider);
+      await api.installApp(
+        name: app.name,
+        dockerImage: app.dockerImage,
+        dockerTag: app.recommendedTag,
+        ports: app.defaultPorts,
+        volumes: app.defaultVolumes,
+        environment: [],
+      );
+
+      if (context.mounted) {
+        Navigator.pop(context);
+        ref.invalidate(installedAppsProvider);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
               children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Installing app...'),
+                const Icon(Icons.check_circle_rounded, color: Colors.white),
+                const SizedBox(width: 12),
+                Text('${app.displayName} installed successfully'),
               ],
             ),
+            backgroundColor: Colors.green,
           ),
         );
-        final api = ref.read(apiServiceProvider);
-        await api.installApp(
-          name: app.name,
-          dockerImage: app.dockerImage,
-          dockerTag: app.recommendedTag,
-          ports: app.defaultPorts,
-          volumes: app.defaultVolumes,
-          environment: [],
+      }
+    } catch (e) {
+      if (context.mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to install: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
         );
-        if (context.mounted) {
-          Navigator.pop(context);
-          ref.invalidate(installedAppsProvider);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${app.displayName} installed successfully'),
-            ),
-          );
-        }
-      } catch (e) {
-        if (context.mounted) {
-          Navigator.pop(context);
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Failed to install: $e')));
-        }
       }
     }
   }
@@ -222,13 +261,21 @@ class _StoreTab extends ConsumerWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.store,
-            size: 64,
-            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+          Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainerHighest,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.store_rounded,
+              size: 40,
+              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+            ),
           ),
-          const SizedBox(height: 16),
-          Text(message),
+          const SizedBox(height: 24),
+          Text(message, style: Theme.of(context).textTheme.titleMedium),
         ],
       ),
     );
@@ -240,13 +287,23 @@ class _StoreTab extends ConsumerWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.error_outline, size: 64, color: colorScheme.error),
-          const SizedBox(height: 16),
+          Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: colorScheme.errorContainer,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.error_outline_rounded,
+                size: 40, color: colorScheme.onErrorContainer),
+          ),
+          const SizedBox(height: 24),
           const Text('Failed to load apps'),
           const SizedBox(height: 16),
-          FilledButton(
+          FilledButton.icon(
             onPressed: () => ref.invalidate(storeAppsProvider),
-            child: const Text('Retry'),
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Retry'),
           ),
         ],
       ),
@@ -258,6 +315,7 @@ class _InstalledTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final installedApps = ref.watch(installedAppsProvider);
+
     return installedApps.when(
       data: (apps) {
         if (apps.isEmpty) return _buildEmptyState(context);
@@ -271,7 +329,10 @@ class _InstalledTab extends ConsumerWidget {
               onStop: () => _stopApp(context, ref, apps[index]),
               onRestart: () => _restartApp(context, ref, apps[index]),
               onUninstall: () => _uninstallApp(context, ref, apps[index]),
-            ).animate(delay: (50 * index).ms).fadeIn().slideY(begin: 0.05);
+            )
+                .animate(delay: (60 * index).ms)
+                .fadeIn(curve: M3Curves.emphasizedDecelerate)
+                .slideY(begin: 0.05, curve: M3Curves.emphasized);
           },
         );
       },
@@ -281,85 +342,76 @@ class _InstalledTab extends ConsumerWidget {
   }
 
   Future<void> _startApp(
-    BuildContext context,
-    WidgetRef ref,
-    DockerApp app,
-  ) async {
+      BuildContext context, WidgetRef ref, DockerApp app) async {
     try {
       final api = ref.read(apiServiceProvider);
       await api.startApp(app.id);
       ref.invalidate(installedAppsProvider);
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('${app.displayName} started')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${app.displayName} started')),
+        );
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to start: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to start: $e')),
+        );
       }
     }
   }
 
   Future<void> _stopApp(
-    BuildContext context,
-    WidgetRef ref,
-    DockerApp app,
-  ) async {
+      BuildContext context, WidgetRef ref, DockerApp app) async {
     try {
       final api = ref.read(apiServiceProvider);
       await api.stopApp(app.id);
       ref.invalidate(installedAppsProvider);
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('${app.displayName} stopped')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${app.displayName} stopped')),
+        );
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to stop: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to stop: $e')),
+        );
       }
     }
   }
 
   Future<void> _restartApp(
-    BuildContext context,
-    WidgetRef ref,
-    DockerApp app,
-  ) async {
+      BuildContext context, WidgetRef ref, DockerApp app) async {
     try {
       final api = ref.read(apiServiceProvider);
       await api.restartApp(app.id);
       ref.invalidate(installedAppsProvider);
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('${app.displayName} restarted')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${app.displayName} restarted')),
+        );
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to restart: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to restart: $e')),
+        );
       }
     }
   }
 
   Future<void> _uninstallApp(
-    BuildContext context,
-    WidgetRef ref,
-    DockerApp app,
-  ) async {
+      BuildContext context, WidgetRef ref, DockerApp app) async {
     final colorScheme = Theme.of(context).colorScheme;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        icon: Icon(Icons.delete_rounded, size: 48, color: colorScheme.error),
         title: Text('Uninstall ${app.displayName}?'),
-        content: const Text('This will stop and remove the container.'),
+        content: const Text(
+            'This will stop and remove the container. Your data volumes will be preserved.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -373,6 +425,7 @@ class _InstalledTab extends ConsumerWidget {
         ],
       ),
     );
+
     if (confirmed == true && context.mounted) {
       try {
         final api = ref.read(apiServiceProvider);
@@ -385,9 +438,9 @@ class _InstalledTab extends ConsumerWidget {
         }
       } catch (e) {
         if (context.mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Failed to uninstall: $e')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to uninstall: $e')),
+          );
         }
       }
     }
@@ -399,15 +452,27 @@ class _InstalledTab extends ConsumerWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.apps,
-            size: 64,
-            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+          Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainerHighest,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.apps_rounded,
+              size: 40,
+              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+            ),
           ),
-          const SizedBox(height: 16),
-          const Text('No apps installed'),
+          const SizedBox(height: 24),
+          Text('No apps installed',
+              style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          const Text('Browse the store to install apps'),
+          Text(
+            'Browse the store to install apps',
+            style: TextStyle(color: colorScheme.onSurfaceVariant),
+          ),
         ],
       ),
     );
@@ -419,13 +484,23 @@ class _InstalledTab extends ConsumerWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.error_outline, size: 64, color: colorScheme.error),
-          const SizedBox(height: 16),
+          Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: colorScheme.errorContainer,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.error_outline_rounded,
+                size: 40, color: colorScheme.onErrorContainer),
+          ),
+          const SizedBox(height: 24),
           const Text('Failed to load installed apps'),
           const SizedBox(height: 16),
-          FilledButton(
+          FilledButton.icon(
             onPressed: () => ref.invalidate(installedAppsProvider),
-            child: const Text('Retry'),
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Retry'),
           ),
         ],
       ),
@@ -433,74 +508,223 @@ class _InstalledTab extends ConsumerWidget {
   }
 }
 
+// ============ Widget Components ============
+
+class _CategorySection extends StatelessWidget {
+  final String category;
+  final List<AppStoreItem> apps;
+  final Function(AppStoreItem) onInstall;
+
+  const _CategorySection({
+    required this.category,
+    required this.apps,
+    required this.onInstall,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          child: Row(
+            children: [
+              Icon(_getCategoryIcon(category),
+                  size: 20, color: colorScheme.primary),
+              const SizedBox(width: 8),
+              Text(
+                category,
+                style: textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.primary,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${apps.length}',
+                  style: textTheme.labelSmall?.copyWith(
+                    color: colorScheme.onPrimaryContainer,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: 200,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: apps.length,
+            itemBuilder: (context, index) {
+              return _StoreAppCard(
+                app: apps[index],
+                onInstall: () => onInstall(apps[index]),
+              )
+                  .animate(delay: (40 * index).ms)
+                  .fadeIn(curve: M3Curves.emphasizedDecelerate)
+                  .slideX(begin: 0.1, curve: M3Curves.emphasized);
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  IconData _getCategoryIcon(String category) {
+    switch (category) {
+      case 'Media':
+        return Icons.movie_rounded;
+      case 'Cloud Storage':
+        return Icons.cloud_rounded;
+      case 'Download':
+        return Icons.download_rounded;
+      case 'Smart Home':
+        return Icons.home_rounded;
+      case 'Network':
+        return Icons.router_rounded;
+      case 'Database':
+        return Icons.storage_rounded;
+      case 'Productivity':
+        return Icons.work_rounded;
+      case 'Management':
+        return Icons.dashboard_rounded;
+      default:
+        return Icons.apps_rounded;
+    }
+  }
+}
+
 class _StoreAppCard extends StatelessWidget {
   final AppStoreItem app;
   final VoidCallback onInstall;
+
   const _StoreAppCard({required this.app, required this.onInstall});
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+
     return Card(
       margin: const EdgeInsets.only(right: 12),
-      child: Container(
-        width: 160,
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: app.icon.isNotEmpty
-                  ? ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.network(
-                        app.icon,
-                        fit: BoxFit.cover,
-                        errorBuilder: (c, e, s) => Icon(
-                          Icons.apps,
-                          color: colorScheme.onPrimaryContainer,
-                        ),
-                      ),
-                    )
-                  : Icon(Icons.apps, color: colorScheme.onPrimaryContainer),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              app.displayName,
-              style: textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 4),
-            Expanded(
-              child: Text(
-                app.description,
-                style: textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onInstall,
+        child: Container(
+          width: 160,
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _AppIcon(iconUrl: app.icon, size: 56),
+              const SizedBox(height: 12),
+              Text(
+                app.displayName,
+                style: textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
                 ),
-                maxLines: 3,
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-            ),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.tonal(
-                onPressed: onInstall,
-                child: const Text('Install'),
+              const SizedBox(height: 4),
+              Expanded(
+                child: Text(
+                  app.description,
+                  style: textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.tonal(
+                  onPressed: onInstall,
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                  ),
+                  child: const Text('Install'),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+class _AppIcon extends StatelessWidget {
+  final String iconUrl;
+  final double size;
+
+  const _AppIcon({required this.iconUrl, this.size = 48});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(size * 0.25),
+        boxShadow: [
+          BoxShadow(
+            color: colorScheme.shadow.withValues(alpha: 0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: iconUrl.isNotEmpty
+          ? Image.network(
+              iconUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (c, e, s) => Icon(
+                Icons.apps_rounded,
+                size: size * 0.5,
+                color: colorScheme.onPrimaryContainer,
+              ),
+              loadingBuilder: (context, child, loadingProgress) {
+                if (loadingProgress == null) return child;
+                return Center(
+                  child: SizedBox(
+                    width: size * 0.4,
+                    height: size * 0.4,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      value: loadingProgress.expectedTotalBytes != null
+                          ? loadingProgress.cumulativeBytesLoaded /
+                              loadingProgress.expectedTotalBytes!
+                          : null,
+                    ),
+                  ),
+                );
+              },
+            )
+          : Icon(
+              Icons.apps_rounded,
+              size: size * 0.5,
+              color: colorScheme.onPrimaryContainer,
+            ),
     );
   }
 }
@@ -511,6 +735,7 @@ class _InstalledAppCard extends StatelessWidget {
   final VoidCallback onStop;
   final VoidCallback onRestart;
   final VoidCallback onUninstall;
+
   const _InstalledAppCard({
     required this.app,
     required this.onStart,
@@ -524,33 +749,14 @@ class _InstalledAppCard extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final isRunning = app.status == 'running';
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Row(
           children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: app.icon.isNotEmpty
-                  ? ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.network(
-                        app.icon,
-                        fit: BoxFit.cover,
-                        errorBuilder: (c, e, s) => Icon(
-                          Icons.apps,
-                          color: colorScheme.onPrimaryContainer,
-                        ),
-                      ),
-                    )
-                  : Icon(Icons.apps, color: colorScheme.onPrimaryContainer),
-            ),
+            _AppIcon(iconUrl: app.icon, size: 56),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
@@ -562,26 +768,10 @@ class _InstalledAppCard extends StatelessWidget {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 6),
                   Row(
                     children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          color: isRunning ? Colors.green : Colors.grey,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        app.status.toUpperCase(),
-                        style: textTheme.bodySmall?.copyWith(
-                          color: isRunning
-                              ? Colors.green
-                              : colorScheme.onSurfaceVariant,
-                        ),
-                      ),
+                      _StatusBadge(isRunning: isRunning),
                       const SizedBox(width: 12),
                       Flexible(
                         child: Text(
@@ -597,7 +787,7 @@ class _InstalledAppCard extends StatelessWidget {
                   if (app.ports.isNotEmpty) ...[
                     const SizedBox(height: 4),
                     Text(
-                      'Ports: ${app.ports.map((p) => "${p.hostPort}").join(", ")}',
+                      'Ports: ${app.ports.map((p) => p.hostPort).join(', ')}',
                       style: textTheme.bodySmall?.copyWith(
                         color: colorScheme.onSurfaceVariant,
                       ),
@@ -606,76 +796,146 @@ class _InstalledAppCard extends StatelessWidget {
                 ],
               ),
             ),
-            PopupMenuButton<String>(
-              onSelected: (value) {
-                switch (value) {
-                  case 'start':
-                    onStart();
-                    break;
-                  case 'stop':
-                    onStop();
-                    break;
-                  case 'restart':
-                    onRestart();
-                    break;
-                  case 'uninstall':
-                    onUninstall();
-                    break;
-                }
-              },
-              itemBuilder: (popupContext) {
-                final popupColorScheme = Theme.of(popupContext).colorScheme;
-                return [
-                  if (!isRunning)
+            const SizedBox(width: 8),
+            Column(
+              children: [
+                IconButton.filled(
+                  onPressed: isRunning ? onStop : onStart,
+                  icon: Icon(isRunning
+                      ? Icons.stop_rounded
+                      : Icons.play_arrow_rounded),
+                  style: IconButton.styleFrom(
+                    backgroundColor: isRunning
+                        ? colorScheme.errorContainer
+                        : colorScheme.primaryContainer,
+                    foregroundColor: isRunning
+                        ? colorScheme.onErrorContainer
+                        : colorScheme.onPrimaryContainer,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert_rounded),
+                  onSelected: (value) {
+                    switch (value) {
+                      case 'restart':
+                        onRestart();
+                        break;
+                      case 'uninstall':
+                        onUninstall();
+                        break;
+                    }
+                  },
+                  itemBuilder: (context) => [
                     const PopupMenuItem(
-                      value: 'start',
+                      value: 'restart',
                       child: Row(
                         children: [
-                          Icon(Icons.play_arrow),
-                          SizedBox(width: 8),
-                          Text('Start'),
+                          Icon(Icons.refresh_rounded),
+                          SizedBox(width: 12),
+                          Text('Restart'),
                         ],
                       ),
                     ),
-                  if (isRunning)
-                    const PopupMenuItem(
-                      value: 'stop',
+                    PopupMenuItem(
+                      value: 'uninstall',
                       child: Row(
                         children: [
-                          Icon(Icons.stop),
-                          SizedBox(width: 8),
-                          Text('Stop'),
+                          Icon(Icons.delete_rounded, color: colorScheme.error),
+                          const SizedBox(width: 12),
+                          Text('Uninstall',
+                              style: TextStyle(color: colorScheme.error)),
                         ],
                       ),
                     ),
-                  const PopupMenuItem(
-                    value: 'restart',
-                    child: Row(
-                      children: [
-                        Icon(Icons.refresh),
-                        SizedBox(width: 8),
-                        Text('Restart'),
-                      ],
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'uninstall',
-                    child: Row(
-                      children: [
-                        Icon(Icons.delete, color: popupColorScheme.error),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Uninstall',
-                          style: TextStyle(color: popupColorScheme.error),
-                        ),
-                      ],
-                    ),
-                  ),
-                ];
-              },
+                  ],
+                ),
+              ],
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _StatusBadge extends StatelessWidget {
+  final bool isRunning;
+
+  const _StatusBadge({required this.isRunning});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: isRunning
+            ? Colors.green.withValues(alpha: 0.15)
+            : Colors.grey.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: isRunning ? Colors.green : Colors.grey,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            isRunning ? 'Running' : 'Stopped',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: isRunning ? Colors.green : Colors.grey,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _InfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: colorScheme.onSurfaceVariant),
+          const SizedBox(width: 8),
+          Text(
+            '$label: ',
+            style: TextStyle(
+              color: colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(color: colorScheme.onSurface),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
       ),
     );
   }
