@@ -68,8 +68,10 @@ class NetworkStatusCard extends StatelessWidget {
                 ),
                 // Live indicator
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.green.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(20),
@@ -81,13 +83,13 @@ class NetworkStatusCard extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                          color: Colors.green,
-                          shape: BoxShape.circle,
-                        ),
-                      )
+                            width: 8,
+                            height: 8,
+                            decoration: const BoxDecoration(
+                              color: Colors.green,
+                              shape: BoxShape.circle,
+                            ),
+                          )
                           .animate(onPlay: (c) => c.repeat())
                           .fadeIn(duration: 500.ms)
                           .then()
@@ -136,35 +138,72 @@ class NetworkStatusCard extends StatelessWidget {
 
     return Column(
       children: [
-        // Traffic summary with improved design
+        // Traffic summary with real-time speed
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
             borderRadius: BorderRadius.circular(16),
           ),
-          child: Row(
+          child: Column(
             children: [
-              Expanded(
-                child: _TrafficMetric(
-                  icon: Icons.arrow_downward_rounded,
-                  label: 'Download',
-                  value: _formatBytes(info.totalRxBytes),
-                  color: Colors.green,
-                ),
+              // Real-time speed row
+              Row(
+                children: [
+                  Expanded(
+                    child: _SpeedMetric(
+                      icon: Icons.arrow_downward_rounded,
+                      label: 'Download',
+                      speed: info.rxSpeed,
+                      color: Colors.green,
+                    ),
+                  ),
+                  Container(
+                    width: 1,
+                    height: 50,
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+                  ),
+                  Expanded(
+                    child: _SpeedMetric(
+                      icon: Icons.arrow_upward_rounded,
+                      label: 'Upload',
+                      speed: info.txSpeed,
+                      color: Colors.blue,
+                    ),
+                  ),
+                ],
               ),
-              Container(
-                width: 1,
-                height: 50,
-                color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+              const SizedBox(height: 12),
+              Divider(
+                height: 1,
+                color: colorScheme.outlineVariant.withValues(alpha: 0.3),
               ),
-              Expanded(
-                child: _TrafficMetric(
-                  icon: Icons.arrow_upward_rounded,
-                  label: 'Upload',
-                  value: _formatBytes(info.totalTxBytes),
-                  color: Colors.blue,
-                ),
+              const SizedBox(height: 12),
+              // Total traffic row
+              Row(
+                children: [
+                  Expanded(
+                    child: _TrafficMetric(
+                      icon: Icons.download_done_rounded,
+                      label: 'Total Down',
+                      value: _formatBytes(info.totalRxBytes),
+                      color: Colors.green.shade700,
+                    ),
+                  ),
+                  Container(
+                    width: 1,
+                    height: 40,
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+                  ),
+                  Expanded(
+                    child: _TrafficMetric(
+                      icon: Icons.upload_rounded,
+                      label: 'Total Up',
+                      value: _formatBytes(info.totalTxBytes),
+                      color: Colors.blue.shade700,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -228,7 +267,9 @@ class NetworkStatusCard extends StatelessWidget {
                     ),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 5),
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
                       decoration: BoxDecoration(
                         color: primaryInterface.isUp
                             ? Colors.green.withValues(alpha: 0.15)
@@ -277,7 +318,9 @@ class NetworkStatusCard extends StatelessWidget {
                       const SizedBox(width: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
                           color: colorScheme.surfaceContainerHighest,
                           borderRadius: BorderRadius.circular(8),
@@ -455,6 +498,71 @@ class _TrafficMetric extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, size: 16, color: color),
+        ),
+        const SizedBox(width: 8),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: textTheme.labelSmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+            Text(
+              value,
+              style: textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _SpeedMetric extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final int speed; // bytes per second
+  final Color color;
+
+  const _SpeedMetric({
+    required this.icon,
+    required this.label,
+    required this.speed,
+    required this.color,
+  });
+
+  String _formatSpeed(int bytesPerSecond) {
+    if (bytesPerSecond >= 1024 * 1024 * 1024) {
+      return '${(bytesPerSecond / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB/s';
+    } else if (bytesPerSecond >= 1024 * 1024) {
+      return '${(bytesPerSecond / (1024 * 1024)).toStringAsFixed(1)} MB/s';
+    } else if (bytesPerSecond >= 1024) {
+      return '${(bytesPerSecond / 1024).toStringAsFixed(1)} KB/s';
+    }
+    return '$bytesPerSecond B/s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Container(
           width: 36,
           height: 36,
           decoration: BoxDecoration(
@@ -474,7 +582,7 @@ class _TrafficMetric extends StatelessWidget {
               ),
             ),
             Text(
-              value,
+              _formatSpeed(speed),
               style: textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.bold,
                 color: color,

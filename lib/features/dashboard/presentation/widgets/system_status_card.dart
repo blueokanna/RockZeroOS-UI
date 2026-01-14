@@ -126,42 +126,63 @@ class SystemStatusCard extends StatelessWidget {
         ).animate().fadeIn(delay: 100.ms, curve: M3Curves.emphasizedDecelerate),
         const SizedBox(height: 20),
 
-        // Usage indicators
-        Row(
-          children: [
-            Expanded(
-              child: _UsageIndicator(
-                label: 'CPU',
-                value: info.cpu.usage,
-                icon: Icons.speed_rounded,
-                color: _getUsageColor(info.cpu.usage),
-                subtitle: '${info.cpu.cores} cores',
-              )
-                  .animate()
-                  .fadeIn(delay: 150.ms, curve: M3Curves.emphasizedDecelerate),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _UsageIndicator(
-                label: 'Memory',
-                value: info.memory.usagePercentage,
-                icon: Icons.memory_rounded,
-                color: _getUsageColor(info.memory.usagePercentage),
-                subtitle: _formatBytes(info.memory.used),
-              )
-                  .animate()
-                  .fadeIn(delay: 200.ms, curve: M3Curves.emphasizedDecelerate),
-            ),
-            if (info.cpu.temperature != null) ...[
-              const SizedBox(width: 16),
-              Expanded(
-                child: _TemperatureIndicator(
-                  temperature: info.cpu.temperature!,
-                ).animate().fadeIn(
-                    delay: 250.ms, curve: M3Curves.emphasizedDecelerate),
-              ),
-            ],
-          ],
+        // Usage indicators - horizontal layout with consistent sizing
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final hasTemp = info.cpu.temperature != null;
+            final itemCount = hasTemp ? 3 : 2;
+            final spacing = 12.0;
+            final totalSpacing = spacing * (itemCount - 1);
+            final itemWidth = (constraints.maxWidth - totalSpacing) / itemCount;
+
+            return Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                SizedBox(
+                  width: itemWidth,
+                  child:
+                      _UsageIndicator(
+                        label: 'CPU',
+                        value: info.cpu.usage,
+                        icon: Icons.speed_rounded,
+                        color: _getUsageColor(info.cpu.usage),
+                        subtitle: '${info.cpu.cores} cores',
+                      ).animate().fadeIn(
+                        delay: 150.ms,
+                        curve: M3Curves.emphasizedDecelerate,
+                      ),
+                ),
+                SizedBox(width: spacing),
+                SizedBox(
+                  width: itemWidth,
+                  child:
+                      _UsageIndicator(
+                        label: 'Memory',
+                        value: info.memory.usagePercentage,
+                        icon: Icons.memory_rounded,
+                        color: _getUsageColor(info.memory.usagePercentage),
+                        subtitle: _formatBytes(info.memory.used),
+                      ).animate().fadeIn(
+                        delay: 200.ms,
+                        curve: M3Curves.emphasizedDecelerate,
+                      ),
+                ),
+                if (hasTemp) ...[
+                  SizedBox(width: spacing),
+                  SizedBox(
+                    width: itemWidth,
+                    child:
+                        _TemperatureIndicator(
+                          temperature: info.cpu.temperature!,
+                        ).animate().fadeIn(
+                          delay: 250.ms,
+                          curve: M3Curves.emphasizedDecelerate,
+                        ),
+                  ),
+                ],
+              ],
+            );
+          },
         ),
       ],
     );
@@ -212,8 +233,11 @@ class SystemStatusCard extends StatelessWidget {
               color: colorScheme.errorContainer,
               borderRadius: BorderRadius.circular(16),
             ),
-            child: Icon(Icons.error_outline_rounded,
-                size: 32, color: colorScheme.onErrorContainer),
+            child: Icon(
+              Icons.error_outline_rounded,
+              size: 32,
+              color: colorScheme.onErrorContainer,
+            ),
           ),
           const SizedBox(height: 12),
           Text(
@@ -315,16 +339,14 @@ class _UsageIndicator extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: color.withValues(alpha: 0.2),
-          width: 1,
-        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withValues(alpha: 0.2), width: 1),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           TweenAnimationBuilder<double>(
             tween: Tween(begin: 0, end: value / 100),
@@ -335,11 +357,11 @@ class _UsageIndicator extends StatelessWidget {
                 alignment: Alignment.center,
                 children: [
                   SizedBox(
-                    width: 72,
-                    height: 72,
+                    width: 56,
+                    height: 56,
                     child: CircularProgressIndicator(
                       value: animValue,
-                      strokeWidth: 8,
+                      strokeWidth: 6,
                       backgroundColor: colorScheme.surfaceContainerHighest,
                       valueColor: AlwaysStoppedAnimation(color),
                       strokeCap: StrokeCap.round,
@@ -348,11 +370,11 @@ class _UsageIndicator extends StatelessWidget {
                   Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(icon, size: 18, color: color),
-                      const SizedBox(height: 2),
+                      Icon(icon, size: 14, color: color),
+                      const SizedBox(height: 1),
                       Text(
                         '${(animValue * 100).toStringAsFixed(0)}%',
-                        style: textTheme.titleSmall?.copyWith(
+                        style: textTheme.labelMedium?.copyWith(
                           fontWeight: FontWeight.bold,
                           color: color,
                         ),
@@ -363,17 +385,19 @@ class _UsageIndicator extends StatelessWidget {
               );
             },
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Text(
             label,
-            style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+            style: textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+            overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 2),
           Text(
             subtitle,
-            style: textTheme.bodySmall?.copyWith(
+            style: textTheme.labelSmall?.copyWith(
               color: colorScheme.onSurfaceVariant,
             ),
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
@@ -392,32 +416,30 @@ class _TemperatureIndicator extends StatelessWidget {
     final color = _getTemperatureColor(temperature);
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: color.withValues(alpha: 0.2),
-          width: 1,
-        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withValues(alpha: 0.2), width: 1),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 72,
-            height: 72,
+            width: 56,
+            height: 56,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              border: Border.all(color: color, width: 4),
+              border: Border.all(color: color, width: 3),
             ),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.thermostat_rounded, size: 18, color: color),
-                const SizedBox(height: 2),
+                Icon(Icons.thermostat_rounded, size: 14, color: color),
+                const SizedBox(height: 1),
                 Text(
                   '${temperature.toStringAsFixed(0)}°C',
-                  style: textTheme.titleSmall?.copyWith(
+                  style: textTheme.labelMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                     color: color,
                   ),
@@ -425,10 +447,11 @@ class _TemperatureIndicator extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Text(
-            'Temperature',
-            style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+            'Temp',
+            style: textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+            overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 2),
           Text(

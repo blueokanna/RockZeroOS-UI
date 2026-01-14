@@ -813,11 +813,50 @@ class SettingsPage extends ConsumerWidget {
     final fido2Service = ref.read(fido2ServiceProvider);
     final colorScheme = Theme.of(context).colorScheme;
 
-    // Show loading dialog
+    // First check if FIDO2 is available
+    final isAvailable = await fido2Service.isAvailable();
+    if (!isAvailable) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.error_outline_rounded, color: Colors.white),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text('FIDO2/Passkey is not available on this device'),
+                ),
+              ],
+            ),
+            backgroundColor: colorScheme.error,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Show loading dialog with cancel option
+    bool cancelled = false;
+    if (!context.mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
+        icon: Container(
+          width: 64,
+          height: 64,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [colorScheme.primary, colorScheme.tertiary],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: const Icon(Icons.key_rounded, size: 32, color: Colors.white),
+        ),
+        title: Text(
+            _isMobilePlatform ? 'Register Passkey' : 'Register Security Key'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -827,43 +866,90 @@ class SettingsPage extends ConsumerWidget {
               _isMobilePlatform
                   ? 'Follow the prompts to register your passkey...'
                   : 'Insert and touch your security key...',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _isMobilePlatform
+                  ? 'Use Face ID, Touch ID, or your device PIN'
+                  : 'Make sure your security key is connected',
+              style: TextStyle(
+                fontSize: 12,
+                color: colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
             ),
           ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              cancelled = true;
+              Navigator.pop(dialogContext);
+            },
+            child: const Text('Cancel'),
+          ),
+        ],
       ),
     );
 
     try {
+      if (cancelled) return;
+
       final success = _isMobilePlatform
           ? await fido2Service.registerPlatformKey(keyName: 'My Passkey')
           : await fido2Service.registerCrossPlatformKey(
               keyName: 'Security Key');
 
-      if (context.mounted) {
+      if (context.mounted && !cancelled) {
         Navigator.pop(context); // Close loading dialog
 
         if (success) {
           ref.invalidate(registeredKeysProvider);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('Security key registered successfully'),
-              backgroundColor: colorScheme.primaryContainer,
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle_rounded, color: Colors.white),
+                  const SizedBox(width: 12),
+                  const Text('Security key registered successfully'),
+                ],
+              ),
+              backgroundColor: Colors.green,
             ),
           );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('Failed to register security key'),
-              backgroundColor: colorScheme.errorContainer,
+              content: Row(
+                children: [
+                  Icon(Icons.error_outline_rounded, color: Colors.white),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                        'Failed to register security key. Please try again.'),
+                  ),
+                ],
+              ),
+              backgroundColor: colorScheme.error,
             ),
           );
         }
       }
     } catch (e) {
-      if (context.mounted) {
+      if (context.mounted && !cancelled) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.error_outline_rounded, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(child: Text('Error: $e')),
+              ],
+            ),
+            backgroundColor: colorScheme.error,
+          ),
         );
       }
     }

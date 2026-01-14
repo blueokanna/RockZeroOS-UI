@@ -59,6 +59,10 @@ class _RockZeroAppState extends ConsumerState<RockZeroApp> {
     // Start device discovery on app launch
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(deviceDiscoveryServiceProvider).startDiscovery();
+      // Refresh system accent color if dynamic color is enabled
+      if (ref.read(dynamicColorEnabledProvider)) {
+        ref.read(systemAccentColorProvider.notifier).refresh();
+      }
     });
   }
 
@@ -67,13 +71,20 @@ class _RockZeroAppState extends ConsumerState<RockZeroApp> {
     final router = ref.watch(appRouterProvider);
     final themeMode = ref.watch(themeModeProvider);
     final seedColor = ref.watch(seedColorProvider);
+    final dynamicColorEnabled = ref.watch(dynamicColorEnabledProvider);
+    final systemAccentColor = ref.watch(systemAccentColorProvider);
+
+    // Use system accent color if dynamic color is enabled and available
+    final effectiveColor = dynamicColorEnabled && systemAccentColor != null
+        ? systemAccentColor
+        : seedColor;
 
     return MaterialApp.router(
       title: 'RockZero',
       debugShowCheckedModeBanner: false,
       themeMode: themeMode,
-      theme: AppTheme.light(seedColor),
-      darkTheme: AppTheme.dark(seedColor),
+      theme: AppTheme.light(effectiveColor),
+      darkTheme: AppTheme.dark(effectiveColor),
       routerConfig: router,
     );
   }

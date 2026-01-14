@@ -11,6 +11,8 @@ import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
 import '../../../../core/services/biometric_service.dart';
 import '../../../../core/theme/app_theme.dart';
+import 'media_player_page.dart';
+import 'image_viewer_page.dart';
 
 // Current path notifier for Riverpod 3.x
 class CurrentPathNotifier extends Notifier<String> {
@@ -40,7 +42,9 @@ final directoryListingProvider = FutureProvider.autoDispose
     .family<DirectoryListing?, String>((ref, path) async {
   try {
     final api = ref.read(apiServiceProvider);
-    final result = await api.listDirectory(path: path.isEmpty ? null : path);
+    final result = await api.listDirectory(
+      path: path.isEmpty ? null : path,
+    );
     ref.read(fileErrorProvider.notifier).setError(null);
     return result;
   } catch (e) {
@@ -50,8 +54,9 @@ final directoryListingProvider = FutureProvider.autoDispose
 });
 
 // Disk info provider
-final diskInfoProvider =
-    FutureProvider.autoDispose<List<DiskInfo>>((ref) async {
+final diskInfoProvider = FutureProvider.autoDispose<List<DiskInfo>>((
+  ref,
+) async {
   try {
     final api = ref.read(apiServiceProvider);
     return await api.getDiskInfo();
@@ -77,6 +82,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
   double _uploadProgress = 0;
   bool _showDisks = true;
   late AnimationController _fabAnimationController;
+  final ScrollController _scrollController = ScrollController();
+  bool _showFab = true;
 
   @override
   void initState() {
@@ -85,11 +92,28 @@ class _FilesPageState extends ConsumerState<FilesPage>
       vsync: this,
       duration: M3Durations.medium2,
     );
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    // Hide FAB when scrolling down, show when scrolling up
+    if (_scrollController.position.userScrollDirection.toString().contains(
+          'reverse',
+        )) {
+      if (_showFab) {
+        setState(() => _showFab = false);
+      }
+    } else {
+      if (!_showFab) {
+        setState(() => _showFab = true);
+      }
+    }
   }
 
   @override
   void dispose() {
     _fabAnimationController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -104,6 +128,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
     return Scaffold(
       body: CustomScrollView(
+        controller: _scrollController,
         slivers: [
           _buildAppBar(showDiskView, currentPath),
           if (!showDiskView)
@@ -120,7 +145,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
               data: (data) {
                 if (data == null) {
                   return _buildErrorState(
-                      errorMessage ?? 'Failed to load files');
+                    errorMessage ?? 'Failed to load files',
+                  );
                 }
                 return _buildFileContent(data);
               },
@@ -129,7 +155,17 @@ class _FilesPageState extends ConsumerState<FilesPage>
             ),
         ],
       ),
-      floatingActionButton: showDiskView ? null : _buildFAB(),
+      floatingActionButton: showDiskView
+          ? null
+          : AnimatedSlide(
+              duration: M3Durations.medium2,
+              offset: _showFab ? Offset.zero : const Offset(0, 2),
+              child: AnimatedOpacity(
+                duration: M3Durations.medium2,
+                opacity: _showFab ? 1.0 : 0.0,
+                child: _buildFAB(),
+              ),
+            ),
     );
   }
 
@@ -165,10 +201,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
           IconButton(
             icon: AnimatedSwitcher(
               duration: M3Durations.short4,
-              transitionBuilder: (child, animation) => ScaleTransition(
-                scale: animation,
-                child: child,
-              ),
+              transitionBuilder: (child, animation) =>
+                  ScaleTransition(scale: animation, child: child),
               child: Icon(
                 _isGridView ? Icons.view_list_rounded : Icons.grid_view_rounded,
                 key: ValueKey(_isGridView),
@@ -180,8 +214,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
           PopupMenuButton<String>(
             icon: const Icon(Icons.sort_rounded),
             tooltip: 'Sort',
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
             onSelected: (value) {
               if (value == _sortBy) {
                 setState(() => _sortAsc = !_sortAsc);
@@ -196,7 +231,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
               _buildSortMenuItem('name', 'Name', Icons.sort_by_alpha_rounded),
               _buildSortMenuItem('size', 'Size', Icons.data_usage_rounded),
               _buildSortMenuItem(
-                  'modified', 'Modified', Icons.schedule_rounded),
+                'modified',
+                'Modified',
+                Icons.schedule_rounded,
+              ),
               _buildSortMenuItem('type', 'Type', Icons.category_rounded),
             ],
           ),
@@ -217,7 +255,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 
   PopupMenuItem<String> _buildSortMenuItem(
-      String value, String label, IconData icon) {
+    String value,
+    String label,
+    IconData icon,
+  ) {
     final isSelected = _sortBy == value;
     final colorScheme = Theme.of(context).colorScheme;
 
@@ -248,6 +289,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
         : path.split('/').where((p) => p.isNotEmpty).toList();
     final colorScheme = Theme.of(context).colorScheme;
 
+    // Check if we're at root (/) or a subdirectory
+    final isAtRoot = path == '/' || (path.isNotEmpty && parts.isEmpty);
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -268,10 +312,25 @@ class _FilesPageState extends ConsumerState<FilesPage>
                 setState(() => _showDisks = true);
               },
             ),
+            if (path.isNotEmpty) ...[
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 20,
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+              ),
+              _BreadcrumbChip(
+                icon: Icons.folder_rounded,
+                label: '/',
+                isActive: isAtRoot && parts.isEmpty,
+                onTap: isAtRoot && parts.isEmpty
+                    ? null
+                    : () => ref.read(currentPathProvider.notifier).setPath('/'),
+              ),
+            ],
             ...parts.asMap().entries.map((entry) {
               final index = entry.key;
               final part = entry.value;
-              final fullPath = parts.sublist(0, index + 1).join('/');
+              final fullPath = '/${parts.sublist(0, index + 1).join('/')}';
               final isLast = index == parts.length - 1;
 
               return Row(
@@ -335,8 +394,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   color: colorScheme.primary,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(Icons.cloud_upload_rounded,
-                    color: colorScheme.onPrimary),
+                child: Icon(
+                  Icons.cloud_upload_rounded,
+                  color: colorScheme.onPrimary,
+                ),
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -353,8 +414,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     Text(
                       '${(_uploadProgress * 100).toInt()}% complete',
                       style: TextStyle(
-                        color: colorScheme.onPrimaryContainer
-                            .withValues(alpha: 0.7),
+                        color: colorScheme.onPrimaryContainer.withValues(
+                          alpha: 0.7,
+                        ),
                         fontSize: 12,
                       ),
                     ),
@@ -369,8 +431,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
             child: LinearProgressIndicator(
               value: _uploadProgress,
               minHeight: 8,
-              backgroundColor:
-                  colorScheme.onPrimaryContainer.withValues(alpha: 0.2),
+              backgroundColor: colorScheme.onPrimaryContainer.withValues(
+                alpha: 0.2,
+              ),
               valueColor: AlwaysStoppedAnimation(colorScheme.primary),
             ),
           ),
@@ -430,8 +493,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
                         ),
                       ],
                     ),
-                    child: const Icon(Icons.dns_rounded,
-                        size: 32, color: Colors.white),
+                    child: const Icon(
+                      Icons.dns_rounded,
+                      size: 32,
+                      color: Colors.white,
+                    ),
                   ),
                   const SizedBox(width: 20),
                   Expanded(
@@ -467,7 +533,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
                                     backgroundColor:
                                         colorScheme.surfaceContainerHighest,
                                     valueColor: AlwaysStoppedAnimation(
-                                        colorScheme.primary),
+                                      colorScheme.primary,
+                                    ),
                                   ),
                                 ),
                                 const SizedBox(height: 6),
@@ -510,8 +577,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
             child: Row(
               children: [
-                Icon(Icons.storage_rounded,
-                    size: 20, color: colorScheme.primary),
+                Icon(
+                  Icons.storage_rounded,
+                  size: 20,
+                  color: colorScheme.primary,
+                ),
                 const SizedBox(width: 8),
                 Text(
                   'Storage Devices',
@@ -548,8 +618,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   .animate(delay: (80 * index).ms)
                   .fadeIn(curve: M3Curves.emphasizedDecelerate)
                   .scale(
-                      begin: const Offset(0.95, 0.95),
-                      curve: M3Curves.emphasized);
+                    begin: const Offset(0.95, 0.95),
+                    curve: M3Curves.emphasized,
+                  );
             },
           ),
         ]),
@@ -577,13 +648,18 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
     if (_isGridView) {
       return SliverPadding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(
+          12,
+          8,
+          12,
+          100,
+        ), // Bottom padding for FAB
         sliver: SliverGrid(
           gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: 140,
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
-            childAspectRatio: 0.85,
+            maxCrossAxisExtent: 110,
+            mainAxisSpacing: 8,
+            crossAxisSpacing: 8,
+            childAspectRatio: 0.82,
           ),
           delegate: SliverChildBuilderDelegate(
             (context, index) => _FileGridItem(
@@ -595,15 +671,21 @@ class _FilesPageState extends ConsumerState<FilesPage>
                 .animate(delay: (40 * index).ms)
                 .fadeIn(curve: M3Curves.emphasizedDecelerate)
                 .scale(
-                    begin: const Offset(0.95, 0.95),
-                    curve: M3Curves.emphasized),
+                  begin: const Offset(0.95, 0.95),
+                  curve: M3Curves.emphasized,
+                ),
             childCount: entries.length,
           ),
         ),
       );
     } else {
       return SliverPadding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.fromLTRB(
+          12,
+          8,
+          12,
+          100,
+        ), // Bottom padding for FAB
         sliver: SliverList(
           delegate: SliverChildBuilderDelegate(
             (context, index) => _FileListItem(
@@ -678,9 +760,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
               const SizedBox(height: 24),
               Text(
                 'Failed to load files',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
               Text(
@@ -701,9 +783,12 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     label: const Text('Go Back'),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 12),
+                        horizontal: 20,
+                        vertical: 12,
+                      ),
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -715,9 +800,12 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     label: const Text('Retry'),
                     style: FilledButton.styleFrom(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 12),
+                        horizontal: 20,
+                        vertical: 12,
+                      ),
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                   ),
                 ],
@@ -752,9 +840,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
           const SizedBox(height: 24),
           Text(
             'No storage devices found',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           Text(
@@ -789,9 +877,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
           const SizedBox(height: 24),
           Text(
             'This folder is empty',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           Text(
@@ -927,8 +1015,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
             ),
             backgroundColor: Colors.green,
             behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         );
       }
@@ -962,8 +1051,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
             color: colorScheme.primaryContainer,
             borderRadius: BorderRadius.circular(16),
           ),
-          child: Icon(Icons.create_new_folder_rounded,
-              size: 32, color: colorScheme.primary),
+          child: Icon(
+            Icons.create_new_folder_rounded,
+            size: 32,
+            color: colorScheme.primary,
+          ),
         ),
         title: const Text('Create Folder'),
         content: TextField(
@@ -1004,9 +1096,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
       ref.invalidate(directoryListingProvider(currentPath));
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to create folder: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to create folder: $e')));
       }
     }
   }
@@ -1028,7 +1120,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
             gradient: LinearGradient(
               colors: [
                 colorScheme.error,
-                colorScheme.error.withValues(alpha: 0.7)
+                colorScheme.error.withValues(alpha: 0.7),
               ],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
@@ -1042,8 +1134,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
               ),
             ],
           ),
-          child: const Icon(Icons.delete_forever_rounded,
-              size: 32, color: Colors.white),
+          child: const Icon(
+            Icons.delete_forever_rounded,
+            size: 32,
+            color: Colors.white,
+          ),
         ),
         title: const Text('Delete File'),
         content: Column(
@@ -1066,8 +1161,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
               ),
               child: Row(
                 children: [
-                  Icon(Icons.warning_rounded,
-                      color: colorScheme.error, size: 20),
+                  Icon(
+                    Icons.warning_rounded,
+                    color: colorScheme.error,
+                    size: 20,
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -1164,8 +1262,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
             ),
             backgroundColor: colorScheme.error,
             behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         );
       }
@@ -1191,16 +1290,17 @@ class _FilesPageState extends ConsumerState<FilesPage>
             ),
             backgroundColor: Colors.green,
             behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to delete: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
       }
     }
   }
@@ -1260,8 +1360,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
     // Verify password with server
     try {
       final api = ref.read(apiServiceProvider);
-      await api
-          .post('/api/v1/auth/verify-password', data: {'password': password});
+      await api.post(
+        '/api/v1/auth/verify-password',
+        data: {'password': password},
+      );
       return true;
     } catch (e) {
       return false;
@@ -1414,10 +1516,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => _ImageViewerPage(
-            imageUrl: imageUrl,
-            fileName: entry.name,
-          ),
+          builder: (context) =>
+              ImageViewerPage(imageUrl: imageUrl, fileName: entry.name),
         ),
       );
     } else if (mimeType.startsWith('video/') || mimeType.startsWith('audio/')) {
@@ -1426,7 +1526,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => _MediaPlayerPage(
+          builder: (context) => MediaPlayerPage(
             mediaUrl: streamUrl,
             fileName: entry.name,
             isVideo: mimeType.startsWith('video/'),
@@ -1461,9 +1561,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to download: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to download: $e')));
       }
     }
   }
@@ -1506,7 +1606,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
                 try {
                   final api = ref.read(apiServiceProvider);
                   await api.renameFile(
-                      oldPath: entry.path, newName: controller.text);
+                    oldPath: entry.path,
+                    newName: controller.text,
+                  );
                   final currentPath = ref.read(currentPathProvider);
                   ref.invalidate(directoryListingProvider(currentPath));
                 } catch (e) {
@@ -1688,7 +1790,7 @@ class _DiskCard extends StatelessWidget {
                         colors: disk.isRemovable
                             ? [
                                 Colors.orange.shade400,
-                                Colors.deepOrange.shade400
+                                Colors.deepOrange.shade400,
                               ]
                             : [colorScheme.primary, colorScheme.tertiary],
                         begin: Alignment.topLeft,
@@ -1726,12 +1828,15 @@ class _DiskCard extends StatelessWidget {
                           children: [
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 2),
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: disk.isRemovable
                                     ? Colors.orange.withValues(alpha: 0.15)
-                                    : colorScheme.primaryContainer
-                                        .withValues(alpha: 0.5),
+                                    : colorScheme.primaryContainer.withValues(
+                                        alpha: 0.5,
+                                      ),
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
@@ -1748,7 +1853,9 @@ class _DiskCard extends StatelessWidget {
                             if (disk.fileSystem.isNotEmpty)
                               Container(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 2),
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
                                 decoration: BoxDecoration(
                                   color: colorScheme.surfaceContainerHighest,
                                   borderRadius: BorderRadius.circular(4),
@@ -1834,8 +1941,9 @@ class _DiskCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainerHighest
-                      .withValues(alpha: 0.5),
+                  color: colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.5,
+                  ),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(
@@ -2124,8 +2232,10 @@ class _FileListItem extends StatelessWidget {
           ),
         ),
         trailing: entry.isDirectory
-            ? Icon(Icons.chevron_right_rounded,
-                color: colorScheme.onSurfaceVariant)
+            ? Icon(
+                Icons.chevron_right_rounded,
+                color: colorScheme.onSurfaceVariant,
+              )
             : IconButton(
                 icon: const Icon(Icons.more_vert_rounded),
                 onPressed: onTap,
@@ -2323,7 +2433,8 @@ class _Fido2AuthDialogState extends State<_Fido2AuthDialog> {
             : const Icon(Icons.key_rounded, size: 36, color: Colors.white),
       ),
       title: Text(
-          _isAuthenticating ? 'Authenticating...' : 'FIDO2 Authentication'),
+        _isAuthenticating ? 'Authenticating...' : 'FIDO2 Authentication',
+      ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -2349,8 +2460,11 @@ class _Fido2AuthDialogState extends State<_Fido2AuthDialog> {
               ],
             ),
           ] else if (_error != null) ...[
-            Icon(Icons.error_outline_rounded,
-                size: 48, color: colorScheme.error),
+            Icon(
+              Icons.error_outline_rounded,
+              size: 48,
+              color: colorScheme.error,
+            ),
             const SizedBox(height: 12),
             Text(
               _error!,
@@ -2372,194 +2486,6 @@ class _Fido2AuthDialogState extends State<_Fido2AuthDialog> {
             child: const Text('Retry'),
           ),
       ],
-    );
-  }
-}
-
-class _ImageViewerPage extends StatelessWidget {
-  final String imageUrl;
-  final String fileName;
-
-  const _ImageViewerPage({
-    required this.imageUrl,
-    required this.fileName,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black.withValues(alpha: 0.7),
-        foregroundColor: Colors.white,
-        title: Text(fileName),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.download_rounded),
-            onPressed: () async {
-              final uri = Uri.parse(imageUrl);
-              if (await canLaunchUrl(uri)) {
-                await launchUrl(uri, mode: LaunchMode.externalApplication);
-              }
-            },
-          ),
-        ],
-      ),
-      body: Center(
-        child: InteractiveViewer(
-          minScale: 0.5,
-          maxScale: 4.0,
-          child: Image.network(
-            imageUrl,
-            fit: BoxFit.contain,
-            loadingBuilder: (context, child, loadingProgress) {
-              if (loadingProgress == null) return child;
-              return Center(
-                child: CircularProgressIndicator(
-                  value: loadingProgress.expectedTotalBytes != null
-                      ? loadingProgress.cumulativeBytesLoaded /
-                          loadingProgress.expectedTotalBytes!
-                      : null,
-                  color: colorScheme.primary,
-                ),
-              );
-            },
-            errorBuilder: (context, error, stackTrace) {
-              return Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.broken_image_rounded,
-                      size: 64, color: Colors.white54),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Failed to load image',
-                    style: TextStyle(color: Colors.white54),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _MediaPlayerPage extends StatefulWidget {
-  final String mediaUrl;
-  final String fileName;
-  final bool isVideo;
-
-  const _MediaPlayerPage({
-    required this.mediaUrl,
-    required this.fileName,
-    required this.isVideo,
-  });
-
-  @override
-  State<_MediaPlayerPage> createState() => _MediaPlayerPageState();
-}
-
-class _MediaPlayerPageState extends State<_MediaPlayerPage> {
-  bool _isLoading = true;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _initPlayer();
-  }
-
-  Future<void> _initPlayer() async {
-    // For now, just show a placeholder - actual video_player/chewie integration
-    // would require more setup
-    await Future.delayed(const Duration(seconds: 1));
-    if (mounted) {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black.withValues(alpha: 0.7),
-        foregroundColor: Colors.white,
-        title: Text(widget.fileName),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.download_rounded),
-            onPressed: () async {
-              final uri = Uri.parse(widget.mediaUrl);
-              if (await canLaunchUrl(uri)) {
-                await launchUrl(uri, mode: LaunchMode.externalApplication);
-              }
-            },
-          ),
-        ],
-      ),
-      body: Center(
-        child: _isLoading
-            ? const CircularProgressIndicator(color: Colors.white)
-            : _error != null
-                ? Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.error_outline_rounded,
-                          size: 64, color: Colors.white54),
-                      const SizedBox(height: 16),
-                      Text(_error!,
-                          style: const TextStyle(color: Colors.white54)),
-                    ],
-                  )
-                : Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Container(
-                        width: 120,
-                        height: 120,
-                        decoration: BoxDecoration(
-                          color: colorScheme.primaryContainer,
-                          borderRadius: BorderRadius.circular(60),
-                        ),
-                        child: Icon(
-                          widget.isVideo
-                              ? Icons.movie_rounded
-                              : Icons.audiotrack_rounded,
-                          size: 60,
-                          color: colorScheme.onPrimaryContainer,
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      Text(
-                        widget.fileName,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w500,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 32),
-                      FilledButton.icon(
-                        onPressed: () async {
-                          final uri = Uri.parse(widget.mediaUrl);
-                          if (await canLaunchUrl(uri)) {
-                            await launchUrl(uri,
-                                mode: LaunchMode.externalApplication);
-                          }
-                        },
-                        icon: const Icon(Icons.open_in_new_rounded),
-                        label: const Text('Open in External Player'),
-                      ),
-                    ],
-                  ),
-      ),
     );
   }
 }

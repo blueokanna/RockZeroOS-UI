@@ -12,8 +12,9 @@ import '../widgets/storage_card.dart';
 import '../widgets/network_status_card.dart';
 
 // Auto-refresh providers with timers
-final hardwareInfoProvider =
-    FutureProvider.autoDispose<HardwareInfo?>((ref) async {
+final hardwareInfoProvider = FutureProvider.autoDispose<HardwareInfo?>((
+  ref,
+) async {
   try {
     final api = ref.read(apiServiceProvider);
     return await api.getHardwareInfo();
@@ -22,8 +23,9 @@ final hardwareInfoProvider =
   }
 });
 
-final totalStorageInfoProvider =
-    FutureProvider.autoDispose<TotalStorageInfo?>((ref) async {
+final totalStorageInfoProvider = FutureProvider.autoDispose<TotalStorageInfo?>((
+  ref,
+) async {
   try {
     final api = ref.read(apiServiceProvider);
     final disks = await api.getDiskInfo();
@@ -39,8 +41,9 @@ final totalStorageInfoProvider =
       availableSpace += disk.availableSpace;
     }
 
-    final usagePercentage =
-        totalSpace > 0 ? (usedSpace / totalSpace) * 100 : 0.0;
+    final usagePercentage = totalSpace > 0
+        ? (usedSpace / totalSpace) * 100
+        : 0.0;
 
     return TotalStorageInfo(
       totalSpace: totalSpace,
@@ -55,8 +58,9 @@ final totalStorageInfoProvider =
   }
 });
 
-final networkInfoProvider =
-    FutureProvider.autoDispose<NetworkInfo?>((ref) async {
+final networkInfoProvider = FutureProvider.autoDispose<NetworkInfo?>((
+  ref,
+) async {
   try {
     final api = ref.read(apiServiceProvider);
     final hardware = await api.getHardwareInfo();
@@ -91,18 +95,77 @@ class TotalStorageInfo {
   });
 }
 
-// Network info model
+// Network info model with speed calculation
 class NetworkInfo {
   final List<NetworkInterfaceInfo> interfaces;
   final int totalRxBytes;
   final int totalTxBytes;
+  final int rxSpeed; // bytes per second
+  final int txSpeed; // bytes per second
 
   NetworkInfo({
     required this.interfaces,
     required this.totalRxBytes,
     required this.totalTxBytes,
+    this.rxSpeed = 0,
+    this.txSpeed = 0,
   });
+
+  NetworkInfo copyWithSpeed({required int rxSpeed, required int txSpeed}) {
+    return NetworkInfo(
+      interfaces: interfaces,
+      totalRxBytes: totalRxBytes,
+      totalTxBytes: totalTxBytes,
+      rxSpeed: rxSpeed,
+      txSpeed: txSpeed,
+    );
+  }
 }
+
+// Network speed tracker
+class NetworkSpeedNotifier extends Notifier<NetworkInfo?> {
+  int _lastRxBytes = 0;
+  int _lastTxBytes = 0;
+  DateTime _lastUpdate = DateTime.now();
+
+  @override
+  NetworkInfo? build() => null;
+
+  void updateFromHardware(NetworkInfo? info) {
+    if (info == null) {
+      state = null;
+      return;
+    }
+
+    final now = DateTime.now();
+    final elapsed = now.difference(_lastUpdate).inMilliseconds;
+
+    if (elapsed > 0 && _lastRxBytes > 0) {
+      final rxDiff = info.totalRxBytes - _lastRxBytes;
+      final txDiff = info.totalTxBytes - _lastTxBytes;
+
+      // Calculate speed in bytes per second
+      final rxSpeed = (rxDiff * 1000 / elapsed).round();
+      final txSpeed = (txDiff * 1000 / elapsed).round();
+
+      state = info.copyWithSpeed(
+        rxSpeed: rxSpeed > 0 ? rxSpeed : 0,
+        txSpeed: txSpeed > 0 ? txSpeed : 0,
+      );
+    } else {
+      state = info;
+    }
+
+    _lastRxBytes = info.totalRxBytes;
+    _lastTxBytes = info.totalTxBytes;
+    _lastUpdate = now;
+  }
+}
+
+final networkSpeedProvider =
+    NotifierProvider<NetworkSpeedNotifier, NetworkInfo?>(
+      NetworkSpeedNotifier.new,
+    );
 
 class DashboardPage extends ConsumerStatefulWidget {
   const DashboardPage({super.key});
@@ -137,10 +200,26 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
       }
     });
 
-    // Network status refresh every 1 second
-    _networkTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+    // Network status refresh every 1 second for real-time speed
+    _networkTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
       if (mounted) {
-        ref.invalidate(networkInfoProvider);
+        try {
+          final api = ref.read(apiServiceProvider);
+          final hardware = await api.getHardwareInfo();
+          final interfaces = hardware.networkInterfaces ?? [];
+
+          final networkInfo = NetworkInfo(
+            interfaces: interfaces,
+            totalRxBytes: interfaces.fold<int>(0, (sum, i) => sum + i.rxBytes),
+            totalTxBytes: interfaces.fold<int>(0, (sum, i) => sum + i.txBytes),
+          );
+
+          ref
+              .read(networkSpeedProvider.notifier)
+              .updateFromHardware(networkInfo);
+        } catch (_) {
+          // Ignore errors during refresh
+        }
       }
     });
   }
@@ -149,14 +228,36 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
   Widget build(BuildContext context) {
     final hardwareInfo = ref.watch(hardwareInfoProvider);
     final storageInfo = ref.watch(totalStorageInfoProvider);
-    final networkInfo = ref.watch(networkInfoProvider);
+    final networkInfo = ref.watch(networkSpeedProvider);
+
+    // Convert NetworkInfo? to AsyncValue for compatibility
+    final networkInfoAsync = networkInfo != null
+        ? AsyncValue.data(networkInfo)
+        : const AsyncValue<NetworkInfo?>.loading();
 
     return Scaffold(
       body: RefreshIndicator(
         onRefresh: () async {
           ref.invalidate(hardwareInfoProvider);
           ref.invalidate(totalStorageInfoProvider);
-          ref.invalidate(networkInfoProvider);
+          // Trigger network refresh
+          try {
+            final api = ref.read(apiServiceProvider);
+            final hardware = await api.getHardwareInfo();
+            final interfaces = hardware.networkInterfaces ?? [];
+            final netInfo = NetworkInfo(
+              interfaces: interfaces,
+              totalRxBytes: interfaces.fold<int>(
+                0,
+                (sum, i) => sum + i.rxBytes,
+              ),
+              totalTxBytes: interfaces.fold<int>(
+                0,
+                (sum, i) => sum + i.txBytes,
+              ),
+            );
+            ref.read(networkSpeedProvider.notifier).updateFromHardware(netInfo);
+          } catch (_) {}
         },
         child: CustomScrollView(
           slivers: [
@@ -172,10 +273,28 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
               actions: [
                 IconButton(
                   icon: const Icon(Icons.refresh_rounded),
-                  onPressed: () {
+                  onPressed: () async {
                     ref.invalidate(hardwareInfoProvider);
                     ref.invalidate(totalStorageInfoProvider);
-                    ref.invalidate(networkInfoProvider);
+                    try {
+                      final api = ref.read(apiServiceProvider);
+                      final hardware = await api.getHardwareInfo();
+                      final interfaces = hardware.networkInterfaces ?? [];
+                      final netInfo = NetworkInfo(
+                        interfaces: interfaces,
+                        totalRxBytes: interfaces.fold<int>(
+                          0,
+                          (sum, i) => sum + i.rxBytes,
+                        ),
+                        totalTxBytes: interfaces.fold<int>(
+                          0,
+                          (sum, i) => sum + i.txBytes,
+                        ),
+                      );
+                      ref
+                          .read(networkSpeedProvider.notifier)
+                          .updateFromHardware(netInfo);
+                    } catch (_) {}
                   },
                   tooltip: 'Refresh',
                 ),
@@ -201,21 +320,21 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                         context,
                         hardwareInfo,
                         storageInfo,
-                        networkInfo,
+                        networkInfoAsync,
                       );
                     } else if (isMedium) {
                       return _buildMediumLayout(
                         context,
                         hardwareInfo,
                         storageInfo,
-                        networkInfo,
+                        networkInfoAsync,
                       );
                     } else {
                       return _buildNarrowLayout(
                         context,
                         hardwareInfo,
                         storageInfo,
-                        networkInfo,
+                        networkInfoAsync,
                       );
                     }
                   },
@@ -254,13 +373,17 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                   TotalStorageCard(storageInfo: storageInfo)
                       .animate()
                       .fadeIn(
-                          delay: 150.ms, curve: M3Curves.emphasizedDecelerate)
+                        delay: 150.ms,
+                        curve: M3Curves.emphasizedDecelerate,
+                      )
                       .slideX(begin: 0.03, curve: M3Curves.emphasized),
                   const SizedBox(height: 16),
                   NetworkStatusCard(networkInfo: networkInfo)
                       .animate()
                       .fadeIn(
-                          delay: 200.ms, curve: M3Curves.emphasizedDecelerate)
+                        delay: 200.ms,
+                        curve: M3Curves.emphasizedDecelerate,
+                      )
                       .slideX(begin: 0.03, curve: M3Curves.emphasized),
                 ],
               ),
