@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
 import '../../../../core/services/biometric_service.dart';
+import '../../../../core/services/device_discovery_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import 'media_player_page.dart';
 import 'image_viewer_page.dart';
@@ -65,6 +66,15 @@ final fileErrorProvider = NotifierProvider<FileErrorNotifier, String?>(
 
 final directoryListingProvider = FutureProvider.autoDispose
     .family<DirectoryListing?, String>((ref, path) async {
+  // Check if device is connected
+  final device = ref.watch(connectedDeviceProvider);
+  if (device == null) {
+    ref
+        .read(fileErrorProvider.notifier)
+        .setError('Not connected to any device');
+    return null;
+  }
+
   try {
     final api = ref.read(apiServiceProvider);
     final result = await api.listDirectory(
@@ -82,11 +92,22 @@ final directoryListingProvider = FutureProvider.autoDispose
 final diskInfoProvider = FutureProvider.autoDispose<List<DiskInfo>>((
   ref,
 ) async {
+  // Check if device is connected
+  final device = ref.watch(connectedDeviceProvider);
+  if (device == null) {
+    throw Exception(
+        'Not connected to any device. Please connect to a RockZero device first.');
+  }
+
   try {
     final api = ref.read(apiServiceProvider);
-    return await api.getDiskInfo();
-  } catch (e) {
-    return [];
+    final result = await api.getDiskInfo();
+    debugPrint('Disk info loaded: ${result.length} disks');
+    return result;
+  } catch (e, s) {
+    debugPrint('Failed to load disk info: $e');
+    debugPrint('Stack trace: $s');
+    rethrow;
   }
 });
 
@@ -214,7 +235,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
               disks.when(
                 data: (diskList) => _buildDiskGrid(diskList),
                 loading: () => _buildLoadingState(),
-                error: (e, s) => _buildErrorState(e.toString()),
+                error: (e, s) => _buildDiskErrorState(e.toString()),
               )
             else
               listing.when(
@@ -1094,7 +1115,93 @@ class _FilesPageState extends ConsumerState<FilesPage>
             'Connect a storage device to get started',
             style: TextStyle(color: colorScheme.onSurfaceVariant),
           ),
+          const SizedBox(height: 24),
+          FilledButton.icon(
+            onPressed: () {
+              ref.invalidate(diskInfoProvider);
+            },
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Refresh'),
+            style: FilledButton.styleFrom(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 20,
+                vertical: 12,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildDiskErrorState(String message) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isNotConnected = message.contains('Not connected');
+
+    return SliverFillRemaining(
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 88,
+                height: 88,
+                decoration: BoxDecoration(
+                  color: isNotConnected
+                      ? colorScheme.primaryContainer
+                      : colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Icon(
+                  isNotConnected
+                      ? Icons.link_off_rounded
+                      : Icons.error_outline_rounded,
+                  size: 44,
+                  color: isNotConnected
+                      ? colorScheme.onPrimaryContainer
+                      : colorScheme.onErrorContainer,
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                isNotConnected ? 'Not Connected' : 'Failed to load storage',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                isNotConnected
+                    ? 'Please connect to a RockZero device to browse files'
+                    : message,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: colorScheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 28),
+              FilledButton.icon(
+                onPressed: () {
+                  ref.invalidate(diskInfoProvider);
+                },
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Retry'),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
