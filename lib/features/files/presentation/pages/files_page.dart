@@ -369,6 +369,14 @@ class _FilesPageState extends ConsumerState<FilesPage>
     // Check if we're at root (/) or a subdirectory
     final isAtRoot = path == '/' || (path.isNotEmpty && parts.isEmpty);
 
+    // URL decode path parts for proper display
+    final decodedParts = parts.map((p) => Uri.decodeComponent(p)).toList();
+
+    // Get the current folder name for display
+    // final currentFolder = decodedParts.isNotEmpty
+    //     ? decodedParts.last
+    //     : (isAtRoot ? '/' : 'Storage');
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -376,64 +384,184 @@ class _FilesPageState extends ConsumerState<FilesPage>
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(16),
       ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            _BreadcrumbChip(
-              icon: Icons.storage_rounded,
-              label: 'Storage',
-              isActive: false,
-              onTap: () {
-                ref.read(currentPathProvider.notifier).setPath('');
-                setState(() => _showDisks = true);
+      child: Row(
+        children: [
+          // Back button for quick navigation
+          if (path.isNotEmpty && path != '/')
+            IconButton(
+              icon: Icon(Icons.arrow_back_rounded,
+                  size: 20, color: colorScheme.primary),
+              onPressed: () {
+                if (parts.length <= 1) {
+                  ref.read(currentPathProvider.notifier).setPath('/');
+                } else {
+                  final parentPath =
+                      '/${parts.sublist(0, parts.length - 1).join('/')}';
+                  ref.read(currentPathProvider.notifier).setPath(parentPath);
+                }
               },
-            ),
-            if (path.isNotEmpty) ...[
-              Icon(
-                Icons.chevron_right_rounded,
-                size: 20,
-                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
-              ),
-              _BreadcrumbChip(
-                icon: Icons.folder_rounded,
-                label: '/',
-                isActive: isAtRoot && parts.isEmpty,
-                onTap: isAtRoot && parts.isEmpty
-                    ? null
-                    : () => ref.read(currentPathProvider.notifier).setPath('/'),
-              ),
-            ],
-            ...parts.asMap().entries.map((entry) {
-              final index = entry.key;
-              final part = entry.value;
-              final fullPath = '/${parts.sublist(0, index + 1).join('/')}';
-              final isLast = index == parts.length - 1;
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              tooltip: 'Go back',
+            ).animate().fadeIn(
+                duration: M3Durations.short4,
+                curve: M3Curves.emphasizedDecelerate),
 
-              return Row(
+          // Expandable breadcrumb
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              reverse: true, // Show the latest path on the right
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    size: 20,
-                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
-                  ),
+                  // Storage root
                   _BreadcrumbChip(
-                    label: part,
-                    isActive: isLast,
-                    onTap: isLast
-                        ? null
-                        : () => ref
-                            .read(currentPathProvider.notifier)
-                            .setPath(fullPath),
+                    icon: Icons.storage_rounded,
+                    label: 'Storage',
+                    isActive: false,
+                    onTap: () {
+                      ref.read(currentPathProvider.notifier).setPath('');
+                      setState(() => _showDisks = true);
+                    },
                   ),
+                  if (path.isNotEmpty) ...[
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: 20,
+                      color:
+                          colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                    ),
+                    // Root folder
+                    _BreadcrumbChip(
+                      icon: Icons.folder_rounded,
+                      label: '/',
+                      isActive: isAtRoot && parts.isEmpty,
+                      onTap: isAtRoot && parts.isEmpty
+                          ? null
+                          : () => ref
+                              .read(currentPathProvider.notifier)
+                              .setPath('/'),
+                    ),
+                  ],
+                  // Path parts - show abbreviated if too many
+                  if (decodedParts.length > 3) ...[
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: 20,
+                      color:
+                          colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                    ),
+                    PopupMenuButton<int>(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: colorScheme.surfaceContainerHigh,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '...',
+                          style: TextStyle(
+                            color: colorScheme.primary,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      onSelected: (index) {
+                        final fullPath =
+                            '/${parts.sublist(0, index + 1).join('/')}';
+                        ref
+                            .read(currentPathProvider.notifier)
+                            .setPath(fullPath);
+                      },
+                      itemBuilder: (context) => List.generate(
+                        decodedParts.length - 2,
+                        (index) => PopupMenuItem(
+                          value: index,
+                          child: Row(
+                            children: [
+                              Icon(Icons.folder_rounded,
+                                  size: 18, color: colorScheme.primary),
+                              const SizedBox(width: 8),
+                              Text(decodedParts[index]),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Show last 2 parts
+                    ...decodedParts
+                        .sublist(decodedParts.length - 2)
+                        .asMap()
+                        .entries
+                        .map((entry) {
+                      final actualIndex = decodedParts.length - 2 + entry.key;
+                      final part = entry.value;
+                      final fullPath =
+                          '/${parts.sublist(0, actualIndex + 1).join('/')}';
+                      final isLast = actualIndex == decodedParts.length - 1;
+
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.chevron_right_rounded,
+                            size: 20,
+                            color: colorScheme.onSurfaceVariant
+                                .withValues(alpha: 0.5),
+                          ),
+                          _BreadcrumbChip(
+                            label: part,
+                            isActive: isLast,
+                            onTap: isLast
+                                ? null
+                                : () => ref
+                                    .read(currentPathProvider.notifier)
+                                    .setPath(fullPath),
+                          ),
+                        ],
+                      );
+                    }),
+                  ] else ...[
+                    // Show all parts if 3 or fewer
+                    ...decodedParts.asMap().entries.map((entry) {
+                      final index = entry.key;
+                      final part = entry.value;
+                      final fullPath =
+                          '/${parts.sublist(0, index + 1).join('/')}';
+                      final isLast = index == decodedParts.length - 1;
+
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.chevron_right_rounded,
+                            size: 20,
+                            color: colorScheme.onSurfaceVariant
+                                .withValues(alpha: 0.5),
+                          ),
+                          _BreadcrumbChip(
+                            label: part,
+                            isActive: isLast,
+                            onTap: isLast
+                                ? null
+                                : () => ref
+                                    .read(currentPathProvider.notifier)
+                                    .setPath(fullPath),
+                          ),
+                        ],
+                      );
+                    }),
+                  ],
                 ],
-              );
-            }),
-          ],
-        ),
+              ),
+            ),
+          ),
+        ],
       ),
-    );
+    ).animate().fadeIn(
+        duration: M3Durations.medium2, curve: M3Curves.emphasizedDecelerate);
   }
 
   Widget _buildUploadProgress() {
@@ -1799,80 +1927,25 @@ class _FilesPageState extends ConsumerState<FilesPage>
     }
   }
 
-  /// Show file/folder details dialog
+  /// Show file/folder details dialog with extended media info
   void _showFileDetails(FileEntry entry) {
+    final mimeType = entry.mimeType ?? '';
+    final isVideo = mimeType.startsWith('video/');
+    final isAudio = mimeType.startsWith('audio/');
+    final isImage = mimeType.startsWith('image/');
+    final isMedia = isVideo || isAudio || isImage;
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        icon: _getFileIcon(entry, 64),
-        title: Text(
-          entry.name,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _DetailRow(
-                icon: Icons.folder_rounded,
-                label: 'Type',
-                value: entry.isDirectory
-                    ? 'Folder'
-                    : (entry.mimeType ?? 'Unknown'),
-              ).animate().fadeIn(
-                  duration: M3Durations.medium2,
-                  curve: M3Curves.emphasizedDecelerate),
-              const SizedBox(height: 12),
-              _DetailRow(
-                icon: Icons.storage_rounded,
-                label: 'Size',
-                value: entry.isDirectory ? '-' : _formatFileSize(entry.size),
-              ).animate().fadeIn(
-                  delay: 50.ms,
-                  duration: M3Durations.medium2,
-                  curve: M3Curves.emphasizedDecelerate),
-              const SizedBox(height: 12),
-              _DetailRow(
-                icon: Icons.location_on_rounded,
-                label: 'Path',
-                value: entry.path,
-                isSelectable: true,
-              ).animate().fadeIn(
-                  delay: 100.ms,
-                  duration: M3Durations.medium2,
-                  curve: M3Curves.emphasizedDecelerate),
-              const SizedBox(height: 12),
-              _DetailRow(
-                icon: Icons.calendar_today_rounded,
-                label: 'Modified',
-                value: _formatTimestamp(entry.modified),
-              ).animate().fadeIn(
-                  delay: 150.ms,
-                  duration: M3Durations.medium2,
-                  curve: M3Curves.emphasizedDecelerate),
-              if (entry.permissions.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _DetailRow(
-                  icon: Icons.security_rounded,
-                  label: 'Permissions',
-                  value: entry.permissions,
-                ).animate().fadeIn(
-                    delay: 200.ms,
-                    duration: M3Durations.medium2,
-                    curve: M3Curves.emphasizedDecelerate),
-              ],
-            ],
-          ),
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
+      builder: (context) => _FileDetailsDialog(
+        entry: entry,
+        isMedia: isMedia,
+        isVideo: isVideo,
+        isAudio: isAudio,
+        isImage: isImage,
+        getFileIcon: _getFileIcon,
+        formatFileSize: _formatFileSize,
+        formatTimestamp: _formatTimestamp,
       ),
     );
   }
@@ -2936,8 +3009,8 @@ class _DetailRow extends StatelessWidget {
                           fontWeight: FontWeight.w500,
                         ),
                       )
-                    : Text(
-                        value,
+                    : _MarqueeText(
+                        text: value,
                         style: textTheme.bodyMedium?.copyWith(
                           fontWeight: FontWeight.w500,
                         ),
@@ -2946,6 +3019,122 @@ class _DetailRow extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Marquee text widget for long text that scrolls at 0.75x speed
+class _MarqueeText extends StatefulWidget {
+  final String text;
+  final TextStyle? style;
+  final double velocity = 30.0;
+
+  const _MarqueeText({
+    required this.text,
+    this.style,
+  });
+
+  @override
+  State<_MarqueeText> createState() => _MarqueeTextState();
+}
+
+class _MarqueeTextState extends State<_MarqueeText>
+    with SingleTickerProviderStateMixin {
+  late ScrollController _scrollController;
+  late AnimationController _animationController;
+  bool _needsScroll = false;
+  double _textWidth = 0;
+  double _containerWidth = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController();
+    _animationController = AnimationController(vsync: this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkOverflow());
+  }
+
+  void _checkOverflow() {
+    if (!mounted) return;
+
+    final textPainter = TextPainter(
+      text: TextSpan(text: widget.text, style: widget.style),
+      maxLines: 1,
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    _textWidth = textPainter.width;
+
+    if (_scrollController.hasClients) {
+      _containerWidth = _scrollController.position.viewportDimension;
+      _needsScroll = _textWidth > _containerWidth;
+
+      if (_needsScroll) {
+        _startScrollAnimation();
+      }
+    }
+  }
+
+  void _startScrollAnimation() {
+    if (!_needsScroll || !mounted) return;
+
+    final scrollDistance = _textWidth - _containerWidth + 20;
+    final duration = Duration(
+      milliseconds: (scrollDistance / widget.velocity * 1000).round(),
+    );
+
+    _animationController.duration = duration;
+
+    _animationController.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) {
+            _scrollController.jumpTo(0);
+            Future.delayed(const Duration(seconds: 1), () {
+              if (mounted) {
+                _animationController.forward(from: 0);
+              }
+            });
+          }
+        });
+      }
+    });
+
+    _animationController.addListener(() {
+      if (_scrollController.hasClients && mounted) {
+        final scrollDistance = _textWidth - _containerWidth + 20;
+        _scrollController.jumpTo(_animationController.value * scrollDistance);
+      }
+    });
+
+    Future.delayed(const Duration(seconds: 1), () {
+      if (mounted) {
+        _animationController.forward();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 20,
+      child: SingleChildScrollView(
+        controller: _scrollController,
+        scrollDirection: Axis.horizontal,
+        physics: const NeverScrollableScrollPhysics(),
+        child: Text(
+          widget.text,
+          style: widget.style,
+          maxLines: 1,
+        ),
       ),
     );
   }
@@ -3070,6 +3259,481 @@ class _SkeletonListItem extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// File details dialog with extended media info
+class _FileDetailsDialog extends ConsumerStatefulWidget {
+  final FileEntry entry;
+  final bool isMedia;
+  final bool isVideo;
+  final bool isAudio;
+  final bool isImage;
+  final Widget Function(FileEntry, double) getFileIcon;
+  final String Function(int) formatFileSize;
+  final String Function(int) formatTimestamp;
+
+  const _FileDetailsDialog({
+    required this.entry,
+    required this.isMedia,
+    required this.isVideo,
+    required this.isAudio,
+    required this.isImage,
+    required this.getFileIcon,
+    required this.formatFileSize,
+    required this.formatTimestamp,
+  });
+
+  @override
+  ConsumerState<_FileDetailsDialog> createState() => _FileDetailsDialogState();
+}
+
+class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
+  Map<String, dynamic>? _mediaInfo;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isMedia) {
+      _loadMediaInfo();
+    }
+  }
+
+  Future<void> _loadMediaInfo() async {
+    setState(() => _isLoading = true);
+    try {
+      final api = ref.read(apiServiceProvider);
+      final response = await api
+          .get('/api/v1/media/info/${Uri.encodeComponent(widget.entry.path)}');
+      if (mounted) {
+        setState(() {
+          _mediaInfo = response.data;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  String _formatDuration(double? seconds) {
+    if (seconds == null) return '-';
+    final duration = Duration(seconds: seconds.round());
+    final h = duration.inHours;
+    final m = duration.inMinutes.remainder(60);
+    final s = duration.inSeconds.remainder(60);
+    if (h > 0) {
+      return '${h}h ${m}m ${s}s';
+    } else if (m > 0) {
+      return '${m}m ${s}s';
+    }
+    return '${s}s';
+  }
+
+  String _formatBitrate(int? bitrate) {
+    if (bitrate == null) return '-';
+    if (bitrate >= 1000000) {
+      return '${(bitrate / 1000000).toStringAsFixed(1)} Mbps';
+    } else if (bitrate >= 1000) {
+      return '${(bitrate / 1000).toStringAsFixed(0)} Kbps';
+    }
+    return '$bitrate bps';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return AlertDialog(
+      icon: widget.getFileIcon(widget.entry, 64),
+      title: _MarqueeText(
+        text: widget.entry.name,
+        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Basic info
+            _DetailRow(
+              icon: Icons.folder_rounded,
+              label: 'Type',
+              value: widget.entry.isDirectory
+                  ? 'Folder'
+                  : (widget.entry.mimeType ?? 'Unknown'),
+            ).animate().fadeIn(
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate),
+            const SizedBox(height: 12),
+            _DetailRow(
+              icon: Icons.storage_rounded,
+              label: 'Size',
+              value: widget.entry.isDirectory
+                  ? '-'
+                  : widget.formatFileSize(widget.entry.size),
+            ).animate().fadeIn(
+                delay: 50.ms,
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate),
+            const SizedBox(height: 12),
+            _DetailRow(
+              icon: Icons.location_on_rounded,
+              label: 'Path',
+              value: widget.entry.path,
+              isSelectable: true,
+            ).animate().fadeIn(
+                delay: 100.ms,
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate),
+            const SizedBox(height: 12),
+            _DetailRow(
+              icon: Icons.calendar_today_rounded,
+              label: 'Modified',
+              value: widget.formatTimestamp(widget.entry.modified),
+            ).animate().fadeIn(
+                delay: 150.ms,
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate),
+            if (widget.entry.permissions.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _DetailRow(
+                icon: Icons.security_rounded,
+                label: 'Permissions',
+                value: widget.entry.permissions,
+              ).animate().fadeIn(
+                  delay: 200.ms,
+                  duration: M3Durations.medium2,
+                  curve: M3Curves.emphasizedDecelerate),
+            ],
+
+            // Media info section
+            if (widget.isMedia) ...[
+              const SizedBox(height: 20),
+              _buildMediaInfoSection(colorScheme),
+            ],
+          ],
+        ),
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMediaInfoSection(ColorScheme colorScheme) {
+    if (_isLoading) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            CircularProgressIndicator(strokeWidth: 2),
+            const SizedBox(height: 12),
+            Text('Loading media info...',
+                style: TextStyle(color: colorScheme.onSurfaceVariant)),
+          ],
+        ),
+      ).animate().fadeIn(curve: M3Curves.emphasizedDecelerate);
+    }
+
+    if (_mediaInfo == null) {
+      return const SizedBox.shrink();
+    }
+
+    final List<Widget> mediaDetails = [];
+    int delayIndex = 250;
+
+    // Video info
+    if (widget.isVideo) {
+      if (_mediaInfo!['width'] != null && _mediaInfo!['height'] != null) {
+        mediaDetails.add(_DetailRow(
+          icon: Icons.aspect_ratio_rounded,
+          label: 'Resolution',
+          value: '${_mediaInfo!['width']}×${_mediaInfo!['height']}',
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+      if (_mediaInfo!['duration'] != null) {
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.timer_rounded,
+          label: 'Duration',
+          value: _formatDuration(_mediaInfo!['duration']?.toDouble()),
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+      if (_mediaInfo!['video_codec'] != null) {
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.videocam_rounded,
+          label: 'Video Codec',
+          value: _mediaInfo!['video_codec'].toString().toUpperCase(),
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+      if (_mediaInfo!['video_bitrate'] != null) {
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.speed_rounded,
+          label: 'Video Bitrate',
+          value: _formatBitrate(_mediaInfo!['video_bitrate']),
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+      if (_mediaInfo!['frame_rate'] != null) {
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.slow_motion_video_rounded,
+          label: 'Frame Rate',
+          value: '${_mediaInfo!['frame_rate'].toStringAsFixed(2)} fps',
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+    }
+
+    // Audio info
+    if (widget.isVideo || widget.isAudio) {
+      if (_mediaInfo!['audio_codec'] != null) {
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.audiotrack_rounded,
+          label: 'Audio Codec',
+          value: _mediaInfo!['audio_codec'].toString().toUpperCase(),
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+      if (_mediaInfo!['audio_bitrate'] != null) {
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.graphic_eq_rounded,
+          label: 'Audio Bitrate',
+          value: _formatBitrate(_mediaInfo!['audio_bitrate']),
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+      if (_mediaInfo!['audio_channels'] != null) {
+        final channels = _mediaInfo!['audio_channels'];
+        String channelStr = '$channels ch';
+        if (channels == 1) {
+          channelStr = 'Mono';
+        } else if (channels == 2) {
+          channelStr = 'Stereo';
+        } else if (channels == 6) {
+          channelStr = '5.1 Surround';
+        } else if (channels == 8) {
+          channelStr = '7.1 Surround';
+        }
+
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.surround_sound_rounded,
+          label: 'Audio Channels',
+          value: channelStr,
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+      if (_mediaInfo!['audio_sample_rate'] != null) {
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.waves_rounded,
+          label: 'Sample Rate',
+          value:
+              '${(_mediaInfo!['audio_sample_rate'] / 1000).toStringAsFixed(1)} kHz',
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+      // Audio tracks info
+      if (_mediaInfo!['audio_tracks'] != null &&
+          (_mediaInfo!['audio_tracks'] as List).length > 1) {
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.queue_music_rounded,
+          label: 'Audio Tracks',
+          value: '${(_mediaInfo!['audio_tracks'] as List).length} tracks',
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+    }
+
+    // Image EXIF info
+    if (widget.isImage && _mediaInfo!['exif'] != null) {
+      final exif = _mediaInfo!['exif'] as Map<String, dynamic>;
+
+      if (exif['camera_make'] != null || exif['camera_model'] != null) {
+        final camera = [exif['camera_make'], exif['camera_model']]
+            .where((e) => e != null)
+            .join(' ');
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.camera_alt_rounded,
+          label: 'Camera',
+          value: camera,
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+      if (exif['date_taken'] != null) {
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.calendar_month_rounded,
+          label: 'Date Taken',
+          value: exif['date_taken'],
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+      if (exif['exposure_time'] != null) {
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.shutter_speed_rounded,
+          label: 'Exposure',
+          value: exif['exposure_time'],
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+      if (exif['f_number'] != null) {
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.camera_rounded,
+          label: 'Aperture',
+          value: exif['f_number'],
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+      if (exif['iso'] != null) {
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.iso_rounded,
+          label: 'ISO',
+          value: exif['iso'].toString(),
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+      if (exif['focal_length'] != null) {
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.center_focus_strong_rounded,
+          label: 'Focal Length',
+          value: exif['focal_length'],
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+      if (exif['gps_latitude'] != null && exif['gps_longitude'] != null) {
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.location_on_rounded,
+          label: 'GPS',
+          value:
+              '${exif['gps_latitude'].toStringAsFixed(6)}, ${exif['gps_longitude'].toStringAsFixed(6)}',
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+        delayIndex += 50;
+      }
+      if (exif['lens_model'] != null) {
+        mediaDetails.add(const SizedBox(height: 12));
+        mediaDetails.add(_DetailRow(
+          icon: Icons.lens_rounded,
+          label: 'Lens',
+          value: exif['lens_model'],
+        ).animate().fadeIn(
+            delay: Duration(milliseconds: delayIndex),
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate));
+      }
+    }
+
+    if (mediaDetails.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+          child: Row(
+            children: [
+              Icon(
+                widget.isImage
+                    ? Icons.photo_camera_rounded
+                    : Icons.movie_rounded,
+                size: 18,
+                color: colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                widget.isImage ? 'Image Details' : 'Media Details',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.primary,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ).animate().fadeIn(
+            delay: 200.ms,
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasizedDecelerate),
+        ...mediaDetails,
+      ],
     );
   }
 }
