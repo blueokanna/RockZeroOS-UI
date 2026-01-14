@@ -3,8 +3,11 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/models/api_models.dart';
+import '../../../../core/network/api_client.dart';
 import '../../../../core/network/api_service.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../widgets/app_install_dialog.dart' as install_dialog;
+import 'app_webview_page.dart';
 
 final storeAppsProvider =
     FutureProvider.autoDispose<List<AppStoreItem>>((ref) async {
@@ -148,110 +151,26 @@ class _StoreTab extends ConsumerWidget {
 
   Future<void> _installApp(
       BuildContext context, WidgetRef ref, AppStoreItem app) async {
-    final confirmed = await showDialog<bool>(
+    // Show advanced install dialog
+    final result = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        icon: _AppIcon(iconUrl: app.icon, size: 64),
-        title: Text('Install ${app.displayName}?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(app.description),
-            const SizedBox(height: 20),
-            _InfoRow(
-                icon: Icons.image_rounded,
-                label: 'Image',
-                value: '${app.dockerImage}:${app.recommendedTag}'),
-            if (app.defaultPorts.isNotEmpty)
-              _InfoRow(
-                icon: Icons.lan_rounded,
-                label: 'Ports',
-                value: app.defaultPorts.map((p) => '${p.hostPort}').join(', '),
-              ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton.icon(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            icon: const Icon(Icons.download_rounded),
-            label: const Text('Install'),
-          ),
-        ],
-      ),
+      builder: (dialogContext) => install_dialog.AppInstallDialog(app: app),
     );
 
-    if (confirmed == true && context.mounted) {
-      _performInstall(context, ref, app);
-    }
-  }
-
-  Future<void> _performInstall(
-      BuildContext context, WidgetRef ref, AppStoreItem app) async {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (loadingContext) => AlertDialog(
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 20),
-            Text('Installing ${app.displayName}...'),
-            const SizedBox(height: 8),
-            Text(
-              'Pulling image...',
-              style: TextStyle(
-                color: Theme.of(loadingContext).colorScheme.onSurfaceVariant,
-                fontSize: 12,
-              ),
-            ),
-          ],
+    if (result == true && context.mounted) {
+      ref.invalidate(installedAppsProvider);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle_rounded, color: Colors.white),
+              const SizedBox(width: 12),
+              Text('${app.displayName} installed successfully'),
+            ],
+          ),
+          backgroundColor: Colors.green,
         ),
-      ),
-    );
-
-    try {
-      final api = ref.read(apiServiceProvider);
-      await api.installApp(
-        name: app.name,
-        dockerImage: app.dockerImage,
-        dockerTag: app.recommendedTag,
-        ports: app.defaultPorts,
-        volumes: app.defaultVolumes,
-        environment: [],
       );
-
-      if (context.mounted) {
-        Navigator.pop(context);
-        ref.invalidate(installedAppsProvider);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle_rounded, color: Colors.white),
-                const SizedBox(width: 12),
-                Text('${app.displayName} installed successfully'),
-              ],
-            ),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to install: $e'),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
     }
   }
 
@@ -329,6 +248,10 @@ class _InstalledTab extends ConsumerWidget {
               onStop: () => _stopApp(context, ref, apps[index]),
               onRestart: () => _restartApp(context, ref, apps[index]),
               onUninstall: () => _uninstallApp(context, ref, apps[index]),
+              onOpen: apps[index].status == 'running' &&
+                      apps[index].ports.isNotEmpty
+                  ? () => _openApp(context, ref, apps[index])
+                  : null,
             )
                 .animate(delay: (60 * index).ms)
                 .fadeIn(curve: M3Curves.emphasizedDecelerate)
@@ -338,6 +261,22 @@ class _InstalledTab extends ConsumerWidget {
       },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, s) => _buildErrorState(context, ref),
+    );
+  }
+
+  Future<void> _openApp(
+      BuildContext context, WidgetRef ref, DockerApp app) async {
+    // Get the base URL from the API client
+    final baseUrl = ref.read(baseUrlProvider);
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AppWebViewPage(
+          app: app,
+          baseUrl: baseUrl,
+        ),
+      ),
     );
   }
 
@@ -756,6 +695,7 @@ class _InstalledAppCard extends StatelessWidget {
   final VoidCallback onStop;
   final VoidCallback onRestart;
   final VoidCallback onUninstall;
+  final VoidCallback? onOpen;
 
   const _InstalledAppCard({
     required this.app,
@@ -763,6 +703,7 @@ class _InstalledAppCard extends StatelessWidget {
     required this.onStop,
     required this.onRestart,
     required this.onUninstall,
+    this.onOpen,
   });
 
   @override
@@ -773,107 +714,171 @@ class _InstalledAppCard extends StatelessWidget {
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            _AppIcon(iconUrl: app.icon, size: 56),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      child: InkWell(
+        onTap: isRunning && onOpen != null ? onOpen : null,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              _AppIcon(iconUrl: app.icon, size: 56),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            app.displayName,
+                            style: textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        if (isRunning && app.ports.isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              ':${app.ports.first.hostPort}',
+                              style: textTheme.labelSmall?.copyWith(
+                                color: colorScheme.onPrimaryContainer,
+                                fontFamily: 'monospace',
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        _StatusBadge(isRunning: isRunning),
+                        const SizedBox(width: 12),
+                        Flexible(
+                          child: Text(
+                            '${app.dockerImage}:${app.dockerTag}',
+                            style: textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (app.ports.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        'Ports: ${app.ports.map((p) => p.hostPort).join(', ')}',
+                        style: textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                    if (isRunning && onOpen != null) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.touch_app_rounded,
+                            size: 14,
+                            color: colorScheme.primary,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Tap to open',
+                            style: textTheme.labelSmall?.copyWith(
+                              color: colorScheme.primary,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Column(
                 children: [
-                  Text(
-                    app.displayName,
-                    style: textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
+                  IconButton.filled(
+                    onPressed: isRunning ? onStop : onStart,
+                    icon: Icon(isRunning
+                        ? Icons.stop_rounded
+                        : Icons.play_arrow_rounded),
+                    style: IconButton.styleFrom(
+                      backgroundColor: isRunning
+                          ? colorScheme.errorContainer
+                          : colorScheme.primaryContainer,
+                      foregroundColor: isRunning
+                          ? colorScheme.onErrorContainer
+                          : colorScheme.onPrimaryContainer,
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      _StatusBadge(isRunning: isRunning),
-                      const SizedBox(width: 12),
-                      Flexible(
-                        child: Text(
-                          '${app.dockerImage}:${app.dockerTag}',
-                          style: textTheme.bodySmall?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
+                  const SizedBox(height: 4),
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert_rounded),
+                    onSelected: (value) {
+                      switch (value) {
+                        case 'open':
+                          onOpen?.call();
+                          break;
+                        case 'restart':
+                          onRestart();
+                          break;
+                        case 'uninstall':
+                          onUninstall();
+                          break;
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      if (isRunning && onOpen != null)
+                        const PopupMenuItem(
+                          value: 'open',
+                          child: Row(
+                            children: [
+                              Icon(Icons.open_in_new_rounded),
+                              SizedBox(width: 12),
+                              Text('Open App'),
+                            ],
                           ),
-                          overflow: TextOverflow.ellipsis,
+                        ),
+                      const PopupMenuItem(
+                        value: 'restart',
+                        child: Row(
+                          children: [
+                            Icon(Icons.refresh_rounded),
+                            SizedBox(width: 12),
+                            Text('Restart'),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'uninstall',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_rounded,
+                                color: colorScheme.error),
+                            const SizedBox(width: 12),
+                            Text('Uninstall',
+                                style: TextStyle(color: colorScheme.error)),
+                          ],
                         ),
                       ),
                     ],
                   ),
-                  if (app.ports.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      'Ports: ${app.ports.map((p) => p.hostPort).join(', ')}',
-                      style: textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
                 ],
               ),
-            ),
-            const SizedBox(width: 8),
-            Column(
-              children: [
-                IconButton.filled(
-                  onPressed: isRunning ? onStop : onStart,
-                  icon: Icon(isRunning
-                      ? Icons.stop_rounded
-                      : Icons.play_arrow_rounded),
-                  style: IconButton.styleFrom(
-                    backgroundColor: isRunning
-                        ? colorScheme.errorContainer
-                        : colorScheme.primaryContainer,
-                    foregroundColor: isRunning
-                        ? colorScheme.onErrorContainer
-                        : colorScheme.onPrimaryContainer,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert_rounded),
-                  onSelected: (value) {
-                    switch (value) {
-                      case 'restart':
-                        onRestart();
-                        break;
-                      case 'uninstall':
-                        onUninstall();
-                        break;
-                    }
-                  },
-                  itemBuilder: (context) => [
-                    const PopupMenuItem(
-                      value: 'restart',
-                      child: Row(
-                        children: [
-                          Icon(Icons.refresh_rounded),
-                          SizedBox(width: 12),
-                          Text('Restart'),
-                        ],
-                      ),
-                    ),
-                    PopupMenuItem(
-                      value: 'uninstall',
-                      child: Row(
-                        children: [
-                          Icon(Icons.delete_rounded, color: colorScheme.error),
-                          const SizedBox(width: 12),
-                          Text('Uninstall',
-                              style: TextStyle(color: colorScheme.error)),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -913,47 +918,6 @@ class _StatusBadge extends StatelessWidget {
               fontSize: 12,
               fontWeight: FontWeight.w500,
               color: isRunning ? Colors.green : Colors.grey,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _InfoRow extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-
-  const _InfoRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Icon(icon, size: 16, color: colorScheme.onSurfaceVariant),
-          const SizedBox(width: 8),
-          Text(
-            '$label: ',
-            style: TextStyle(
-              color: colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: TextStyle(color: colorScheme.onSurface),
-              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],

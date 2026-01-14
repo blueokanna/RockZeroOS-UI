@@ -1,9 +1,11 @@
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:http/http.dart' as http;
@@ -11,6 +13,73 @@ import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
 
 import '../../../../core/theme/app_theme.dart';
+
+/// Custom image provider that supports authentication headers
+class AuthenticatedNetworkImage
+    extends ImageProvider<AuthenticatedNetworkImage> {
+  final String url;
+  final String? authToken;
+  final double scale;
+
+  const AuthenticatedNetworkImage(this.url, {this.authToken, this.scale = 1.0});
+
+  @override
+  Future<AuthenticatedNetworkImage> obtainKey(
+    ImageConfiguration configuration,
+  ) {
+    return SynchronousFuture<AuthenticatedNetworkImage>(this);
+  }
+
+  @override
+  ImageStreamCompleter loadImage(
+    AuthenticatedNetworkImage key,
+    ImageDecoderCallback decode,
+  ) {
+    return MultiFrameImageStreamCompleter(
+      codec: _loadAsync(key, decode),
+      scale: key.scale,
+      debugLabel: key.url,
+      informationCollector: () => <DiagnosticsNode>[
+        DiagnosticsProperty<ImageProvider>('Image provider', this),
+        DiagnosticsProperty<AuthenticatedNetworkImage>('Image key', key),
+      ],
+    );
+  }
+
+  Future<ui.Codec> _loadAsync(
+    AuthenticatedNetworkImage key,
+    ImageDecoderCallback decode,
+  ) async {
+    final headers = <String, String>{};
+    if (authToken != null && authToken!.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $authToken';
+    }
+
+    final response = await http.get(Uri.parse(url), headers: headers);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load image: ${response.statusCode}');
+    }
+
+    final bytes = response.bodyBytes;
+    final buffer = await ImmutableBuffer.fromUint8List(bytes);
+    return decode(buffer);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (other.runtimeType != runtimeType) return false;
+    return other is AuthenticatedNetworkImage &&
+        other.url == url &&
+        other.authToken == authToken;
+  }
+
+  @override
+  int get hashCode => Object.hash(url, authToken);
+
+  @override
+  String toString() =>
+      '${objectRuntimeType(this, 'AuthenticatedNetworkImage')}("$url")';
+}
 
 /// Image viewer with zoom, pan, and download support
 class ImageViewerPage extends ConsumerStatefulWidget {
@@ -37,15 +106,26 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
   bool _showControls = true;
   bool _isDownloading = false;
   double _downloadProgress = 0;
+  String? _authToken;
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex;
     _pageController = PageController(initialPage: _currentIndex);
+    _loadToken();
 
     // Hide system UI for immersive experience
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  }
+
+  Future<void> _loadToken() async {
+    const storage = FlutterSecureStorage();
+    _authToken = await storage.read(key: 'access_token');
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
   }
 
   @override
@@ -60,6 +140,10 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
     setState(() => _showControls = !_showControls);
   }
 
+  ImageProvider _getImageProvider(String url) {
+    return AuthenticatedNetworkImage(url, authToken: _authToken);
+  }
+
   Future<void> _downloadImage() async {
     if (_isDownloading) return;
 
@@ -67,12 +151,24 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
     if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
       final status = await Permission.storage.request();
       if (!status.isGranted) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Storage permission required')),
-          );
+        if (Platform.isAndroid) {
+          final manageStatus = await Permission.manageExternalStorage.request();
+          if (!manageStatus.isGranted) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Storage permission required')),
+              );
+            }
+            return;
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Storage permission required')),
+            );
+          }
+          return;
         }
-        return;
       }
     }
 
@@ -117,25 +213,31 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
       final filePath = '${downloadDir.path}/$currentFileName';
       final file = File(filePath);
 
-      // Download file
+      // Download file with auth header
       final request = http.Request('GET', Uri.parse(currentUrl));
-      final response = await http.Client().send(request);
+      if (_authToken != null && _authToken!.isNotEmpty) {
+        request.headers['Authorization'] = 'Bearer $_authToken';
+      }
+
+      final client = http.Client();
+      final response = await client.send(request);
       final contentLength = response.contentLength ?? 0;
 
       final sink = file.openWrite();
       int received = 0;
 
-      await response.stream.forEach((chunk) {
+      await for (final chunk in response.stream) {
         sink.add(chunk);
         received += chunk.length;
-        if (contentLength > 0) {
+        if (contentLength > 0 && mounted) {
           setState(() {
             _downloadProgress = received / contentLength;
           });
         }
-      });
+      }
 
       await sink.close();
+      client.close();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -162,7 +264,9 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
         );
       }
     } finally {
-      setState(() => _isDownloading = false);
+      if (mounted) {
+        setState(() => _isDownloading = false);
+      }
     }
   }
 
@@ -170,6 +274,15 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final hasGallery = widget.gallery != null && widget.gallery!.length > 1;
+
+    if (_isLoading) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: CircularProgressIndicator(color: colorScheme.primary),
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -184,7 +297,7 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
                 itemCount: widget.gallery!.length,
                 builder: (context, index) {
                   return PhotoViewGalleryPageOptions(
-                    imageProvider: NetworkImage(widget.gallery![index]),
+                    imageProvider: _getImageProvider(widget.gallery![index]),
                     minScale: PhotoViewComputedScale.contained,
                     maxScale: PhotoViewComputedScale.covered * 4,
                     heroAttributes: PhotoViewHeroAttributes(
@@ -195,15 +308,25 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(
+                            const Icon(
                               Icons.broken_image_rounded,
                               size: 64,
                               color: Colors.white54,
                             ),
                             const SizedBox(height: 16),
-                            Text(
+                            const Text(
                               'Failed to load image',
                               style: TextStyle(color: Colors.white54),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              error.toString(),
+                              style: const TextStyle(
+                                color: Colors.white38,
+                                fontSize: 10,
+                              ),
+                              textAlign: TextAlign.center,
+                              maxLines: 3,
                             ),
                           ],
                         ),
@@ -229,7 +352,7 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
               )
             else
               PhotoView(
-                imageProvider: NetworkImage(widget.imageUrl),
+                imageProvider: _getImageProvider(widget.imageUrl),
                 minScale: PhotoViewComputedScale.contained,
                 maxScale: PhotoViewComputedScale.covered * 4,
                 heroAttributes: const PhotoViewHeroAttributes(tag: 'image'),
@@ -249,15 +372,25 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(
+                        const Icon(
                           Icons.broken_image_rounded,
                           size: 64,
                           color: Colors.white54,
                         ),
                         const SizedBox(height: 16),
-                        Text(
+                        const Text(
                           'Failed to load image',
                           style: TextStyle(color: Colors.white54),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          error.toString(),
+                          style: const TextStyle(
+                            color: Colors.white38,
+                            fontSize: 10,
+                          ),
+                          textAlign: TextAlign.center,
+                          maxLines: 3,
                         ),
                       ],
                     ),
@@ -270,29 +403,32 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
             AnimatedOpacity(
               opacity: _showControls ? 1.0 : 0.0,
               duration: M3Durations.medium2,
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.black54,
-                      Colors.transparent,
-                      Colors.transparent,
-                      Colors.black54,
-                    ],
-                    stops: const [0.0, 0.15, 0.85, 1.0],
+              child: IgnorePointer(
+                ignoring: !_showControls,
+                child: Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.black54,
+                        Colors.transparent,
+                        Colors.transparent,
+                        Colors.black54,
+                      ],
+                      stops: [0.0, 0.15, 0.85, 1.0],
+                    ),
                   ),
-                ),
-                child: SafeArea(
-                  child: Column(
-                    children: [
-                      // Top bar
-                      _buildTopBar(colorScheme, hasGallery),
-                      const Spacer(),
-                      // Bottom indicator
-                      if (hasGallery) _buildPageIndicator(colorScheme),
-                    ],
+                  child: SafeArea(
+                    child: Column(
+                      children: [
+                        // Top bar
+                        _buildTopBar(colorScheme, hasGallery),
+                        const Spacer(),
+                        // Bottom indicator
+                        if (hasGallery) _buildPageIndicator(colorScheme),
+                      ],
+                    ),
                   ),
                 ),
               ),

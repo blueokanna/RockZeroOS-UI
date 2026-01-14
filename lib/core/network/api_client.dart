@@ -32,6 +32,12 @@ final dioProvider = Provider<Dio>((ref) {
   return apiClient.dio;
 });
 
+// Base URL provider for accessing the server URL
+final baseUrlProvider = Provider<String>((ref) {
+  final device = ref.watch(connectedDeviceProvider);
+  return device?.baseUrl ?? '';
+});
+
 class ApiClient {
   final DiscoveredDevice? device;
   final FlutterSecureStorage storage;
