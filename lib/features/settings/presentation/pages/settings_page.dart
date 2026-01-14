@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/services/device_discovery_service.dart';
 import '../../../../core/services/biometric_service.dart';
 import '../../../../core/services/fido2_service.dart';
+import '../../../../core/services/wallpaper_service.dart';
 import '../../../auth/providers/auth_provider.dart';
 
 // Check if running on mobile platform
@@ -123,6 +125,9 @@ class SettingsPage extends ConsumerWidget {
     Color? systemAccentColor,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
+    final backgroundMode = ref.watch(backgroundModeProvider);
+    final customWallpaperPath = ref.watch(customWallpaperPathProvider);
+    final wallpaperColor = ref.watch(wallpaperColorProvider);
 
     return _SettingsSection(
       title: 'Appearance',
@@ -216,11 +221,276 @@ class SettingsPage extends ConsumerWidget {
               );
             },
           ),
+        // Background/Wallpaper Settings
+        const Divider(height: 1, indent: 16, endIndent: 16),
+        ListTile(
+          leading: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: colorScheme.secondaryContainer,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(Icons.wallpaper_rounded,
+                color: colorScheme.onSecondaryContainer),
+          ),
+          title: const Text('Background'),
+          subtitle: Text(
+            backgroundMode == BackgroundMode.customWallpaper
+                ? 'Custom wallpaper'
+                : 'Default (system colors)',
+          ),
+          trailing: const Icon(Icons.chevron_right_rounded),
+          onTap: () => _showBackgroundSettings(context, ref),
+        ),
+        // Show wallpaper preview if custom wallpaper is set
+        if (backgroundMode == BackgroundMode.customWallpaper &&
+            customWallpaperPath != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Container(
+              height: 120,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                image: DecorationImage(
+                  image: FileImage(File(customWallpaperPath)),
+                  fit: BoxFit.cover,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: colorScheme.shadow.withValues(alpha: 0.1),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Stack(
+                children: [
+                  Positioned(
+                    bottom: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (wallpaperColor != null) ...[
+                            Container(
+                              width: 16,
+                              height: 16,
+                              decoration: BoxDecoration(
+                                color: wallpaperColor,
+                                shape: BoxShape.circle,
+                                border:
+                                    Border.all(color: Colors.white, width: 1),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                          ],
+                          const Text(
+                            'Custom Wallpaper',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
       ],
     )
         .animate()
         .fadeIn(delay: 200.ms)
         .slideY(begin: 0.05, curve: M3Curves.emphasized);
+  }
+
+  void _showBackgroundSettings(BuildContext context, WidgetRef ref) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => Consumer(
+        builder: (context, ref, child) {
+          final backgroundMode = ref.watch(backgroundModeProvider);
+          final customWallpaperPath = ref.watch(customWallpaperPathProvider);
+          final wallpaperColor = ref.watch(wallpaperColorProvider);
+
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: colorScheme.primaryContainer,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(Icons.wallpaper_rounded,
+                            color: colorScheme.onPrimaryContainer),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Background Settings',
+                              style: textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              'Customize theme colors',
+                              style: textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Default mode option
+                  _BackgroundOptionTile(
+                    title: 'Default',
+                    subtitle: '70% system color + 30% wallpaper color',
+                    icon: Icons.auto_awesome_rounded,
+                    isSelected: backgroundMode == BackgroundMode.defaultMode,
+                    onTap: () async {
+                      await ref
+                          .read(backgroundModeProvider.notifier)
+                          .setMode(BackgroundMode.defaultMode);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Custom wallpaper option
+                  _BackgroundOptionTile(
+                    title: 'Custom Wallpaper',
+                    subtitle: 'Use your own image for theme colors',
+                    icon: Icons.image_rounded,
+                    isSelected:
+                        backgroundMode == BackgroundMode.customWallpaper,
+                    onTap: () async {
+                      await ref
+                          .read(backgroundModeProvider.notifier)
+                          .setMode(BackgroundMode.customWallpaper);
+                    },
+                  ),
+
+                  // Custom wallpaper controls
+                  if (backgroundMode == BackgroundMode.customWallpaper) ...[
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: () async {
+                              final path = await ref
+                                  .read(customWallpaperPathProvider.notifier)
+                                  .pickAndSaveWallpaper();
+                              if (path != null) {
+                                await ref
+                                    .read(wallpaperColorProvider.notifier)
+                                    .extractFromWallpaper(path);
+                              }
+                            },
+                            icon: const Icon(Icons.add_photo_alternate_rounded),
+                            label: Text(customWallpaperPath != null
+                                ? 'Change'
+                                : 'Select Image'),
+                          ),
+                        ),
+                        if (customWallpaperPath != null) ...[
+                          const SizedBox(width: 12),
+                          FilledButton.tonal(
+                            onPressed: () async {
+                              await ref
+                                  .read(customWallpaperPathProvider.notifier)
+                                  .clearWallpaper();
+                              await ref
+                                  .read(wallpaperColorProvider.notifier)
+                                  .setColor(null);
+                            },
+                            style: FilledButton.styleFrom(
+                              backgroundColor: colorScheme.errorContainer,
+                              foregroundColor: colorScheme.onErrorContainer,
+                            ),
+                            child: const Icon(Icons.delete_rounded),
+                          ),
+                        ],
+                      ],
+                    ),
+
+                    // Wallpaper preview
+                    if (customWallpaperPath != null) ...[
+                      const SizedBox(height: 16),
+                      Container(
+                        height: 150,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          image: DecorationImage(
+                            image: FileImage(File(customWallpaperPath)),
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ),
+                      if (wallpaperColor != null) ...[
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Text(
+                              'Extracted Color:',
+                              style: textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              width: 24,
+                              height: 24,
+                              decoration: BoxDecoration(
+                                color: wallpaperColor,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                    color: colorScheme.outline, width: 2),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ],
+
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Widget _buildSecuritySection(
@@ -1386,6 +1656,100 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
           child: const Text('Close'),
         ),
       ],
+    );
+  }
+}
+
+class _BackgroundOptionTile extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _BackgroundOptionTile({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Material(
+      color: isSelected
+          ? colorScheme.primaryContainer.withValues(alpha: 0.5)
+          : colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: isSelected
+                  ? colorScheme.primary
+                  : colorScheme.outlineVariant.withValues(alpha: 0.5),
+              width: isSelected ? 2 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? colorScheme.primary
+                      : colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  icon,
+                  color: isSelected
+                      ? colorScheme.onPrimary
+                      : colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: isSelected
+                            ? colorScheme.primary
+                            : colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (isSelected)
+                Icon(
+                  Icons.check_circle_rounded,
+                  color: colorScheme.primary,
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

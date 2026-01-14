@@ -24,6 +24,7 @@ class MainActivity : FlutterFragmentActivity() {
     private val BIOMETRIC_CHANNEL = "rockzero/biometric"
     private val FIDO2_CHANNEL = "rockzero/fido2"
     private val SYSTEM_COLORS_CHANNEL = "rockzero/system_colors"
+    private val VIDEO_OPTIMIZER_CHANNEL = "rockzero/video_optimizer"
     
     private lateinit var biometricExecutor: Executor
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -33,6 +34,11 @@ class MainActivity : FlutterFragmentActivity() {
         DynamicColors.applyToActivityIfAvailable(this)
         super.onCreate(savedInstanceState)
         biometricExecutor = ContextCompat.getMainExecutor(this)
+        
+        // Log video codec capabilities for debugging
+        VideoPlayerOptimizer.logAllCodecs()
+        val capabilities = VideoPlayerOptimizer.getDeviceCapabilities(this)
+        android.util.Log.d("MainActivity", "Video capabilities: $capabilities")
     }
     
     override fun onDestroy() {
@@ -74,6 +80,27 @@ class MainActivity : FlutterFragmentActivity() {
                     "getAccentColor" -> handleGetAccentColor(result)
                     "isDynamicColorAvailable" -> handleIsDynamicColorAvailable(result)
                     "getSystemColors" -> handleGetSystemColors(result)
+                    else -> result.notImplemented()
+                }
+            }
+        
+        // Video Optimizer Channel
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, VIDEO_OPTIMIZER_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "getDeviceCapabilities" -> {
+                        val capabilities = VideoPlayerOptimizer.getDeviceCapabilities(this)
+                        result.success(capabilities)
+                    }
+                    "isDtsSupported" -> {
+                        result.success(VideoPlayerOptimizer.isDtsSupported())
+                    }
+                    "isAc3Supported" -> {
+                        result.success(VideoPlayerOptimizer.isAc3Supported())
+                    }
+                    "getSupportedAudioCodecs" -> {
+                        result.success(VideoPlayerOptimizer.getSupportedAudioCodecs())
+                    }
                     else -> result.notImplemented()
                 }
             }

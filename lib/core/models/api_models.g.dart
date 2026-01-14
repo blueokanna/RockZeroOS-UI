@@ -288,6 +288,19 @@ Map<String, dynamic> _$SystemInfoToJson(SystemInfo instance) =>
       'uptime': instance.uptime,
     };
 
+CpuCoreInfo _$CpuCoreInfoFromJson(Map<String, dynamic> json) => CpuCoreInfo(
+      coreId: (json['core_id'] as num).toInt(),
+      usage: (json['usage'] as num).toDouble(),
+      frequency: (json['frequency'] as num).toInt(),
+    );
+
+Map<String, dynamic> _$CpuCoreInfoToJson(CpuCoreInfo instance) =>
+    <String, dynamic>{
+      'core_id': instance.coreId,
+      'usage': instance.usage,
+      'frequency': instance.frequency,
+    };
+
 CpuInfo _$CpuInfoFromJson(Map<String, dynamic> json) => CpuInfo(
       name: json['name'] as String,
       vendor: json['vendor'] as String,
@@ -296,6 +309,9 @@ CpuInfo _$CpuInfoFromJson(Map<String, dynamic> json) => CpuInfo(
       cores: (json['cores'] as num).toInt(),
       usage: (json['usage'] as num).toDouble(),
       temperature: (json['temperature'] as num?)?.toDouble(),
+      perCoreUsage: (json['per_core_usage'] as List<dynamic>?)
+          ?.map((e) => CpuCoreInfo.fromJson(e as Map<String, dynamic>))
+          .toList(),
     );
 
 Map<String, dynamic> _$CpuInfoToJson(CpuInfo instance) => <String, dynamic>{
@@ -306,6 +322,7 @@ Map<String, dynamic> _$CpuInfoToJson(CpuInfo instance) => <String, dynamic>{
       'cores': instance.cores,
       'usage': instance.usage,
       'temperature': instance.temperature,
+      'per_core_usage': instance.perCoreUsage,
     };
 
 MemoryInfo _$MemoryInfoFromJson(Map<String, dynamic> json) => MemoryInfo(

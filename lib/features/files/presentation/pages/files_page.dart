@@ -3,17 +3,18 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 
 import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
 import '../../../../core/services/biometric_service.dart';
 import '../../../../core/services/device_discovery_service.dart';
 import '../../../../core/theme/app_theme.dart';
-import 'media_player_page.dart';
+import 'enhanced_media_player_page.dart';
+import 'enhanced_audio_player_page.dart';
 import 'image_viewer_page.dart';
 
 // ============ Path Encoding Utilities ============
@@ -97,36 +98,36 @@ final fileErrorProvider = NotifierProvider<FileErrorNotifier, String?>(
 
 final directoryListingProvider =
     FutureProvider.family<DirectoryListing?, String>((ref, path) async {
-      final device = ref.watch(connectedDeviceProvider);
-      if (device == null) {
-        ref
-            .read(fileErrorProvider.notifier)
-            .setError('Not connected to any device');
-        return null;
-      }
+  final device = ref.watch(connectedDeviceProvider);
+  if (device == null) {
+    ref
+        .read(fileErrorProvider.notifier)
+        .setError('Not connected to any device');
+    return null;
+  }
 
-      try {
-        final api = ref.read(apiServiceProvider);
-        // Pass path directly - the API service handles encoding
-        final result = await api.listDirectory(
-          path: path.isEmpty ? null : path,
-        );
-        ref.read(fileErrorProvider.notifier).setError(null);
-        return result;
-      } catch (e) {
-        final safePath = safeDisplayName(path);
-        debugPrint('[DirectoryListing] Error loading path "$safePath": $e');
+  try {
+    final api = ref.read(apiServiceProvider);
+    // Pass path directly - the API service handles encoding
+    final result = await api.listDirectory(
+      path: path.isEmpty ? null : path,
+    );
+    ref.read(fileErrorProvider.notifier).setError(null);
+    return result;
+  } catch (e) {
+    final safePath = safeDisplayName(path);
+    debugPrint('[DirectoryListing] Error loading path "$safePath": $e');
 
-        String errorMessage = e.toString();
-        if (errorMessage.contains('FormatException') ||
-            errorMessage.contains('encoding') ||
-            errorMessage.contains('decode')) {
-          errorMessage = 'Path encoding error. Please try refreshing.';
-        }
-        ref.read(fileErrorProvider.notifier).setError(errorMessage);
-        return null;
-      }
-    });
+    String errorMessage = e.toString();
+    if (errorMessage.contains('FormatException') ||
+        errorMessage.contains('encoding') ||
+        errorMessage.contains('decode')) {
+      errorMessage = 'Path encoding error. Please try refreshing.';
+    }
+    ref.read(fileErrorProvider.notifier).setError(errorMessage);
+    return null;
+  }
+});
 
 final diskInfoProvider = FutureProvider<List<DiskInfo>>((ref) async {
   final device = ref.watch(connectedDeviceProvider);
@@ -233,50 +234,61 @@ class _FilesPageState extends ConsumerState<FilesPage>
       onPopInvokedWithResult: (didPop, result) {
         if (!didPop) _handleBackNavigation();
       },
-      child: Scaffold(
-        body: CustomScrollView(
-          controller: _scrollController,
-          slivers: [
-            _buildAppBar(showDiskView, currentPath),
-            if (!showDiskView)
-              SliverToBoxAdapter(child: _buildBreadcrumb(currentPath)),
-            if (_isUploading) SliverToBoxAdapter(child: _buildUploadProgress()),
-            if (showDiskView)
-              disks.when(
-                data: (diskList) => _buildDiskGrid(diskList),
-                loading: () => _buildLoadingState(),
-                error: (e, s) => _buildDiskErrorState(e.toString()),
-              )
-            else
-              listing.when(
-                data: (data) {
-                  if (data == null) {
-                    final device = ref.read(connectedDeviceProvider);
-                    if (device == null) {
-                      return _buildErrorState('Not connected to any device.');
+      child: GestureDetector(
+        // Add swipe-from-edge gesture for back navigation
+        onHorizontalDragEnd: (details) {
+          // Detect swipe from left edge (back gesture)
+          if (details.primaryVelocity != null &&
+              details.primaryVelocity! > 500) {
+            _handleBackNavigation();
+          }
+        },
+        child: Scaffold(
+          body: CustomScrollView(
+            controller: _scrollController,
+            slivers: [
+              _buildAppBar(showDiskView, currentPath),
+              if (!showDiskView)
+                SliverToBoxAdapter(child: _buildBreadcrumb(currentPath)),
+              if (_isUploading)
+                SliverToBoxAdapter(child: _buildUploadProgress()),
+              if (showDiskView)
+                disks.when(
+                  data: (diskList) => _buildDiskGrid(diskList),
+                  loading: () => _buildLoadingState(),
+                  error: (e, s) => _buildDiskErrorState(e.toString()),
+                )
+              else
+                listing.when(
+                  data: (data) {
+                    if (data == null) {
+                      final device = ref.read(connectedDeviceProvider);
+                      if (device == null) {
+                        return _buildErrorState('Not connected to any device.');
+                      }
+                      return _buildErrorState(
+                        errorMessage ?? 'Failed to load files.',
+                      );
                     }
-                    return _buildErrorState(
-                      errorMessage ?? 'Failed to load files.',
-                    );
-                  }
-                  return _buildFileContent(data);
-                },
-                loading: () => _buildLoadingState(),
-                error: (e, s) => _buildErrorState(e.toString()),
-              ),
-          ],
-        ),
-        floatingActionButton: showDiskView
-            ? null
-            : AnimatedSlide(
-                duration: M3Durations.medium2,
-                offset: _showFab ? Offset.zero : const Offset(0, 2),
-                child: AnimatedOpacity(
-                  duration: M3Durations.medium2,
-                  opacity: _showFab ? 1.0 : 0.0,
-                  child: _buildFAB(),
+                    return _buildFileContent(data);
+                  },
+                  loading: () => _buildLoadingState(),
+                  error: (e, s) => _buildErrorState(e.toString()),
                 ),
-              ),
+            ],
+          ),
+          floatingActionButton: showDiskView
+              ? null
+              : AnimatedSlide(
+                  duration: M3Durations.medium2,
+                  offset: _showFab ? Offset.zero : const Offset(0, 2),
+                  child: AnimatedOpacity(
+                    duration: M3Durations.medium2,
+                    opacity: _showFab ? 1.0 : 0.0,
+                    child: _buildFAB(),
+                  ),
+                ),
+        ),
       ),
     );
   }
@@ -465,8 +477,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
                       onTap: isAtRoot && parts.isEmpty
                           ? null
                           : () => ref
-                                .read(currentPathProvider.notifier)
-                                .setPath('/'),
+                              .read(currentPathProvider.notifier)
+                              .setPath('/'),
                     ),
                   ],
                   if (decodedParts.length > 3) ...[
@@ -525,35 +537,34 @@ class _FilesPageState extends ConsumerState<FilesPage>
                         .asMap()
                         .entries
                         .map((entry) {
-                          final actualIndex =
-                              decodedParts.length - 2 + entry.key;
-                          final part = entry.value;
-                          final fullPath =
-                              '/${parts.sublist(0, actualIndex + 1).join('/')}';
-                          final isLast = actualIndex == decodedParts.length - 1;
+                      final actualIndex = decodedParts.length - 2 + entry.key;
+                      final part = entry.value;
+                      final fullPath =
+                          '/${parts.sublist(0, actualIndex + 1).join('/')}';
+                      final isLast = actualIndex == decodedParts.length - 1;
 
-                          return Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.chevron_right_rounded,
-                                size: 20,
-                                color: colorScheme.onSurfaceVariant.withValues(
-                                  alpha: 0.5,
-                                ),
-                              ),
-                              _BreadcrumbChip(
-                                label: part,
-                                isActive: isLast,
-                                onTap: isLast
-                                    ? null
-                                    : () => ref
-                                          .read(currentPathProvider.notifier)
-                                          .setPath(fullPath),
-                              ),
-                            ],
-                          );
-                        }),
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.chevron_right_rounded,
+                            size: 20,
+                            color: colorScheme.onSurfaceVariant.withValues(
+                              alpha: 0.5,
+                            ),
+                          ),
+                          _BreadcrumbChip(
+                            label: part,
+                            isActive: isLast,
+                            onTap: isLast
+                                ? null
+                                : () => ref
+                                    .read(currentPathProvider.notifier)
+                                    .setPath(fullPath),
+                          ),
+                        ],
+                      );
+                    }),
                   ] else ...[
                     ...decodedParts.asMap().entries.map((entry) {
                       final index = entry.key;
@@ -578,8 +589,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
                             onTap: isLast
                                 ? null
                                 : () => ref
-                                      .read(currentPathProvider.notifier)
-                                      .setPath(fullPath),
+                                    .read(currentPathProvider.notifier)
+                                    .setPath(fullPath),
                           ),
                         ],
                       );
@@ -691,9 +702,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
       totalSpace += disk.totalSpace;
       usedSpace += disk.usedSpace;
     }
-    final totalUsagePercent = totalSpace > 0
-        ? (usedSpace / totalSpace) * 100
-        : 0.0;
+    final totalUsagePercent =
+        totalSpace > 0 ? (usedSpace / totalSpace) * 100 : 0.0;
 
     return SliverPadding(
       padding: const EdgeInsets.all(16),
@@ -862,7 +872,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
       return SliverFillRemaining(child: _buildEmptyFolderState());
     }
 
-    // Optimized animation - use RepaintBoundary and reduce animation complexity
+    // Optimized animation with staggered effect
     if (_isGridView) {
       return SliverPadding(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 100),
@@ -874,12 +884,23 @@ class _FilesPageState extends ConsumerState<FilesPage>
             childAspectRatio: 0.82,
           ),
           delegate: SliverChildBuilderDelegate(
-            (context, index) => RepaintBoundary(
-              child: _FileGridItem(
-                entry: entries[index],
-                isSelected: _selectedFiles.contains(entries[index].path),
-                onTap: () => _handleFileTap(entries[index]),
-                onLongPress: () => _handleLongPress(entries[index]),
+            (context, index) => AnimationConfiguration.staggeredGrid(
+              position: index,
+              duration: M3Durations.medium4,
+              columnCount: 3,
+              child: ScaleAnimation(
+                curve: M3Curves.emphasized,
+                child: FadeInAnimation(
+                  curve: M3Curves.emphasized,
+                  child: RepaintBoundary(
+                    child: _FileGridItem(
+                      entry: entries[index],
+                      isSelected: _selectedFiles.contains(entries[index].path),
+                      onTap: () => _handleFileTap(entries[index]),
+                      onLongPress: () => _handleLongPress(entries[index]),
+                    ),
+                  ),
+                ),
               ),
             ),
             childCount: entries.length,
@@ -891,13 +912,24 @@ class _FilesPageState extends ConsumerState<FilesPage>
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 100),
         sliver: SliverList(
           delegate: SliverChildBuilderDelegate(
-            (context, index) => RepaintBoundary(
-              child: _FileListItem(
-                entry: entries[index],
-                isSelected: _selectedFiles.contains(entries[index].path),
-                onTap: () => _handleFileTap(entries[index]),
-                onLongPress: () => _handleLongPress(entries[index]),
-                onDelete: () => _deleteFile(entries[index]),
+            (context, index) => AnimationConfiguration.staggeredList(
+              position: index,
+              duration: M3Durations.medium3,
+              child: SlideAnimation(
+                verticalOffset: 50.0,
+                curve: M3Curves.emphasized,
+                child: FadeInAnimation(
+                  curve: M3Curves.emphasized,
+                  child: RepaintBoundary(
+                    child: _FileListItem(
+                      entry: entries[index],
+                      isSelected: _selectedFiles.contains(entries[index].path),
+                      onTap: () => _handleFileTap(entries[index]),
+                      onLongPress: () => _handleLongPress(entries[index]),
+                      onDelete: () => _deleteFile(entries[index]),
+                    ),
+                  ),
+                ),
               ),
             ),
             childCount: entries.length,
@@ -1466,8 +1498,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     isImage
                         ? Icons.image_rounded
                         : isVideo
-                        ? Icons.play_circle_rounded
-                        : Icons.audiotrack_rounded,
+                            ? Icons.play_circle_rounded
+                            : Icons.audiotrack_rounded,
                     colorScheme.primaryContainer,
                     colorScheme.onPrimaryContainer,
                   ),
@@ -1626,9 +1658,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
     try {
       for (final file in _clipboardFiles) {
-        final destPath = currentPath.isEmpty
-            ? '/${file.name}'
-            : '$currentPath/${file.name}';
+        final destPath =
+            currentPath.isEmpty ? '/${file.name}' : '$currentPath/${file.name}';
 
         if (_isCutOperation) {
           await api.moveFiles(source: file.path, destination: destPath);
@@ -2191,21 +2222,66 @@ class _FilesPageState extends ConsumerState<FilesPage>
       final imageUrl = api.getImageUrl(entry.path);
       Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (context) =>
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) =>
               ImageViewerPage(imageUrl: imageUrl, fileName: entry.name),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(
+              opacity: CurvedAnimation(
+                parent: animation,
+                curve: M3Curves.emphasized,
+              ),
+              child: child,
+            );
+          },
+          transitionDuration: M3Durations.long2,
         ),
       );
-    } else if (mimeType.startsWith('video/') || mimeType.startsWith('audio/')) {
+    } else if (mimeType.startsWith('audio/')) {
       final streamUrl = api.getMediaStreamUrl(entry.path);
+      // Use enhanced audio player with visualizations
       Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (context) => MediaPlayerPage(
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              EnhancedAudioPlayerPage(
             mediaUrl: streamUrl,
             fileName: entry.name,
-            isVideo: mimeType.startsWith('video/'),
           ),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, 1),
+                end: Offset.zero,
+              ).animate(CurvedAnimation(
+                parent: animation,
+                curve: M3Curves.emphasized,
+              )),
+              child: child,
+            );
+          },
+          transitionDuration: M3Durations.long2,
+        ),
+      );
+    } else if (mimeType.startsWith('video/')) {
+      final streamUrl = api.getMediaStreamUrl(entry.path);
+      // Use enhanced video player with better buffering
+      Navigator.push(
+        context,
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              EnhancedMediaPlayerPage(
+            mediaUrl: streamUrl,
+            fileName: entry.name,
+            isVideo: true,
+          ),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(
+              opacity: animation,
+              child: child,
+            );
+          },
+          transitionDuration: M3Durations.medium4,
         ),
       );
     }
@@ -2628,8 +2704,9 @@ class _DiskCard extends StatelessWidget {
       if (disk.diskType.toLowerCase().contains('usb')) return Icons.usb_rounded;
       return Icons.sd_card_rounded;
     }
-    if (disk.diskType.toLowerCase().contains('ssd'))
+    if (disk.diskType.toLowerCase().contains('ssd')) {
       return Icons.memory_rounded;
+    }
     return Icons.storage_rounded;
   }
 
@@ -2646,10 +2723,12 @@ class _DiskCard extends StatelessWidget {
   String _getDisplayName() {
     if (disk.mountPoint == '/') return 'System';
     if (disk.mountPoint == '/boot') return 'Boot';
-    if (disk.mountPoint.startsWith('/mnt/'))
+    if (disk.mountPoint.startsWith('/mnt/')) {
       return disk.mountPoint.split('/').last;
-    if (disk.mountPoint.startsWith('/media/'))
+    }
+    if (disk.mountPoint.startsWith('/media/')) {
       return disk.mountPoint.split('/').last;
+    }
     return disk.mountPoint.split('/').last;
   }
 
@@ -3314,9 +3393,12 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
 
   String _formatBitrate(int? bitrate) {
     if (bitrate == null) return '-';
-    if (bitrate >= 1000000)
+    if (bitrate >= 1000000) {
       return '${(bitrate / 1000000).toStringAsFixed(1)} Mbps';
-    if (bitrate >= 1000) return '${(bitrate / 1000).toStringAsFixed(0)} Kbps';
+    }
+    if (bitrate >= 1000) {
+      return '${(bitrate / 1000).toStringAsFixed(0)} Kbps';
+    }
     return '$bitrate bps';
   }
 
