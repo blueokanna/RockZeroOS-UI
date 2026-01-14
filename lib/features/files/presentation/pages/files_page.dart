@@ -75,12 +75,28 @@ final directoryListingProvider =
 
   try {
     final api = ref.read(apiServiceProvider);
+    // Path is passed directly - let the API handle UTF-8 encoding
     final result = await api.listDirectory(path: path.isEmpty ? null : path);
     ref.read(fileErrorProvider.notifier).setError(null);
     return result;
   } catch (e) {
-    debugPrint('[DirectoryListing] Error loading path "$path": $e');
-    ref.read(fileErrorProvider.notifier).setError(e.toString());
+    // Safely decode path for logging (handle UTF-8 errors)
+    String safePath;
+    try {
+      safePath = Uri.decodeComponent(path);
+    } catch (_) {
+      safePath = path;
+    }
+    debugPrint('[DirectoryListing] Error loading path "$safePath": $e');
+
+    // Provide more helpful error message
+    String errorMessage = e.toString();
+    if (errorMessage.contains('FormatException') ||
+        errorMessage.contains('encoding') ||
+        errorMessage.contains('decode')) {
+      errorMessage = 'Path encoding error. Please try refreshing.';
+    }
+    ref.read(fileErrorProvider.notifier).setError(errorMessage);
     return null;
   }
 });
@@ -909,7 +925,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
               entry: entries[index],
               isSelected: _selectedFiles.contains(entries[index].path),
               onTap: () => _handleFileTap(entries[index]),
-              onLongPress: () => _toggleSelection(entries[index].path),
+              onLongPress: () => _handleLongPress(entries[index]),
             )
                 .animate(delay: (40 * index).ms)
                 .fadeIn(curve: M3Curves.emphasizedDecelerate)
@@ -935,7 +951,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
               entry: entries[index],
               isSelected: _selectedFiles.contains(entries[index].path),
               onTap: () => _handleFileTap(entries[index]),
-              onLongPress: () => _toggleSelection(entries[index].path),
+              onLongPress: () => _handleLongPress(entries[index]),
               onDelete: () => _deleteFile(entries[index]),
             )
                 .animate(delay: (30 * index).ms)
@@ -1311,9 +1327,310 @@ class _FilesPageState extends ConsumerState<FilesPage>
       _toggleSelection(entry.path);
     } else if (entry.isDirectory) {
       // Use the entry's full path directly since it's already correctly formatted by the backend
+      // The path should be kept as-is for proper UTF-8 handling
       ref.read(currentPathProvider.notifier).setPath(entry.path);
     } else {
       _showFileActions(entry);
+    }
+  }
+
+  /// Show folder actions menu on long press
+  void _showFolderActions(FileEntry entry) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    // Safely decode folder name for display
+    String displayName;
+    try {
+      displayName = Uri.decodeComponent(entry.name);
+    } catch (_) {
+      displayName = entry.name;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              // Folder header
+              Container(
+                padding: const EdgeInsets.all(20),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        color: colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(
+                        Icons.folder_rounded,
+                        size: 32,
+                        color: colorScheme.onPrimaryContainer,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            displayName,
+                            style: textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Folder',
+                            style: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(height: 1, color: colorScheme.outlineVariant),
+              // Open folder
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    Icons.folder_open_rounded,
+                    color: colorScheme.onPrimaryContainer,
+                  ),
+                ),
+                title: const Text('Open'),
+                onTap: () {
+                  Navigator.pop(context);
+                  ref.read(currentPathProvider.notifier).setPath(entry.path);
+                },
+              ),
+              // Copy folder
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.teal.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.copy_rounded, color: Colors.teal),
+                ),
+                title: const Text('Copy'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _copyFile(entry);
+                },
+              ),
+              // Cut folder
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.indigo.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.content_cut_rounded,
+                    color: Colors.indigo,
+                  ),
+                ),
+                title: const Text('Cut'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _cutFile(entry);
+                },
+              ),
+              // Paste (only show if clipboard has content)
+              if (_clipboardFiles.isNotEmpty)
+                ListTile(
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: Colors.green.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.paste_rounded,
+                      color: Colors.green,
+                    ),
+                  ),
+                  title: Text(
+                    'Paste here (${_clipboardFiles.length} item${_clipboardFiles.length > 1 ? 's' : ''})',
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _pasteFilesToFolder(entry);
+                  },
+                ),
+              // Rename folder
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.edit_rounded, color: Colors.orange),
+                ),
+                title: const Text('Rename'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showRenameDialog(entry);
+                },
+              ),
+              // Details
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.purple.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.info_outline_rounded,
+                    color: Colors.purple,
+                  ),
+                ),
+                title: const Text('Details'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showFileDetails(entry);
+                },
+              ),
+              // Delete folder (requires authentication)
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: colorScheme.errorContainer,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(Icons.delete_rounded, color: colorScheme.error),
+                ),
+                title: Text(
+                  'Delete',
+                  style: TextStyle(color: colorScheme.error),
+                ),
+                subtitle: Text(
+                  'Requires authentication',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colorScheme.error.withValues(alpha: 0.7),
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _deleteFile(entry);
+                },
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Paste files to a specific folder
+  Future<void> _pasteFilesToFolder(FileEntry targetFolder) async {
+    if (_clipboardFiles.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Clipboard is empty')));
+      return;
+    }
+
+    final api = ref.read(apiServiceProvider);
+    final colorScheme = Theme.of(context).colorScheme;
+
+    try {
+      for (final file in _clipboardFiles) {
+        final destPath = '${targetFolder.path}/${file.name}';
+
+        if (_isCutOperation) {
+          await api.moveFiles(source: file.path, destination: destPath);
+        } else {
+          await api.copyFiles(source: file.path, destination: destPath);
+        }
+      }
+
+      final wasCut = _isCutOperation;
+
+      // Clear clipboard after cut operation
+      if (_isCutOperation) {
+        setState(() {
+          _clipboardFiles = [];
+          _isCutOperation = false;
+        });
+      }
+
+      final currentPath = ref.read(currentPathProvider);
+      ref.invalidate(directoryListingProvider(currentPath));
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle_rounded, color: Colors.white),
+                const SizedBox(width: 12),
+                Text(
+                  wasCut
+                      ? 'Files moved successfully'
+                      : 'Files copied successfully',
+                ),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to paste: $e'),
+            backgroundColor: colorScheme.error,
+          ),
+        );
+      }
     }
   }
 
@@ -1325,6 +1642,15 @@ class _FilesPageState extends ConsumerState<FilesPage>
         _selectedFiles.add(path);
       }
     });
+  }
+
+  /// Handle long press on file/folder - show appropriate context menu
+  void _handleLongPress(FileEntry entry) {
+    if (entry.isDirectory) {
+      _showFolderActions(entry);
+    } else {
+      _showFileActions(entry);
+    }
   }
 
   Future<void> _pickAndUploadFiles() async {
@@ -2680,10 +3006,22 @@ class _FileGridItem extends StatelessWidget {
     required this.onLongPress,
   });
 
+  /// Safely decode UTF-8 file name for display
+  String _safeDisplayName(String name) {
+    try {
+      // Try to decode if it was URL-encoded
+      return Uri.decodeComponent(name);
+    } catch (_) {
+      // Return original if decoding fails
+      return name;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final displayName = _safeDisplayName(entry.name);
 
     return Card(
       elevation: 0,
@@ -2708,7 +3046,7 @@ class _FileGridItem extends StatelessWidget {
               _buildIcon(context),
               const SizedBox(height: 10),
               Text(
-                entry.name,
+                displayName,
                 style: textTheme.bodySmall?.copyWith(
                   fontWeight: FontWeight.w500,
                   color: isSelected ? colorScheme.onPrimaryContainer : null,
@@ -2781,10 +3119,22 @@ class _FileListItem extends StatelessWidget {
     required this.onDelete,
   });
 
+  /// Safely decode UTF-8 file name for display
+  String _safeDisplayName(String name) {
+    try {
+      // Try to decode if it was URL-encoded
+      return Uri.decodeComponent(name);
+    } catch (_) {
+      // Return original if decoding fails
+      return name;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final displayName = _safeDisplayName(entry.name);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -2804,7 +3154,7 @@ class _FileListItem extends StatelessWidget {
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         leading: _buildIcon(context),
         title: Text(
-          entry.name,
+          displayName,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
