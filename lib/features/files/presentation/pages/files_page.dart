@@ -40,7 +40,6 @@ final filesViewModeProvider = NotifierProvider<FilesViewModeNotifier, bool>(
   FilesViewModeNotifier.new,
 );
 
-// Current path notifier for Riverpod 3.x
 class CurrentPathNotifier extends Notifier<String> {
   @override
   String build() => '';
@@ -52,7 +51,6 @@ final currentPathProvider = NotifierProvider<CurrentPathNotifier, String>(
   CurrentPathNotifier.new,
 );
 
-// Error message notifier for Riverpod 3.x
 class FileErrorNotifier extends Notifier<String?> {
   @override
   String? build() => null;
@@ -64,8 +62,8 @@ final fileErrorProvider = NotifierProvider<FileErrorNotifier, String?>(
   FileErrorNotifier.new,
 );
 
-final directoryListingProvider = FutureProvider.autoDispose
-    .family<DirectoryListing?, String>((ref, path) async {
+final directoryListingProvider =
+    FutureProvider.family<DirectoryListing?, String>((ref, path) async {
   // Check if device is connected
   final device = ref.watch(connectedDeviceProvider);
   if (device == null) {
@@ -77,26 +75,24 @@ final directoryListingProvider = FutureProvider.autoDispose
 
   try {
     final api = ref.read(apiServiceProvider);
-    final result = await api.listDirectory(
-      path: path.isEmpty ? null : path,
-    );
+    final result = await api.listDirectory(path: path.isEmpty ? null : path);
     ref.read(fileErrorProvider.notifier).setError(null);
     return result;
   } catch (e) {
+    debugPrint('[DirectoryListing] Error loading path "$path": $e');
     ref.read(fileErrorProvider.notifier).setError(e.toString());
     return null;
   }
 });
 
 // Disk info provider
-final diskInfoProvider = FutureProvider.autoDispose<List<DiskInfo>>((
-  ref,
-) async {
+final diskInfoProvider = FutureProvider<List<DiskInfo>>((ref) async {
   // Check if device is connected
   final device = ref.watch(connectedDeviceProvider);
   if (device == null) {
     throw Exception(
-        'Not connected to any device. Please connect to a RockZero device first.');
+      'Not connected to any device. Please connect to a RockZero device first.',
+    );
   }
 
   try {
@@ -241,8 +237,14 @@ class _FilesPageState extends ConsumerState<FilesPage>
               listing.when(
                 data: (data) {
                   if (data == null) {
+                    final device = ref.read(connectedDeviceProvider);
+                    if (device == null) {
+                      return _buildErrorState(
+                          'Not connected to any device. Please go back and connect first.');
+                    }
                     return _buildErrorState(
-                      errorMessage ?? 'Failed to load files',
+                      errorMessage ??
+                          'Failed to load files. Please try refreshing.',
                     );
                   }
                   return _buildFileContent(data);
@@ -410,8 +412,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
           // Back button for quick navigation
           if (path.isNotEmpty && path != '/')
             IconButton(
-              icon: Icon(Icons.arrow_back_rounded,
-                  size: 20, color: colorScheme.primary),
+              icon: Icon(
+                Icons.arrow_back_rounded,
+                size: 20,
+                color: colorScheme.primary,
+              ),
               onPressed: () {
                 if (parts.length <= 1) {
                   ref.read(currentPathProvider.notifier).setPath('/');
@@ -425,8 +430,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
               constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
               tooltip: 'Go back',
             ).animate().fadeIn(
-                duration: M3Durations.short4,
-                curve: M3Curves.emphasizedDecelerate),
+                  duration: M3Durations.short4,
+                  curve: M3Curves.emphasizedDecelerate,
+                ),
 
           // Expandable breadcrumb
           Expanded(
@@ -450,8 +456,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     Icon(
                       Icons.chevron_right_rounded,
                       size: 20,
-                      color:
-                          colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                      color: colorScheme.onSurfaceVariant.withValues(
+                        alpha: 0.5,
+                      ),
                     ),
                     // Root folder
                     _BreadcrumbChip(
@@ -470,13 +477,16 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     Icon(
                       Icons.chevron_right_rounded,
                       size: 20,
-                      color:
-                          colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                      color: colorScheme.onSurfaceVariant.withValues(
+                        alpha: 0.5,
+                      ),
                     ),
                     PopupMenuButton<int>(
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 6),
+                          horizontal: 8,
+                          vertical: 6,
+                        ),
                         decoration: BoxDecoration(
                           color: colorScheme.surfaceContainerHigh,
                           borderRadius: BorderRadius.circular(8),
@@ -502,8 +512,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
                           value: index,
                           child: Row(
                             children: [
-                              Icon(Icons.folder_rounded,
-                                  size: 18, color: colorScheme.primary),
+                              Icon(
+                                Icons.folder_rounded,
+                                size: 18,
+                                color: colorScheme.primary,
+                              ),
                               const SizedBox(width: 8),
                               Text(decodedParts[index]),
                             ],
@@ -529,8 +542,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
                           Icon(
                             Icons.chevron_right_rounded,
                             size: 20,
-                            color: colorScheme.onSurfaceVariant
-                                .withValues(alpha: 0.5),
+                            color: colorScheme.onSurfaceVariant.withValues(
+                              alpha: 0.5,
+                            ),
                           ),
                           _BreadcrumbChip(
                             label: part,
@@ -559,8 +573,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
                           Icon(
                             Icons.chevron_right_rounded,
                             size: 20,
-                            color: colorScheme.onSurfaceVariant
-                                .withValues(alpha: 0.5),
+                            color: colorScheme.onSurfaceVariant.withValues(
+                              alpha: 0.5,
+                            ),
                           ),
                           _BreadcrumbChip(
                             label: part,
@@ -582,7 +597,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
         ],
       ),
     ).animate().fadeIn(
-        duration: M3Durations.medium2, curve: M3Curves.emphasizedDecelerate);
+          duration: M3Durations.medium2,
+          curve: M3Curves.emphasizedDecelerate,
+        );
   }
 
   Widget _buildUploadProgress() {
@@ -879,7 +896,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
           8,
           12,
           100,
-        ), // Bottom padding for FAB
+        ),
         sliver: SliverGrid(
           gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
             maxCrossAxisExtent: 110,
@@ -1123,10 +1140,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
             icon: const Icon(Icons.refresh_rounded),
             label: const Text('Refresh'),
             style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 20,
-                vertical: 12,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -1296,10 +1310,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
     if (_selectedFiles.isNotEmpty) {
       _toggleSelection(entry.path);
     } else if (entry.isDirectory) {
-      final currentPath = ref.read(currentPathProvider);
-      final newPath =
-          currentPath.isEmpty ? entry.name : '$currentPath/${entry.name}';
-      ref.read(currentPathProvider.notifier).setPath(newPath);
+      // Use the entry's full path directly since it's already correctly formatted by the backend
+      ref.read(currentPathProvider.notifier).setPath(entry.path);
     } else {
       _showFileActions(entry);
     }
@@ -1771,8 +1783,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
                           const SizedBox(height: 4),
                           Text(
                             _formatFileSize(entry.size),
-                            style:
-                                TextStyle(color: colorScheme.onSurfaceVariant),
+                            style: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
                           ),
                         ],
                       ),
@@ -1831,8 +1844,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     color: Colors.indigo.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(Icons.content_cut_rounded,
-                      color: Colors.indigo),
+                  child: const Icon(
+                    Icons.content_cut_rounded,
+                    color: Colors.indigo,
+                  ),
                 ),
                 title: const Text('Cut'),
                 onTap: () {
@@ -1881,8 +1896,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     color: Colors.purple.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(Icons.info_outline_rounded,
-                      color: Colors.purple),
+                  child: const Icon(
+                    Icons.info_outline_rounded,
+                    color: Colors.purple,
+                  ),
                 ),
                 title: const Text('Details'),
                 onTap: () {
@@ -1900,8 +1917,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   ),
                   child: Icon(Icons.delete_rounded, color: colorScheme.error),
                 ),
-                title:
-                    Text('Delete', style: TextStyle(color: colorScheme.error)),
+                title: Text(
+                  'Delete',
+                  style: TextStyle(color: colorScheme.error),
+                ),
                 onTap: () {
                   Navigator.pop(context);
                   _deleteFile(entry);
@@ -1932,10 +1951,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
         ),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        action: SnackBarAction(
-          label: 'Paste',
-          onPressed: _pasteFiles,
-        ),
+        action: SnackBarAction(label: 'Paste', onPressed: _pasteFiles),
       ),
     );
   }
@@ -1950,18 +1966,18 @@ class _FilesPageState extends ConsumerState<FilesPage>
       SnackBar(
         content: Row(
           children: [
-            const Icon(Icons.content_cut_rounded,
-                color: Colors.white, size: 20),
+            const Icon(
+              Icons.content_cut_rounded,
+              color: Colors.white,
+              size: 20,
+            ),
             const SizedBox(width: 12),
             Expanded(child: Text('"${entry.name}" ready to move')),
           ],
         ),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        action: SnackBarAction(
-          label: 'Paste',
-          onPressed: _pasteFiles,
-        ),
+        action: SnackBarAction(label: 'Paste', onPressed: _pasteFiles),
       ),
     );
   }
@@ -1969,9 +1985,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
   /// Paste files from clipboard
   Future<void> _pasteFiles() async {
     if (_clipboardFiles.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Clipboard is empty')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Clipboard is empty')));
       return;
     }
 
@@ -2010,15 +2026,18 @@ class _FilesPageState extends ConsumerState<FilesPage>
               children: [
                 const Icon(Icons.check_circle_rounded, color: Colors.white),
                 const SizedBox(width: 12),
-                Text(wasCut
-                    ? 'Files moved successfully'
-                    : 'Files copied successfully'),
+                Text(
+                  wasCut
+                      ? 'Files moved successfully'
+                      : 'Files copied successfully',
+                ),
               ],
             ),
             backgroundColor: Colors.green,
             behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         );
       }
@@ -2958,9 +2977,6 @@ class _Fido2AuthDialogState extends State<_Fido2AuthDialog> {
       _isAuthenticating = true;
       _error = null;
     });
-
-    // Simulate FIDO2 authentication - in real implementation, this would
-    // call the platform-specific FIDO2 APIs
     await Future.delayed(const Duration(seconds: 2));
 
     if (mounted) {
@@ -3137,10 +3153,7 @@ class _MarqueeText extends StatefulWidget {
   final TextStyle? style;
   final double velocity = 30.0;
 
-  const _MarqueeText({
-    required this.text,
-    this.style,
-  });
+  const _MarqueeText({required this.text, this.style});
 
   @override
   State<_MarqueeText> createState() => _MarqueeTextState();
@@ -3237,11 +3250,7 @@ class _MarqueeTextState extends State<_MarqueeText>
         controller: _scrollController,
         scrollDirection: Axis.horizontal,
         physics: const NeverScrollableScrollPhysics(),
-        child: Text(
-          widget.text,
-          style: widget.style,
-          maxLines: 1,
-        ),
+        child: Text(widget.text, style: widget.style, maxLines: 1),
       ),
     );
   }
@@ -3258,9 +3267,7 @@ class _SkeletonGridItem extends StatelessWidget {
     return Card(
       elevation: 0,
       color: colorScheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -3288,8 +3295,9 @@ class _SkeletonGridItem extends StatelessWidget {
               width: 40,
               height: 8,
               decoration: BoxDecoration(
-                color:
-                    colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                color: colorScheme.surfaceContainerHighest.withValues(
+                  alpha: 0.5,
+                ),
                 borderRadius: BorderRadius.circular(4),
               ),
             ),
@@ -3312,9 +3320,7 @@ class _SkeletonListItem extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 8),
       elevation: 0,
       color: colorScheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
@@ -3345,8 +3351,9 @@ class _SkeletonListItem extends StatelessWidget {
                     width: 80,
                     height: 10,
                     decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest
-                          .withValues(alpha: 0.5),
+                      color: colorScheme.surfaceContainerHighest.withValues(
+                        alpha: 0.5,
+                      ),
                       borderRadius: BorderRadius.circular(5),
                     ),
                   ),
@@ -3358,8 +3365,9 @@ class _SkeletonListItem extends StatelessWidget {
               width: 24,
               height: 24,
               decoration: BoxDecoration(
-                color:
-                    colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                color: colorScheme.surfaceContainerHighest.withValues(
+                  alpha: 0.3,
+                ),
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
@@ -3412,8 +3420,9 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
     setState(() => _isLoading = true);
     try {
       final api = ref.read(apiServiceProvider);
-      final response = await api
-          .get('/api/v1/media/info/${Uri.encodeComponent(widget.entry.path)}');
+      final response = await api.get(
+        '/api/v1/media/info/${Uri.encodeComponent(widget.entry.path)}',
+      );
       if (mounted) {
         setState(() {
           _mediaInfo = response.data;
@@ -3459,9 +3468,9 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
       icon: widget.getFileIcon(widget.entry, 64),
       title: _MarqueeText(
         text: widget.entry.name,
-        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
+        style: Theme.of(
+          context,
+        ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
       ),
       content: SingleChildScrollView(
         child: Column(
@@ -3475,8 +3484,9 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
                   ? 'Folder'
                   : (widget.entry.mimeType ?? 'Unknown'),
             ).animate().fadeIn(
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate),
+                  duration: M3Durations.medium2,
+                  curve: M3Curves.emphasizedDecelerate,
+                ),
             const SizedBox(height: 12),
             _DetailRow(
               icon: Icons.storage_rounded,
@@ -3485,9 +3495,10 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
                   ? '-'
                   : widget.formatFileSize(widget.entry.size),
             ).animate().fadeIn(
-                delay: 50.ms,
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate),
+                  delay: 50.ms,
+                  duration: M3Durations.medium2,
+                  curve: M3Curves.emphasizedDecelerate,
+                ),
             const SizedBox(height: 12),
             _DetailRow(
               icon: Icons.location_on_rounded,
@@ -3495,18 +3506,20 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
               value: widget.entry.path,
               isSelectable: true,
             ).animate().fadeIn(
-                delay: 100.ms,
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate),
+                  delay: 100.ms,
+                  duration: M3Durations.medium2,
+                  curve: M3Curves.emphasizedDecelerate,
+                ),
             const SizedBox(height: 12),
             _DetailRow(
               icon: Icons.calendar_today_rounded,
               label: 'Modified',
               value: widget.formatTimestamp(widget.entry.modified),
             ).animate().fadeIn(
-                delay: 150.ms,
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate),
+                  delay: 150.ms,
+                  duration: M3Durations.medium2,
+                  curve: M3Curves.emphasizedDecelerate,
+                ),
             if (widget.entry.permissions.isNotEmpty) ...[
               const SizedBox(height: 12),
               _DetailRow(
@@ -3514,9 +3527,10 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
                 label: 'Permissions',
                 value: widget.entry.permissions,
               ).animate().fadeIn(
-                  delay: 200.ms,
-                  duration: M3Durations.medium2,
-                  curve: M3Curves.emphasizedDecelerate),
+                    delay: 200.ms,
+                    duration: M3Durations.medium2,
+                    curve: M3Curves.emphasizedDecelerate,
+                  ),
             ],
 
             // Media info section
@@ -3545,8 +3559,10 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
           children: [
             CircularProgressIndicator(strokeWidth: 2),
             const SizedBox(height: 12),
-            Text('Loading media info...',
-                style: TextStyle(color: colorScheme.onSurfaceVariant)),
+            Text(
+              'Loading media info...',
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
+            ),
           ],
         ),
       ).animate().fadeIn(curve: M3Curves.emphasizedDecelerate);
@@ -3562,62 +3578,77 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
     // Video info
     if (widget.isVideo) {
       if (_mediaInfo!['width'] != null && _mediaInfo!['height'] != null) {
-        mediaDetails.add(_DetailRow(
-          icon: Icons.aspect_ratio_rounded,
-          label: 'Resolution',
-          value: '${_mediaInfo!['width']}×${_mediaInfo!['height']}',
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.aspect_ratio_rounded,
+            label: 'Resolution',
+            value: '${_mediaInfo!['width']}×${_mediaInfo!['height']}',
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
       if (_mediaInfo!['duration'] != null) {
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.timer_rounded,
-          label: 'Duration',
-          value: _formatDuration(_mediaInfo!['duration']?.toDouble()),
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.timer_rounded,
+            label: 'Duration',
+            value: _formatDuration(_mediaInfo!['duration']?.toDouble()),
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
       if (_mediaInfo!['video_codec'] != null) {
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.videocam_rounded,
-          label: 'Video Codec',
-          value: _mediaInfo!['video_codec'].toString().toUpperCase(),
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.videocam_rounded,
+            label: 'Video Codec',
+            value: _mediaInfo!['video_codec'].toString().toUpperCase(),
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
       if (_mediaInfo!['video_bitrate'] != null) {
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.speed_rounded,
-          label: 'Video Bitrate',
-          value: _formatBitrate(_mediaInfo!['video_bitrate']),
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.speed_rounded,
+            label: 'Video Bitrate',
+            value: _formatBitrate(_mediaInfo!['video_bitrate']),
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
       if (_mediaInfo!['frame_rate'] != null) {
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.slow_motion_video_rounded,
-          label: 'Frame Rate',
-          value: '${_mediaInfo!['frame_rate'].toStringAsFixed(2)} fps',
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.slow_motion_video_rounded,
+            label: 'Frame Rate',
+            value: '${_mediaInfo!['frame_rate'].toStringAsFixed(2)} fps',
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
     }
@@ -3626,26 +3657,32 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
     if (widget.isVideo || widget.isAudio) {
       if (_mediaInfo!['audio_codec'] != null) {
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.audiotrack_rounded,
-          label: 'Audio Codec',
-          value: _mediaInfo!['audio_codec'].toString().toUpperCase(),
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.audiotrack_rounded,
+            label: 'Audio Codec',
+            value: _mediaInfo!['audio_codec'].toString().toUpperCase(),
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
       if (_mediaInfo!['audio_bitrate'] != null) {
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.graphic_eq_rounded,
-          label: 'Audio Bitrate',
-          value: _formatBitrate(_mediaInfo!['audio_bitrate']),
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.graphic_eq_rounded,
+            label: 'Audio Bitrate',
+            value: _formatBitrate(_mediaInfo!['audio_bitrate']),
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
       if (_mediaInfo!['audio_channels'] != null) {
@@ -3662,41 +3699,50 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
         }
 
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.surround_sound_rounded,
-          label: 'Audio Channels',
-          value: channelStr,
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.surround_sound_rounded,
+            label: 'Audio Channels',
+            value: channelStr,
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
       if (_mediaInfo!['audio_sample_rate'] != null) {
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.waves_rounded,
-          label: 'Sample Rate',
-          value:
-              '${(_mediaInfo!['audio_sample_rate'] / 1000).toStringAsFixed(1)} kHz',
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.waves_rounded,
+            label: 'Sample Rate',
+            value:
+                '${(_mediaInfo!['audio_sample_rate'] / 1000).toStringAsFixed(1)} kHz',
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
       // Audio tracks info
       if (_mediaInfo!['audio_tracks'] != null &&
           (_mediaInfo!['audio_tracks'] as List).length > 1) {
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.queue_music_rounded,
-          label: 'Audio Tracks',
-          value: '${(_mediaInfo!['audio_tracks'] as List).length} tracks',
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.queue_music_rounded,
+            label: 'Audio Tracks',
+            value: '${(_mediaInfo!['audio_tracks'] as List).length} tracks',
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
     }
@@ -3706,103 +3752,128 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
       final exif = _mediaInfo!['exif'] as Map<String, dynamic>;
 
       if (exif['camera_make'] != null || exif['camera_model'] != null) {
-        final camera = [exif['camera_make'], exif['camera_model']]
-            .where((e) => e != null)
-            .join(' ');
+        final camera = [
+          exif['camera_make'],
+          exif['camera_model'],
+        ].where((e) => e != null).join(' ');
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.camera_alt_rounded,
-          label: 'Camera',
-          value: camera,
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.camera_alt_rounded,
+            label: 'Camera',
+            value: camera,
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
       if (exif['date_taken'] != null) {
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.calendar_month_rounded,
-          label: 'Date Taken',
-          value: exif['date_taken'],
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.calendar_month_rounded,
+            label: 'Date Taken',
+            value: exif['date_taken'],
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
       if (exif['exposure_time'] != null) {
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.shutter_speed_rounded,
-          label: 'Exposure',
-          value: exif['exposure_time'],
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.shutter_speed_rounded,
+            label: 'Exposure',
+            value: exif['exposure_time'],
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
       if (exif['f_number'] != null) {
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.camera_rounded,
-          label: 'Aperture',
-          value: exif['f_number'],
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.camera_rounded,
+            label: 'Aperture',
+            value: exif['f_number'],
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
       if (exif['iso'] != null) {
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.iso_rounded,
-          label: 'ISO',
-          value: exif['iso'].toString(),
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.iso_rounded,
+            label: 'ISO',
+            value: exif['iso'].toString(),
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
       if (exif['focal_length'] != null) {
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.center_focus_strong_rounded,
-          label: 'Focal Length',
-          value: exif['focal_length'],
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.center_focus_strong_rounded,
+            label: 'Focal Length',
+            value: exif['focal_length'],
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
       if (exif['gps_latitude'] != null && exif['gps_longitude'] != null) {
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.location_on_rounded,
-          label: 'GPS',
-          value:
-              '${exif['gps_latitude'].toStringAsFixed(6)}, ${exif['gps_longitude'].toStringAsFixed(6)}',
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.location_on_rounded,
+            label: 'GPS',
+            value:
+                '${exif['gps_latitude'].toStringAsFixed(6)}, ${exif['gps_longitude'].toStringAsFixed(6)}',
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
         delayIndex += 50;
       }
       if (exif['lens_model'] != null) {
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(_DetailRow(
-          icon: Icons.lens_rounded,
-          label: 'Lens',
-          value: exif['lens_model'],
-        ).animate().fadeIn(
-            delay: Duration(milliseconds: delayIndex),
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate));
+        mediaDetails.add(
+          _DetailRow(
+            icon: Icons.lens_rounded,
+            label: 'Lens',
+            value: exif['lens_model'],
+          ).animate().fadeIn(
+                delay: Duration(milliseconds: delayIndex),
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate,
+              ),
+        );
       }
     }
 
@@ -3836,9 +3907,10 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
             ],
           ),
         ).animate().fadeIn(
-            delay: 200.ms,
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasizedDecelerate),
+              delay: 200.ms,
+              duration: M3Durations.medium2,
+              curve: M3Curves.emphasizedDecelerate,
+            ),
         ...mediaDetails,
       ],
     );

@@ -135,7 +135,8 @@ class ApiService {
 
   /// 生成增强的 ZKP 密码证明
   Future<EnhancedZkpProofResponse> generateEnhancedZkpProof(
-      String password) async {
+    String password,
+  ) async {
     final response = await _dio.post(
       '/api/v1/auth/zkp/proof-enhanced',
       data: {'password': password},
@@ -150,10 +151,7 @@ class ApiService {
   }) async {
     final response = await _dio.post(
       '/api/v1/auth/login/zkp',
-      data: {
-        'email': email,
-        'proof': proof.toJson(),
-      },
+      data: {'email': email, 'proof': proof.toJson()},
     );
     return AuthResponse.fromJson(response.data);
   }
@@ -165,17 +163,15 @@ class ApiService {
   }) async {
     final response = await _dio.post(
       '/api/v1/auth/login/zkp-enhanced',
-      data: {
-        'email': email,
-        'proof': proof.toJson(),
-      },
+      data: {'email': email, 'proof': proof.toJson()},
     );
     return AuthResponse.fromJson(response.data);
   }
 
   /// 检查密码强度
   Future<PasswordStrengthResponse> checkPasswordStrength(
-      String password) async {
+    String password,
+  ) async {
     final response = await _dio.post(
       '/api/v1/auth/zkp/password-strength',
       data: {'password': password},
@@ -1199,7 +1195,8 @@ class DatabaseStatsResponse {
 extension SecureStorageApiExtension on ApiService {
   /// 初始化安全数据库
   Future<DatabaseStatsResponse> initSecureDatabase(
-      String masterPassword) async {
+    String masterPassword,
+  ) async {
     final response = await post(
       '/api/v1/secure-storage/init',
       data: {'master_password': masterPassword},
@@ -1255,7 +1252,8 @@ extension SecureStorageApiExtension on ApiService {
 
   /// 修复损坏的数据
   Future<Map<String, dynamic>> repairSecureStorage(
-      String masterPassword) async {
+    String masterPassword,
+  ) async {
     final response = await post(
       '/api/v1/secure-storage/repair',
       data: {'master_password': masterPassword},
