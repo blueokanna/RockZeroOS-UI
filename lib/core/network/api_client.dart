@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
@@ -56,9 +57,11 @@ class ApiClient {
         receiveTimeout: const Duration(seconds: 30),
         sendTimeout: const Duration(seconds: 30),
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
           'Accept': 'application/json',
         },
+        // Ensure proper UTF-8 encoding for query parameters
+        listFormat: ListFormat.multiCompatible,
       ),
     );
 

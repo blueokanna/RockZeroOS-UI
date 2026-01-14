@@ -518,13 +518,17 @@ class ApiService {
     String? sortBy,
     String? order,
   }) async {
+    // Ensure path is properly handled for UTF-8 characters (Chinese, etc.)
+    // Dio will automatically encode query parameters, but we need to ensure
+    // the path is passed as-is without double encoding
     final response = await _dio.get(
       '/api/v1/filemanager/list',
       queryParameters: {
-        if (path != null) 'path': path, // Let Dio handle encoding
+        if (path != null && path.isNotEmpty) 'path': path,
         if (sortBy != null) 'sort_by': sortBy,
         if (order != null) 'order': order,
       },
+      options: Options(headers: {'Accept': 'application/json; charset=utf-8'}),
     );
     return DirectoryListing.fromJson(response.data);
   }
@@ -535,14 +539,9 @@ class ApiService {
   }) async {
     await _dio.post(
       '/api/v1/filemanager/mkdir',
-      data: {
-        'path': path,
-        'name': name,
-      },
+      data: {'path': path, 'name': name},
       options: Options(
-        headers: {
-          'Content-Type': 'application/json; charset=utf-8',
-        },
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
       ),
     );
   }
@@ -580,14 +579,9 @@ class ApiService {
     // Ensure proper UTF-8 encoding for file paths and names
     await _dio.post(
       '/api/v1/filemanager/rename',
-      data: {
-        'old_path': oldPath,
-        'new_name': newName,
-      },
+      data: {'old_path': oldPath, 'new_name': newName},
       options: Options(
-        headers: {
-          'Content-Type': 'application/json; charset=utf-8',
-        },
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
       ),
     );
   }
@@ -598,14 +592,9 @@ class ApiService {
   }) async {
     await _dio.post(
       '/api/v1/filemanager/move',
-      data: {
-        'source': source,
-        'destination': destination,
-      },
+      data: {'source': source, 'destination': destination},
       options: Options(
-        headers: {
-          'Content-Type': 'application/json; charset=utf-8',
-        },
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
       ),
     );
   }
@@ -616,14 +605,9 @@ class ApiService {
   }) async {
     await _dio.post(
       '/api/v1/filemanager/copy',
-      data: {
-        'source': source,
-        'destination': destination,
-      },
+      data: {'source': source, 'destination': destination},
       options: Options(
-        headers: {
-          'Content-Type': 'application/json; charset=utf-8',
-        },
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
       ),
     );
   }
@@ -633,9 +617,7 @@ class ApiService {
       '/api/v1/filemanager/delete',
       data: {'paths': paths},
       options: Options(
-        headers: {
-          'Content-Type': 'application/json; charset=utf-8',
-        },
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
       ),
     );
   }

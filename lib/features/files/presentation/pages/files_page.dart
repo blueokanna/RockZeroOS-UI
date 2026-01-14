@@ -16,12 +16,47 @@ import '../../../../core/theme/app_theme.dart';
 import 'media_player_page.dart';
 import 'image_viewer_page.dart';
 
+// ============ Path Encoding Utilities ============
+
+/// Safely encode a path for URL transmission (handles UTF-8/Chinese characters)
+String encodePathForUrl(String path) {
+  if (path.isEmpty) return path;
+  // Split path into segments and encode each segment individually
+  final segments = path.split('/');
+  final encodedSegments = segments.map((segment) {
+    if (segment.isEmpty) return segment;
+    return Uri.encodeComponent(segment);
+  }).toList();
+  return encodedSegments.join('/');
+}
+
+/// Safely decode a path from URL (handles UTF-8/Chinese characters)
+String decodePathFromUrl(String path) {
+  if (path.isEmpty) return path;
+  try {
+    return Uri.decodeComponent(path);
+  } catch (_) {
+    // If decoding fails, return original path
+    return path;
+  }
+}
+
+/// Safely decode a file/folder name for display
+String safeDisplayName(String name) {
+  try {
+    return Uri.decodeComponent(name);
+  } catch (_) {
+    return name;
+  }
+}
+
+// ============ Providers ============
+
 // View mode preference provider (persisted)
 class FilesViewModeNotifier extends Notifier<bool> {
   @override
   bool build() {
     final box = Hive.box('settings');
-    // Default to false (ListView) - user preference will be saved
     return box.get('filesGridView', defaultValue: false);
   }
 
@@ -31,9 +66,7 @@ class FilesViewModeNotifier extends Notifier<bool> {
     box.put('filesGridView', isGrid);
   }
 
-  void toggle() {
-    setGridView(!state);
-  }
+  void toggle() => setGridView(!state);
 }
 
 final filesViewModeProvider = NotifierProvider<FilesViewModeNotifier, bool>(
@@ -64,64 +97,48 @@ final fileErrorProvider = NotifierProvider<FileErrorNotifier, String?>(
 
 final directoryListingProvider =
     FutureProvider.family<DirectoryListing?, String>((ref, path) async {
-  // Check if device is connected
-  final device = ref.watch(connectedDeviceProvider);
-  if (device == null) {
-    ref
-        .read(fileErrorProvider.notifier)
-        .setError('Not connected to any device');
-    return null;
-  }
+      final device = ref.watch(connectedDeviceProvider);
+      if (device == null) {
+        ref
+            .read(fileErrorProvider.notifier)
+            .setError('Not connected to any device');
+        return null;
+      }
 
-  try {
-    final api = ref.read(apiServiceProvider);
-    // Path is passed directly - let the API handle UTF-8 encoding
-    final result = await api.listDirectory(path: path.isEmpty ? null : path);
-    ref.read(fileErrorProvider.notifier).setError(null);
-    return result;
-  } catch (e) {
-    // Safely decode path for logging (handle UTF-8 errors)
-    String safePath;
-    try {
-      safePath = Uri.decodeComponent(path);
-    } catch (_) {
-      safePath = path;
-    }
-    debugPrint('[DirectoryListing] Error loading path "$safePath": $e');
+      try {
+        final api = ref.read(apiServiceProvider);
+        // Pass path directly - the API service handles encoding
+        final result = await api.listDirectory(
+          path: path.isEmpty ? null : path,
+        );
+        ref.read(fileErrorProvider.notifier).setError(null);
+        return result;
+      } catch (e) {
+        final safePath = safeDisplayName(path);
+        debugPrint('[DirectoryListing] Error loading path "$safePath": $e');
 
-    // Provide more helpful error message
-    String errorMessage = e.toString();
-    if (errorMessage.contains('FormatException') ||
-        errorMessage.contains('encoding') ||
-        errorMessage.contains('decode')) {
-      errorMessage = 'Path encoding error. Please try refreshing.';
-    }
-    ref.read(fileErrorProvider.notifier).setError(errorMessage);
-    return null;
-  }
-});
+        String errorMessage = e.toString();
+        if (errorMessage.contains('FormatException') ||
+            errorMessage.contains('encoding') ||
+            errorMessage.contains('decode')) {
+          errorMessage = 'Path encoding error. Please try refreshing.';
+        }
+        ref.read(fileErrorProvider.notifier).setError(errorMessage);
+        return null;
+      }
+    });
 
-// Disk info provider
 final diskInfoProvider = FutureProvider<List<DiskInfo>>((ref) async {
-  // Check if device is connected
   final device = ref.watch(connectedDeviceProvider);
   if (device == null) {
-    throw Exception(
-      'Not connected to any device. Please connect to a RockZero device first.',
-    );
+    throw Exception('Not connected to any device.');
   }
 
-  try {
-    final api = ref.read(apiServiceProvider);
-    final result = await api.getDiskInfo();
-    debugPrint('Disk info loaded: ${result.length} disks');
-    return result;
-  } catch (e, s) {
-    debugPrint('Failed to load disk info: $e');
-    debugPrint('Stack trace: $s');
-    rethrow;
-  }
+  final api = ref.read(apiServiceProvider);
+  return await api.getDiskInfo();
 });
+
+// ============ Main Page ============
 
 class FilesPage extends ConsumerStatefulWidget {
   const FilesPage({super.key});
@@ -142,11 +159,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
   final ScrollController _scrollController = ScrollController();
   bool _showFab = true;
 
-  // Clipboard state for copy/paste
   List<FileEntry> _clipboardFiles = [];
   bool _isCutOperation = false;
 
-  // Use provider for grid view state (persisted)
   bool get _isGridView => ref.watch(filesViewModeProvider);
 
   @override
@@ -160,55 +175,40 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 
   void _onScroll() {
-    // Hide FAB when scrolling down, show when scrolling up
-    if (_scrollController.position.userScrollDirection.toString().contains(
-          'reverse',
-        )) {
-      if (_showFab) {
-        setState(() => _showFab = false);
-      }
-    } else {
-      if (!_showFab) {
-        setState(() => _showFab = true);
-      }
+    final isScrollingDown = _scrollController.position.userScrollDirection
+        .toString()
+        .contains('reverse');
+    if (isScrollingDown && _showFab) {
+      setState(() => _showFab = false);
+    } else if (!isScrollingDown && !_showFab) {
+      setState(() => _showFab = true);
     }
   }
 
-  /// Handle back gesture - go to parent directory or storage view
   void _handleBackNavigation() {
     final currentPath = ref.read(currentPathProvider);
 
-    if (_showDisks) {
-      // Already at root storage view, let system handle back
-      return;
-    }
+    if (_showDisks) return;
 
     if (currentPath.isEmpty) {
-      // At root of files but not showing disks, show disks
       setState(() => _showDisks = true);
       return;
     }
 
-    // Navigate to parent directory
     final parts = currentPath.split('/').where((p) => p.isNotEmpty).toList();
     if (parts.isEmpty) {
-      // At root, show disk view
       ref.read(currentPathProvider.notifier).setPath('');
       setState(() => _showDisks = true);
     } else if (parts.length == 1) {
-      // One level deep, go to root
       ref.read(currentPathProvider.notifier).setPath('/');
     } else {
-      // Go to parent
       final parentPath = '/${parts.sublist(0, parts.length - 1).join('/')}';
       ref.read(currentPathProvider.notifier).setPath(parentPath);
     }
   }
 
-  /// Check if we can pop (go back)
   bool _canPop() {
     final currentPath = ref.read(currentPathProvider);
-    // Only allow system back if at root storage view
     return _showDisks && currentPath.isEmpty;
   }
 
@@ -231,9 +231,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
     return PopScope(
       canPop: _canPop(),
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop) {
-          _handleBackNavigation();
-        }
+        if (!didPop) _handleBackNavigation();
       },
       child: Scaffold(
         body: CustomScrollView(
@@ -255,12 +253,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   if (data == null) {
                     final device = ref.read(connectedDeviceProvider);
                     if (device == null) {
-                      return _buildErrorState(
-                          'Not connected to any device. Please go back and connect first.');
+                      return _buildErrorState('Not connected to any device.');
                     }
                     return _buildErrorState(
-                      errorMessage ??
-                          'Failed to load files. Please try refreshing.',
+                      errorMessage ?? 'Failed to load files.',
                     );
                   }
                   return _buildFileContent(data);
@@ -404,17 +400,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
         ? <String>[]
         : path.split('/').where((p) => p.isNotEmpty).toList();
     final colorScheme = Theme.of(context).colorScheme;
-
-    // Check if we're at root (/) or a subdirectory
     final isAtRoot = path == '/' || (path.isNotEmpty && parts.isEmpty);
 
-    // URL decode path parts for proper display
-    final decodedParts = parts.map((p) => Uri.decodeComponent(p)).toList();
-
-    // Get the current folder name for display
-    // final currentFolder = decodedParts.isNotEmpty
-    //     ? decodedParts.last
-    //     : (isAtRoot ? '/' : 'Storage');
+    // Decode path parts for display (handles Chinese characters)
+    final decodedParts = parts.map((p) => safeDisplayName(p)).toList();
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -425,7 +414,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
       ),
       child: Row(
         children: [
-          // Back button for quick navigation
           if (path.isNotEmpty && path != '/')
             IconButton(
               icon: Icon(
@@ -445,20 +433,14 @@ class _FilesPageState extends ConsumerState<FilesPage>
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
               tooltip: 'Go back',
-            ).animate().fadeIn(
-                  duration: M3Durations.short4,
-                  curve: M3Curves.emphasizedDecelerate,
-                ),
-
-          // Expandable breadcrumb
+            ),
           Expanded(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
-              reverse: true, // Show the latest path on the right
+              reverse: true,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Storage root
                   _BreadcrumbChip(
                     icon: Icons.storage_rounded,
                     label: 'Storage',
@@ -476,7 +458,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
                         alpha: 0.5,
                       ),
                     ),
-                    // Root folder
                     _BreadcrumbChip(
                       icon: Icons.folder_rounded,
                       label: '/',
@@ -484,11 +465,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
                       onTap: isAtRoot && parts.isEmpty
                           ? null
                           : () => ref
-                              .read(currentPathProvider.notifier)
-                              .setPath('/'),
+                                .read(currentPathProvider.notifier)
+                                .setPath('/'),
                     ),
                   ],
-                  // Path parts - show abbreviated if too many
                   if (decodedParts.length > 3) ...[
                     Icon(
                       Icons.chevron_right_rounded,
@@ -540,42 +520,41 @@ class _FilesPageState extends ConsumerState<FilesPage>
                         ),
                       ),
                     ),
-                    // Show last 2 parts
                     ...decodedParts
                         .sublist(decodedParts.length - 2)
                         .asMap()
                         .entries
                         .map((entry) {
-                      final actualIndex = decodedParts.length - 2 + entry.key;
-                      final part = entry.value;
-                      final fullPath =
-                          '/${parts.sublist(0, actualIndex + 1).join('/')}';
-                      final isLast = actualIndex == decodedParts.length - 1;
+                          final actualIndex =
+                              decodedParts.length - 2 + entry.key;
+                          final part = entry.value;
+                          final fullPath =
+                              '/${parts.sublist(0, actualIndex + 1).join('/')}';
+                          final isLast = actualIndex == decodedParts.length - 1;
 
-                      return Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.chevron_right_rounded,
-                            size: 20,
-                            color: colorScheme.onSurfaceVariant.withValues(
-                              alpha: 0.5,
-                            ),
-                          ),
-                          _BreadcrumbChip(
-                            label: part,
-                            isActive: isLast,
-                            onTap: isLast
-                                ? null
-                                : () => ref
-                                    .read(currentPathProvider.notifier)
-                                    .setPath(fullPath),
-                          ),
-                        ],
-                      );
-                    }),
+                          return Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.chevron_right_rounded,
+                                size: 20,
+                                color: colorScheme.onSurfaceVariant.withValues(
+                                  alpha: 0.5,
+                                ),
+                              ),
+                              _BreadcrumbChip(
+                                label: part,
+                                isActive: isLast,
+                                onTap: isLast
+                                    ? null
+                                    : () => ref
+                                          .read(currentPathProvider.notifier)
+                                          .setPath(fullPath),
+                              ),
+                            ],
+                          );
+                        }),
                   ] else ...[
-                    // Show all parts if 3 or fewer
                     ...decodedParts.asMap().entries.map((entry) {
                       final index = entry.key;
                       final part = entry.value;
@@ -599,8 +578,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
                             onTap: isLast
                                 ? null
                                 : () => ref
-                                    .read(currentPathProvider.notifier)
-                                    .setPath(fullPath),
+                                      .read(currentPathProvider.notifier)
+                                      .setPath(fullPath),
                           ),
                         ],
                       );
@@ -612,10 +591,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
           ),
         ],
       ),
-    ).animate().fadeIn(
-          duration: M3Durations.medium2,
-          curve: M3Curves.emphasizedDecelerate,
-        );
+    );
   }
 
   Widget _buildUploadProgress() {
@@ -709,15 +685,15 @@ class _FilesPageState extends ConsumerState<FilesPage>
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
-    // Calculate total storage
     int totalSpace = 0;
     int usedSpace = 0;
     for (final disk in disks) {
       totalSpace += disk.totalSpace;
       usedSpace += disk.usedSpace;
     }
-    final totalUsagePercent =
-        totalSpace > 0 ? (usedSpace / totalSpace) * 100 : 0.0;
+    final totalUsagePercent = totalSpace > 0
+        ? (usedSpace / totalSpace) * 100
+        : 0.0;
 
     return SliverPadding(
       padding: const EdgeInsets.all(16),
@@ -744,13 +720,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
                         end: Alignment.bottomRight,
                       ),
                       borderRadius: BorderRadius.circular(18),
-                      boxShadow: [
-                        BoxShadow(
-                          color: colorScheme.primary.withValues(alpha: 0.3),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
                     ),
                     child: const Icon(
                       Icons.dns_rounded,
@@ -826,12 +795,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
                 ],
               ),
             ),
-          )
-              .animate()
-              .fadeIn(curve: M3Curves.emphasizedDecelerate)
-              .slideY(begin: -0.05),
-          const SizedBox(height: 16),
-          // Section header
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
             child: Row(
@@ -852,7 +816,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
               ],
             ),
           ),
-          // Disk grid
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
@@ -873,13 +836,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
                       .setPath(disk.mountPoint);
                   setState(() => _showDisks = false);
                 },
-              )
-                  .animate(delay: (80 * index).ms)
-                  .fadeIn(curve: M3Curves.emphasizedDecelerate)
-                  .scale(
-                    begin: const Offset(0.95, 0.95),
-                    curve: M3Curves.emphasized,
-                  );
+              );
             },
           ),
         ]),
@@ -905,14 +862,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
       return SliverFillRemaining(child: _buildEmptyFolderState());
     }
 
+    // Optimized animation - use RepaintBoundary and reduce animation complexity
     if (_isGridView) {
       return SliverPadding(
-        padding: const EdgeInsets.fromLTRB(
-          12,
-          8,
-          12,
-          100,
-        ),
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 100),
         sliver: SliverGrid(
           gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
             maxCrossAxisExtent: 110,
@@ -921,42 +874,32 @@ class _FilesPageState extends ConsumerState<FilesPage>
             childAspectRatio: 0.82,
           ),
           delegate: SliverChildBuilderDelegate(
-            (context, index) => _FileGridItem(
-              entry: entries[index],
-              isSelected: _selectedFiles.contains(entries[index].path),
-              onTap: () => _handleFileTap(entries[index]),
-              onLongPress: () => _handleLongPress(entries[index]),
-            )
-                .animate(delay: (40 * index).ms)
-                .fadeIn(curve: M3Curves.emphasizedDecelerate)
-                .scale(
-                  begin: const Offset(0.95, 0.95),
-                  curve: M3Curves.emphasized,
-                ),
+            (context, index) => RepaintBoundary(
+              child: _FileGridItem(
+                entry: entries[index],
+                isSelected: _selectedFiles.contains(entries[index].path),
+                onTap: () => _handleFileTap(entries[index]),
+                onLongPress: () => _handleLongPress(entries[index]),
+              ),
+            ),
             childCount: entries.length,
           ),
         ),
       );
     } else {
       return SliverPadding(
-        padding: const EdgeInsets.fromLTRB(
-          12,
-          8,
-          12,
-          100,
-        ), // Bottom padding for FAB
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 100),
         sliver: SliverList(
           delegate: SliverChildBuilderDelegate(
-            (context, index) => _FileListItem(
-              entry: entries[index],
-              isSelected: _selectedFiles.contains(entries[index].path),
-              onTap: () => _handleFileTap(entries[index]),
-              onLongPress: () => _handleLongPress(entries[index]),
-              onDelete: () => _deleteFile(entries[index]),
-            )
-                .animate(delay: (30 * index).ms)
-                .fadeIn(curve: M3Curves.emphasizedDecelerate)
-                .slideX(begin: -0.02, curve: M3Curves.emphasized),
+            (context, index) => RepaintBoundary(
+              child: _FileListItem(
+                entry: entries[index],
+                isSelected: _selectedFiles.contains(entries[index].path),
+                onTap: () => _handleFileTap(entries[index]),
+                onLongPress: () => _handleLongPress(entries[index]),
+                onDelete: () => _deleteFile(entries[index]),
+              ),
+            ),
             childCount: entries.length,
           ),
         ),
@@ -967,7 +910,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
   Widget _buildLoadingState() {
     final colorScheme = Theme.of(context).colorScheme;
 
-    // Show skeleton loading animation with smooth non-linear animations
     return SliverPadding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 100),
       sliver: _isGridView
@@ -979,53 +921,13 @@ class _FilesPageState extends ConsumerState<FilesPage>
                 childAspectRatio: 0.82,
               ),
               delegate: SliverChildBuilderDelegate(
-                (context, index) => _SkeletonGridItem(colorScheme: colorScheme)
-                    .animate(
-                      onPlay: (controller) => controller.repeat(reverse: true),
-                    )
-                    .shimmer(
-                      duration: const Duration(milliseconds: 1800),
-                      color: colorScheme.primary.withValues(alpha: 0.08),
-                      curve: Curves.easeInOutSine,
-                    )
-                    .animate()
-                    .fadeIn(
-                      delay: Duration(milliseconds: 50 * index),
-                      duration: M3Durations.medium4,
-                      curve: M3Curves.emphasizedDecelerate,
-                    )
-                    .scale(
-                      begin: const Offset(0.92, 0.92),
-                      delay: Duration(milliseconds: 50 * index),
-                      duration: M3Durations.medium4,
-                      curve: M3Curves.emphasized,
-                    ),
+                (context, index) => _SkeletonGridItem(colorScheme: colorScheme),
                 childCount: 12,
               ),
             )
           : SliverList(
               delegate: SliverChildBuilderDelegate(
-                (context, index) => _SkeletonListItem(colorScheme: colorScheme)
-                    .animate(
-                      onPlay: (controller) => controller.repeat(reverse: true),
-                    )
-                    .shimmer(
-                      duration: const Duration(milliseconds: 1800),
-                      color: colorScheme.primary.withValues(alpha: 0.08),
-                      curve: Curves.easeInOutSine,
-                    )
-                    .animate()
-                    .fadeIn(
-                      delay: Duration(milliseconds: 40 * index),
-                      duration: M3Durations.medium4,
-                      curve: M3Curves.emphasizedDecelerate,
-                    )
-                    .slideX(
-                      begin: -0.03,
-                      delay: Duration(milliseconds: 40 * index),
-                      duration: M3Durations.medium4,
-                      curve: M3Curves.emphasized,
-                    ),
+                (context, index) => _SkeletonListItem(colorScheme: colorScheme),
                 childCount: 8,
               ),
             ),
@@ -1080,15 +982,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     },
                     icon: const Icon(Icons.arrow_back_rounded),
                     label: const Text('Go Back'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 12,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
                   ),
                   const SizedBox(width: 12),
                   FilledButton.icon(
@@ -1097,15 +990,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     },
                     icon: const Icon(Icons.refresh_rounded),
                     label: const Text('Retry'),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 12,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
                   ),
                 ],
               ),
@@ -1150,17 +1034,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
           ),
           const SizedBox(height: 24),
           FilledButton.icon(
-            onPressed: () {
-              ref.invalidate(diskInfoProvider);
-            },
+            onPressed: () => ref.invalidate(diskInfoProvider),
             icon: const Icon(Icons.refresh_rounded),
             label: const Text('Refresh'),
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
           ),
         ],
       ),
@@ -1214,20 +1090,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
               ),
               const SizedBox(height: 28),
               FilledButton.icon(
-                onPressed: () {
-                  ref.invalidate(diskInfoProvider);
-                },
+                onPressed: () => ref.invalidate(diskInfoProvider),
                 icon: const Icon(Icons.refresh_rounded),
                 label: const Text('Retry'),
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 12,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
               ),
             ],
           ),
@@ -1285,14 +1150,14 @@ class _FilesPageState extends ConsumerState<FilesPage>
           backgroundColor: colorScheme.secondaryContainer,
           foregroundColor: colorScheme.onSecondaryContainer,
           child: const Icon(Icons.create_new_folder_rounded),
-        ).animate().fadeIn(delay: 200.ms).scale(curve: M3Curves.emphasized),
+        ),
         const SizedBox(height: 12),
         FloatingActionButton.extended(
           heroTag: 'upload',
           onPressed: _pickAndUploadFiles,
           icon: const Icon(Icons.upload_rounded),
           label: const Text('Upload'),
-        ).animate().fadeIn(delay: 100.ms).scale(curve: M3Curves.emphasized),
+        ),
       ],
     );
   }
@@ -1326,26 +1191,35 @@ class _FilesPageState extends ConsumerState<FilesPage>
     if (_selectedFiles.isNotEmpty) {
       _toggleSelection(entry.path);
     } else if (entry.isDirectory) {
-      // Use the entry's full path directly since it's already correctly formatted by the backend
-      // The path should be kept as-is for proper UTF-8 handling
+      // Use the entry's full path directly - it's already correctly formatted
       ref.read(currentPathProvider.notifier).setPath(entry.path);
     } else {
       _showFileActions(entry);
     }
   }
 
-  /// Show folder actions menu on long press
+  void _toggleSelection(String path) {
+    setState(() {
+      if (_selectedFiles.contains(path)) {
+        _selectedFiles.remove(path);
+      } else {
+        _selectedFiles.add(path);
+      }
+    });
+  }
+
+  void _handleLongPress(FileEntry entry) {
+    if (entry.isDirectory) {
+      _showFolderActions(entry);
+    } else {
+      _showFileActions(entry);
+    }
+  }
+
   void _showFolderActions(FileEntry entry) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-
-    // Safely decode folder name for display
-    String displayName;
-    try {
-      displayName = Uri.decodeComponent(entry.name);
-    } catch (_) {
-      displayName = entry.name;
-    }
+    final displayName = safeDisplayName(entry.name);
 
     showModalBottomSheet(
       context: context,
@@ -1357,7 +1231,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Handle bar
               Container(
                 margin: const EdgeInsets.only(top: 12),
                 width: 40,
@@ -1367,7 +1240,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              // Folder header
               Container(
                 padding: const EdgeInsets.all(20),
                 child: Row(
@@ -1412,19 +1284,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
                 ),
               ),
               Divider(height: 1, color: colorScheme.outlineVariant),
-              // Open folder
               ListTile(
-                leading: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: colorScheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    Icons.folder_open_rounded,
-                    color: colorScheme.onPrimaryContainer,
-                  ),
+                leading: _buildActionIcon(
+                  Icons.folder_open_rounded,
+                  colorScheme.primaryContainer,
+                  colorScheme.onPrimaryContainer,
                 ),
                 title: const Text('Open'),
                 onTap: () {
@@ -1432,16 +1296,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   ref.read(currentPathProvider.notifier).setPath(entry.path);
                 },
               ),
-              // Copy folder
               ListTile(
-                leading: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.teal.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.copy_rounded, color: Colors.teal),
+                leading: _buildActionIcon(
+                  Icons.copy_rounded,
+                  Colors.teal.withValues(alpha: 0.15),
+                  Colors.teal,
                 ),
                 title: const Text('Copy'),
                 onTap: () {
@@ -1449,19 +1308,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   _copyFile(entry);
                 },
               ),
-              // Cut folder
               ListTile(
-                leading: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.indigo.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.content_cut_rounded,
-                    color: Colors.indigo,
-                  ),
+                leading: _buildActionIcon(
+                  Icons.content_cut_rounded,
+                  Colors.indigo.withValues(alpha: 0.15),
+                  Colors.indigo,
                 ),
                 title: const Text('Cut'),
                 onTap: () {
@@ -1469,20 +1320,12 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   _cutFile(entry);
                 },
               ),
-              // Paste (only show if clipboard has content)
               if (_clipboardFiles.isNotEmpty)
                 ListTile(
-                  leading: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: Colors.green.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(
-                      Icons.paste_rounded,
-                      color: Colors.green,
-                    ),
+                  leading: _buildActionIcon(
+                    Icons.paste_rounded,
+                    Colors.green.withValues(alpha: 0.15),
+                    Colors.green,
                   ),
                   title: Text(
                     'Paste here (${_clipboardFiles.length} item${_clipboardFiles.length > 1 ? 's' : ''})',
@@ -1492,16 +1335,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     _pasteFilesToFolder(entry);
                   },
                 ),
-              // Rename folder
               ListTile(
-                leading: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.edit_rounded, color: Colors.orange),
+                leading: _buildActionIcon(
+                  Icons.edit_rounded,
+                  Colors.orange.withValues(alpha: 0.15),
+                  Colors.orange,
                 ),
                 title: const Text('Rename'),
                 onTap: () {
@@ -1509,19 +1347,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   _showRenameDialog(entry);
                 },
               ),
-              // Details
               ListTile(
-                leading: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.purple.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.info_outline_rounded,
-                    color: Colors.purple,
-                  ),
+                leading: _buildActionIcon(
+                  Icons.info_outline_rounded,
+                  Colors.purple.withValues(alpha: 0.15),
+                  Colors.purple,
                 ),
                 title: const Text('Details'),
                 onTap: () {
@@ -1529,16 +1359,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   _showFileDetails(entry);
                 },
               ),
-              // Delete folder (requires authentication)
               ListTile(
-                leading: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: colorScheme.errorContainer,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(Icons.delete_rounded, color: colorScheme.error),
+                leading: _buildActionIcon(
+                  Icons.delete_rounded,
+                  colorScheme.errorContainer,
+                  colorScheme.error,
                 ),
                 title: Text(
                   'Delete',
@@ -1564,7 +1389,299 @@ class _FilesPageState extends ConsumerState<FilesPage>
     );
   }
 
-  /// Paste files to a specific folder
+  Widget _buildActionIcon(IconData icon, Color bgColor, Color iconColor) {
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(icon, color: iconColor),
+    );
+  }
+
+  void _showFileActions(FileEntry entry) {
+    final mimeType = entry.mimeType ?? '';
+    final isImage = mimeType.startsWith('image/');
+    final isVideo = mimeType.startsWith('video/');
+    final isAudio = mimeType.startsWith('audio/');
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.all(20),
+                child: Row(
+                  children: [
+                    _getFileIcon(entry, 56),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            safeDisplayName(entry.name),
+                            style: textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _formatFileSize(entry.size),
+                            style: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(height: 1, color: colorScheme.outlineVariant),
+              if (isImage || isVideo || isAudio)
+                ListTile(
+                  leading: _buildActionIcon(
+                    isImage
+                        ? Icons.image_rounded
+                        : isVideo
+                        ? Icons.play_circle_rounded
+                        : Icons.audiotrack_rounded,
+                    colorScheme.primaryContainer,
+                    colorScheme.onPrimaryContainer,
+                  ),
+                  title: Text(isImage ? 'View' : 'Play'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _openMediaPreview(entry);
+                  },
+                ),
+              ListTile(
+                leading: _buildActionIcon(
+                  Icons.copy_rounded,
+                  Colors.teal.withValues(alpha: 0.15),
+                  Colors.teal,
+                ),
+                title: const Text('Copy'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _copyFile(entry);
+                },
+              ),
+              ListTile(
+                leading: _buildActionIcon(
+                  Icons.content_cut_rounded,
+                  Colors.indigo.withValues(alpha: 0.15),
+                  Colors.indigo,
+                ),
+                title: const Text('Cut'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _cutFile(entry);
+                },
+              ),
+              ListTile(
+                leading: _buildActionIcon(
+                  Icons.download_rounded,
+                  Colors.blue.withValues(alpha: 0.15),
+                  Colors.blue,
+                ),
+                title: const Text('Download'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _downloadFile(entry);
+                },
+              ),
+              ListTile(
+                leading: _buildActionIcon(
+                  Icons.edit_rounded,
+                  Colors.orange.withValues(alpha: 0.15),
+                  Colors.orange,
+                ),
+                title: const Text('Rename'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showRenameDialog(entry);
+                },
+              ),
+              ListTile(
+                leading: _buildActionIcon(
+                  Icons.info_outline_rounded,
+                  Colors.purple.withValues(alpha: 0.15),
+                  Colors.purple,
+                ),
+                title: const Text('Details'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showFileDetails(entry);
+                },
+              ),
+              ListTile(
+                leading: _buildActionIcon(
+                  Icons.delete_rounded,
+                  colorScheme.errorContainer,
+                  colorScheme.error,
+                ),
+                title: Text(
+                  'Delete',
+                  style: TextStyle(color: colorScheme.error),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _deleteFile(entry);
+                },
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _copyFile(FileEntry entry) {
+    setState(() {
+      _clipboardFiles = [entry];
+      _isCutOperation = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.copy_rounded, color: Colors.white, size: 20),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '"${safeDisplayName(entry.name)}" copied to clipboard',
+              ),
+            ),
+          ],
+        ),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        action: SnackBarAction(label: 'Paste', onPressed: _pasteFiles),
+      ),
+    );
+  }
+
+  void _cutFile(FileEntry entry) {
+    setState(() {
+      _clipboardFiles = [entry];
+      _isCutOperation = true;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(
+              Icons.content_cut_rounded,
+              color: Colors.white,
+              size: 20,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text('"${safeDisplayName(entry.name)}" ready to move'),
+            ),
+          ],
+        ),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        action: SnackBarAction(label: 'Paste', onPressed: _pasteFiles),
+      ),
+    );
+  }
+
+  Future<void> _pasteFiles() async {
+    if (_clipboardFiles.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Clipboard is empty')));
+      return;
+    }
+
+    final currentPath = ref.read(currentPathProvider);
+    final api = ref.read(apiServiceProvider);
+    final colorScheme = Theme.of(context).colorScheme;
+
+    try {
+      for (final file in _clipboardFiles) {
+        final destPath = currentPath.isEmpty
+            ? '/${file.name}'
+            : '$currentPath/${file.name}';
+
+        if (_isCutOperation) {
+          await api.moveFiles(source: file.path, destination: destPath);
+        } else {
+          await api.copyFiles(source: file.path, destination: destPath);
+        }
+      }
+
+      final wasCut = _isCutOperation;
+
+      if (_isCutOperation) {
+        setState(() {
+          _clipboardFiles = [];
+          _isCutOperation = false;
+        });
+      }
+
+      ref.invalidate(directoryListingProvider(currentPath));
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle_rounded, color: Colors.white),
+                const SizedBox(width: 12),
+                Text(
+                  wasCut
+                      ? 'Files moved successfully'
+                      : 'Files copied successfully',
+                ),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to paste: $e'),
+            backgroundColor: colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _pasteFilesToFolder(FileEntry targetFolder) async {
     if (_clipboardFiles.isEmpty) {
       ScaffoldMessenger.of(
@@ -1589,7 +1706,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
       final wasCut = _isCutOperation;
 
-      // Clear clipboard after cut operation
       if (_isCutOperation) {
         setState(() {
           _clipboardFiles = [];
@@ -1631,25 +1747,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
           ),
         );
       }
-    }
-  }
-
-  void _toggleSelection(String path) {
-    setState(() {
-      if (_selectedFiles.contains(path)) {
-        _selectedFiles.remove(path);
-      } else {
-        _selectedFiles.add(path);
-      }
-    });
-  }
-
-  /// Handle long press on file/folder - show appropriate context menu
-  void _handleLongPress(FileEntry entry) {
-    if (entry.isDirectory) {
-      _showFolderActions(entry);
-    } else {
-      _showFileActions(entry);
     }
   }
 
@@ -1793,13 +1890,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
     }
   }
 
-  /// Delete file with biometric/FIDO2 authentication
   Future<void> _deleteFile(FileEntry entry) async {
     final colorScheme = Theme.of(context).colorScheme;
     final biometricEnabled = ref.read(biometricEnabledProvider);
     final biometricService = ref.read(biometricServiceProvider);
 
-    // First show confirmation dialog with authentication options
     final authMethod = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
@@ -1816,13 +1911,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
               end: Alignment.bottomRight,
             ),
             borderRadius: BorderRadius.circular(18),
-            boxShadow: [
-              BoxShadow(
-                color: colorScheme.error.withValues(alpha: 0.3),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
           ),
           child: const Icon(
             Icons.delete_forever_rounded,
@@ -1836,7 +1924,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Are you sure you want to delete "${entry.name}"?',
+              'Are you sure you want to delete "${safeDisplayName(entry.name)}"?',
               style: TextStyle(color: colorScheme.onSurface),
             ),
             const SizedBox(height: 16),
@@ -1879,7 +1967,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
               ),
             ),
             const SizedBox(height: 12),
-            // Authentication options
             if (biometricEnabled) ...[
               _AuthOptionTile(
                 icon: Icons.fingerprint_rounded,
@@ -1921,13 +2008,12 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
     bool authenticated = false;
 
-    // Perform authentication based on selected method
     switch (authMethod) {
       case 'biometric':
         final isAvailable = await biometricService.isAvailable();
         if (isAvailable) {
           authenticated = await biometricService.authenticate(
-            reason: 'Authenticate to delete "${entry.name}"',
+            reason: 'Authenticate to delete "${safeDisplayName(entry.name)}"',
           );
         }
         break;
@@ -1943,11 +2029,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Row(
+            content: const Row(
               children: [
                 Icon(Icons.error_outline_rounded, color: Colors.white),
-                const SizedBox(width: 12),
-                const Text('Authentication failed'),
+                SizedBox(width: 12),
+                Text('Authentication failed'),
               ],
             ),
             backgroundColor: colorScheme.error,
@@ -1961,7 +2047,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
       return;
     }
 
-    // Proceed with deletion
     try {
       final api = ref.read(apiServiceProvider);
       await api.deleteFiles([entry.path]);
@@ -1975,7 +2060,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
               children: [
                 const Icon(Icons.check_circle_rounded, color: Colors.white),
                 const SizedBox(width: 12),
-                Text('"${entry.name}" deleted'),
+                Text('"${safeDisplayName(entry.name)}" deleted'),
               ],
             ),
             backgroundColor: Colors.green,
@@ -1996,7 +2081,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 
   Future<bool> _authenticateWithFido2() async {
-    // Show FIDO2 authentication dialog
     final result = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -2047,7 +2131,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
     if (password == null || password.isEmpty) return false;
 
-    // Verify password with server
     try {
       final api = ref.read(apiServiceProvider);
       await api.post(
@@ -2060,326 +2143,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
     }
   }
 
-  void _showFileActions(FileEntry entry) {
-    final mimeType = entry.mimeType ?? '';
-    final isImage = mimeType.startsWith('image/');
-    final isVideo = mimeType.startsWith('video/');
-    final isAudio = mimeType.startsWith('audio/');
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Handle bar
-              Container(
-                margin: const EdgeInsets.only(top: 12),
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  children: [
-                    _getFileIcon(entry, 56),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            entry.name,
-                            style: textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            _formatFileSize(entry.size),
-                            style: TextStyle(
-                              color: colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Divider(height: 1, color: colorScheme.outlineVariant),
-              if (isImage || isVideo || isAudio)
-                ListTile(
-                  leading: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: colorScheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Icon(
-                      isImage
-                          ? Icons.image_rounded
-                          : isVideo
-                              ? Icons.play_circle_rounded
-                              : Icons.audiotrack_rounded,
-                      color: colorScheme.onPrimaryContainer,
-                    ),
-                  ),
-                  title: Text(isImage ? 'View' : 'Play'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _openMediaPreview(entry);
-                  },
-                ),
-              // Copy option
-              ListTile(
-                leading: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.teal.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.copy_rounded, color: Colors.teal),
-                ),
-                title: const Text('Copy'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _copyFile(entry);
-                },
-              ),
-              // Cut option
-              ListTile(
-                leading: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.indigo.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.content_cut_rounded,
-                    color: Colors.indigo,
-                  ),
-                ),
-                title: const Text('Cut'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _cutFile(entry);
-                },
-              ),
-              ListTile(
-                leading: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.download_rounded, color: Colors.blue),
-                ),
-                title: const Text('Download'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _downloadFile(entry);
-                },
-              ),
-              ListTile(
-                leading: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.edit_rounded, color: Colors.orange),
-                ),
-                title: const Text('Rename'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _showRenameDialog(entry);
-                },
-              ),
-              // Details option
-              ListTile(
-                leading: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.purple.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.info_outline_rounded,
-                    color: Colors.purple,
-                  ),
-                ),
-                title: const Text('Details'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _showFileDetails(entry);
-                },
-              ),
-              ListTile(
-                leading: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: colorScheme.errorContainer,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(Icons.delete_rounded, color: colorScheme.error),
-                ),
-                title: Text(
-                  'Delete',
-                  style: TextStyle(color: colorScheme.error),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  _deleteFile(entry);
-                },
-              ),
-              const SizedBox(height: 12),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Copy file to clipboard
-  void _copyFile(FileEntry entry) {
-    setState(() {
-      _clipboardFiles = [entry];
-      _isCutOperation = false;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.copy_rounded, color: Colors.white, size: 20),
-            const SizedBox(width: 12),
-            Expanded(child: Text('"${entry.name}" copied to clipboard')),
-          ],
-        ),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        action: SnackBarAction(label: 'Paste', onPressed: _pasteFiles),
-      ),
-    );
-  }
-
-  /// Cut file to clipboard
-  void _cutFile(FileEntry entry) {
-    setState(() {
-      _clipboardFiles = [entry];
-      _isCutOperation = true;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(
-              Icons.content_cut_rounded,
-              color: Colors.white,
-              size: 20,
-            ),
-            const SizedBox(width: 12),
-            Expanded(child: Text('"${entry.name}" ready to move')),
-          ],
-        ),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        action: SnackBarAction(label: 'Paste', onPressed: _pasteFiles),
-      ),
-    );
-  }
-
-  /// Paste files from clipboard
-  Future<void> _pasteFiles() async {
-    if (_clipboardFiles.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Clipboard is empty')));
-      return;
-    }
-
-    final currentPath = ref.read(currentPathProvider);
-    final api = ref.read(apiServiceProvider);
-    final colorScheme = Theme.of(context).colorScheme;
-
-    try {
-      for (final file in _clipboardFiles) {
-        final destPath =
-            currentPath.isEmpty ? '/${file.name}' : '$currentPath/${file.name}';
-
-        if (_isCutOperation) {
-          await api.moveFiles(source: file.path, destination: destPath);
-        } else {
-          await api.copyFiles(source: file.path, destination: destPath);
-        }
-      }
-
-      final wasCut = _isCutOperation;
-
-      // Clear clipboard after cut operation
-      if (_isCutOperation) {
-        setState(() {
-          _clipboardFiles = [];
-          _isCutOperation = false;
-        });
-      }
-
-      ref.invalidate(directoryListingProvider(currentPath));
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle_rounded, color: Colors.white),
-                const SizedBox(width: 12),
-                Text(
-                  wasCut
-                      ? 'Files moved successfully'
-                      : 'Files copied successfully',
-                ),
-              ],
-            ),
-            backgroundColor: Colors.green,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to paste: $e'),
-            backgroundColor: colorScheme.error,
-          ),
-        );
-      }
-    }
-  }
-
-  /// Show file/folder details dialog with extended media info
   void _showFileDetails(FileEntry entry) {
     final mimeType = entry.mimeType ?? '';
     final isVideo = mimeType.startsWith('video/');
@@ -2402,7 +2165,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
     );
   }
 
-  /// Format Unix timestamp to readable date string
   String _formatTimestamp(int timestamp) {
     final dateTime = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000);
     return _formatDateTime(dateTime);
@@ -2426,7 +2188,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
     final mimeType = entry.mimeType ?? '';
 
     if (mimeType.startsWith('image/')) {
-      // Open image viewer
       final imageUrl = api.getImageUrl(entry.path);
       Navigator.push(
         context,
@@ -2436,7 +2197,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
         ),
       );
     } else if (mimeType.startsWith('video/') || mimeType.startsWith('audio/')) {
-      // Open media player
       final streamUrl = api.getMediaStreamUrl(entry.path);
       Navigator.push(
         context,
@@ -2461,17 +2221,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
         await launchUrl(uri, mode: LaunchMode.externalApplication);
       } else {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Download URL: $downloadUrl'),
-              action: SnackBarAction(
-                label: 'Copy',
-                onPressed: () {
-                  // Copy to clipboard
-                },
-              ),
-            ),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Download URL: $downloadUrl')));
         }
       }
     } catch (e) {
@@ -2484,7 +2236,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 
   void _showRenameDialog(FileEntry entry) {
-    final controller = TextEditingController(text: entry.name);
+    final controller = TextEditingController(text: safeDisplayName(entry.name));
     final colorScheme = Theme.of(context).colorScheme;
 
     showDialog(
@@ -2603,7 +2355,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 }
 
-// ============ Widget Components ============
+// ============ Helper Widgets ============
 
 class _BreadcrumbChip extends StatelessWidget {
   final IconData? icon;
@@ -2623,34 +2375,36 @@ class _BreadcrumbChip extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Material(
-      color: isActive ? colorScheme.primaryContainer : Colors.transparent,
-      borderRadius: BorderRadius.circular(10),
+      color: isActive
+          ? colorScheme.primaryContainer
+          : colorScheme.surfaceContainerHigh,
+      borderRadius: BorderRadius.circular(8),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(8),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (icon != null) ...[
                 Icon(
                   icon,
-                  size: 18,
+                  size: 16,
                   color: isActive
                       ? colorScheme.onPrimaryContainer
-                      : colorScheme.primary,
+                      : colorScheme.onSurfaceVariant,
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
               ],
               Text(
                 label,
                 style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
                   color: isActive
                       ? colorScheme.onPrimaryContainer
-                      : colorScheme.primary,
-                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
-                  fontSize: 14,
+                      : colorScheme.onSurfaceVariant,
                 ),
               ),
             ],
@@ -2671,30 +2425,23 @@ class _DiskCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final usageColor = _getUsageColor(disk.usagePercentage);
+
     final diskIcon = _getDiskIcon();
     final diskTypeLabel = _getDiskTypeLabel();
+    final usageColor = _getUsageColor(disk.usagePercentage);
 
     return Card(
-      clipBehavior: Clip.antiAlias,
       elevation: 0,
       color: colorScheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(24),
-        side: BorderSide(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.3),
-          width: 1,
-        ),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(20),
         child: Padding(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header with icon and type badge
               Row(
                 children: [
                   Container(
@@ -2712,16 +2459,6 @@ class _DiskCard extends StatelessWidget {
                         end: Alignment.bottomRight,
                       ),
                       borderRadius: BorderRadius.circular(14),
-                      boxShadow: [
-                        BoxShadow(
-                          color: (disk.isRemovable
-                                  ? Colors.orange
-                                  : colorScheme.primary)
-                              .withValues(alpha: 0.3),
-                          blurRadius: 8,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
                     ),
                     child: Icon(diskIcon, size: 24, color: Colors.white),
                   ),
@@ -2792,67 +2529,59 @@ class _DiskCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 16),
-              // Storage bar
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TweenAnimationBuilder<double>(
-                    tween: Tween(begin: 0, end: disk.usagePercentage / 100),
-                    duration: M3Durations.long2,
-                    curve: M3Curves.emphasized,
-                    builder: (context, value, child) {
-                      return Column(
+              TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: disk.usagePercentage / 100),
+                duration: M3Durations.long2,
+                curve: M3Curves.emphasized,
+                builder: (context, value, child) {
+                  return Column(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: LinearProgressIndicator(
+                          value: value,
+                          minHeight: 10,
+                          backgroundColor: colorScheme.surfaceContainerHighest,
+                          valueColor: AlwaysStoppedAnimation(usageColor),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(6),
-                            child: LinearProgressIndicator(
-                              value: value,
-                              minHeight: 10,
-                              backgroundColor:
-                                  colorScheme.surfaceContainerHighest,
-                              valueColor: AlwaysStoppedAnimation(usageColor),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
                           Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Row(
-                                children: [
-                                  Container(
-                                    width: 10,
-                                    height: 10,
-                                    decoration: BoxDecoration(
-                                      color: usageColor,
-                                      borderRadius: BorderRadius.circular(3),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    '${_formatBytes(disk.usedSpace)} used',
-                                    style: textTheme.bodySmall?.copyWith(
-                                      color: colorScheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              Text(
-                                '${(value * 100).toStringAsFixed(1)}%',
-                                style: textTheme.labelLarge?.copyWith(
+                              Container(
+                                width: 10,
+                                height: 10,
+                                decoration: BoxDecoration(
                                   color: usageColor,
-                                  fontWeight: FontWeight.bold,
+                                  borderRadius: BorderRadius.circular(3),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                '${_formatBytes(disk.usedSpace)} used',
+                                style: textTheme.bodySmall?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
                                 ),
                               ),
                             ],
                           ),
+                          Text(
+                            '${(value * 100).toStringAsFixed(1)}%',
+                            style: textTheme.labelLarge?.copyWith(
+                              color: usageColor,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ],
-                      );
-                    },
-                  ),
-                ],
+                      ),
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: 12),
-              // Footer with storage details
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -2896,14 +2625,11 @@ class _DiskCard extends StatelessWidget {
 
   IconData _getDiskIcon() {
     if (disk.isRemovable) {
-      if (disk.diskType.toLowerCase().contains('usb')) {
-        return Icons.usb_rounded;
-      }
+      if (disk.diskType.toLowerCase().contains('usb')) return Icons.usb_rounded;
       return Icons.sd_card_rounded;
     }
-    if (disk.diskType.toLowerCase().contains('ssd')) {
+    if (disk.diskType.toLowerCase().contains('ssd'))
       return Icons.memory_rounded;
-    }
     return Icons.storage_rounded;
   }
 
@@ -2920,12 +2646,10 @@ class _DiskCard extends StatelessWidget {
   String _getDisplayName() {
     if (disk.mountPoint == '/') return 'System';
     if (disk.mountPoint == '/boot') return 'Boot';
-    if (disk.mountPoint.startsWith('/mnt/')) {
+    if (disk.mountPoint.startsWith('/mnt/'))
       return disk.mountPoint.split('/').last;
-    }
-    if (disk.mountPoint.startsWith('/media/')) {
+    if (disk.mountPoint.startsWith('/media/'))
       return disk.mountPoint.split('/').last;
-    }
     return disk.mountPoint.split('/').last;
   }
 
@@ -3006,22 +2730,11 @@ class _FileGridItem extends StatelessWidget {
     required this.onLongPress,
   });
 
-  /// Safely decode UTF-8 file name for display
-  String _safeDisplayName(String name) {
-    try {
-      // Try to decode if it was URL-encoded
-      return Uri.decodeComponent(name);
-    } catch (_) {
-      // Return original if decoding fails
-      return name;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final displayName = _safeDisplayName(entry.name);
+    final displayName = safeDisplayName(entry.name);
 
     return Card(
       elevation: 0,
@@ -3119,22 +2832,11 @@ class _FileListItem extends StatelessWidget {
     required this.onDelete,
   });
 
-  /// Safely decode UTF-8 file name for display
-  String _safeDisplayName(String name) {
-    try {
-      // Try to decode if it was URL-encoded
-      return Uri.decodeComponent(name);
-    } catch (_) {
-      // Return original if decoding fails
-      return name;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final displayName = _safeDisplayName(entry.name);
+    final displayName = safeDisplayName(entry.name);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -3236,7 +2938,129 @@ class _FileListItem extends StatelessWidget {
   }
 }
 
-// ============ Media Preview Pages ============
+// ============ Skeleton Loading Widgets ============
+
+class _SkeletonGridItem extends StatelessWidget {
+  final ColorScheme colorScheme;
+
+  const _SkeletonGridItem({required this.colorScheme});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              width: 60,
+              height: 12,
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(6),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Container(
+              width: 40,
+              height: 8,
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest.withValues(
+                  alpha: 0.5,
+                ),
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SkeletonListItem extends StatelessWidget {
+  final ColorScheme colorScheme;
+
+  const _SkeletonListItem({required this.colorScheme});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(7),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    width: 80,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHighest.withValues(
+                        alpha: 0.5,
+                      ),
+                      borderRadius: BorderRadius.circular(5),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 16),
+            Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest.withValues(
+                  alpha: 0.3,
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============ Auth Widgets ============
 
 class _AuthOptionTile extends StatelessWidget {
   final IconData icon;
@@ -3330,7 +3154,6 @@ class _Fido2AuthDialogState extends State<_Fido2AuthDialog> {
     await Future.delayed(const Duration(seconds: 2));
 
     if (mounted) {
-      // For demo purposes, always succeed
       Navigator.pop(context, true);
     }
   }
@@ -3344,19 +3167,12 @@ class _Fido2AuthDialogState extends State<_Fido2AuthDialog> {
         width: 72,
         height: 72,
         decoration: BoxDecoration(
-          gradient: LinearGradient(
+          gradient: const LinearGradient(
             colors: [Colors.orange, Colors.deepOrange],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
           borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.orange.withValues(alpha: 0.3),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
-            ),
-          ],
         ),
         child: _isAuthenticating
             ? const Padding(
@@ -3426,309 +3242,8 @@ class _Fido2AuthDialogState extends State<_Fido2AuthDialog> {
   }
 }
 
-/// Detail row widget for file details dialog
-class _DetailRow extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-  final bool isSelectable;
+// ============ File Details Dialog ============
 
-  const _DetailRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-    this.isSelectable = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: colorScheme.primaryContainer.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, size: 18, color: colorScheme.primary),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: textTheme.labelSmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                isSelectable
-                    ? SelectableText(
-                        value,
-                        style: textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w500,
-                        ),
-                      )
-                    : _MarqueeText(
-                        text: value,
-                        style: textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Marquee text widget for long text that scrolls at 0.75x speed
-class _MarqueeText extends StatefulWidget {
-  final String text;
-  final TextStyle? style;
-  final double velocity = 30.0;
-
-  const _MarqueeText({required this.text, this.style});
-
-  @override
-  State<_MarqueeText> createState() => _MarqueeTextState();
-}
-
-class _MarqueeTextState extends State<_MarqueeText>
-    with SingleTickerProviderStateMixin {
-  late ScrollController _scrollController;
-  late AnimationController _animationController;
-  bool _needsScroll = false;
-  double _textWidth = 0;
-  double _containerWidth = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _scrollController = ScrollController();
-    _animationController = AnimationController(vsync: this);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkOverflow());
-  }
-
-  void _checkOverflow() {
-    if (!mounted) return;
-
-    final textPainter = TextPainter(
-      text: TextSpan(text: widget.text, style: widget.style),
-      maxLines: 1,
-      textDirection: TextDirection.ltr,
-    )..layout();
-
-    _textWidth = textPainter.width;
-
-    if (_scrollController.hasClients) {
-      _containerWidth = _scrollController.position.viewportDimension;
-      _needsScroll = _textWidth > _containerWidth;
-
-      if (_needsScroll) {
-        _startScrollAnimation();
-      }
-    }
-  }
-
-  void _startScrollAnimation() {
-    if (!_needsScroll || !mounted) return;
-
-    final scrollDistance = _textWidth - _containerWidth + 20;
-    final duration = Duration(
-      milliseconds: (scrollDistance / widget.velocity * 1000).round(),
-    );
-
-    _animationController.duration = duration;
-
-    _animationController.addStatusListener((status) {
-      if (status == AnimationStatus.completed) {
-        Future.delayed(const Duration(seconds: 2), () {
-          if (mounted) {
-            _scrollController.jumpTo(0);
-            Future.delayed(const Duration(seconds: 1), () {
-              if (mounted) {
-                _animationController.forward(from: 0);
-              }
-            });
-          }
-        });
-      }
-    });
-
-    _animationController.addListener(() {
-      if (_scrollController.hasClients && mounted) {
-        final scrollDistance = _textWidth - _containerWidth + 20;
-        _scrollController.jumpTo(_animationController.value * scrollDistance);
-      }
-    });
-
-    Future.delayed(const Duration(seconds: 1), () {
-      if (mounted) {
-        _animationController.forward();
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _animationController.dispose();
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 20,
-      child: SingleChildScrollView(
-        controller: _scrollController,
-        scrollDirection: Axis.horizontal,
-        physics: const NeverScrollableScrollPhysics(),
-        child: Text(widget.text, style: widget.style, maxLines: 1),
-      ),
-    );
-  }
-}
-
-/// Skeleton loading item for grid view
-class _SkeletonGridItem extends StatelessWidget {
-  final ColorScheme colorScheme;
-
-  const _SkeletonGridItem({required this.colorScheme});
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 0,
-      color: colorScheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(14),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Container(
-              width: 60,
-              height: 12,
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(6),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Container(
-              width: 40,
-              height: 8,
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHighest.withValues(
-                  alpha: 0.5,
-                ),
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Skeleton loading item for list view
-class _SkeletonListItem extends StatelessWidget {
-  final ColorScheme colorScheme;
-
-  const _SkeletonListItem({required this.colorScheme});
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      elevation: 0,
-      color: colorScheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: double.infinity,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(7),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Container(
-                    width: 80,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest.withValues(
-                        alpha: 0.5,
-                      ),
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 16),
-            Container(
-              width: 24,
-              height: 24,
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHighest.withValues(
-                  alpha: 0.3,
-                ),
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// File details dialog with extended media info
 class _FileDetailsDialog extends ConsumerStatefulWidget {
   final FileEntry entry;
   final bool isMedia;
@@ -3792,21 +3307,16 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
     final h = duration.inHours;
     final m = duration.inMinutes.remainder(60);
     final s = duration.inSeconds.remainder(60);
-    if (h > 0) {
-      return '${h}h ${m}m ${s}s';
-    } else if (m > 0) {
-      return '${m}m ${s}s';
-    }
+    if (h > 0) return '${h}h ${m}m ${s}s';
+    if (m > 0) return '${m}m ${s}s';
     return '${s}s';
   }
 
   String _formatBitrate(int? bitrate) {
     if (bitrate == null) return '-';
-    if (bitrate >= 1000000) {
+    if (bitrate >= 1000000)
       return '${(bitrate / 1000000).toStringAsFixed(1)} Mbps';
-    } else if (bitrate >= 1000) {
-      return '${(bitrate / 1000).toStringAsFixed(0)} Kbps';
-    }
+    if (bitrate >= 1000) return '${(bitrate / 1000).toStringAsFixed(0)} Kbps';
     return '$bitrate bps';
   }
 
@@ -3816,27 +3326,25 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
 
     return AlertDialog(
       icon: widget.getFileIcon(widget.entry, 64),
-      title: _MarqueeText(
-        text: widget.entry.name,
+      title: Text(
+        safeDisplayName(widget.entry.name),
         style: Theme.of(
           context,
         ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
       ),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Basic info
             _DetailRow(
               icon: Icons.folder_rounded,
               label: 'Type',
               value: widget.entry.isDirectory
                   ? 'Folder'
                   : (widget.entry.mimeType ?? 'Unknown'),
-            ).animate().fadeIn(
-                  duration: M3Durations.medium2,
-                  curve: M3Curves.emphasizedDecelerate,
-                ),
+            ),
             const SizedBox(height: 12),
             _DetailRow(
               icon: Icons.storage_rounded,
@@ -3844,46 +3352,28 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
               value: widget.entry.isDirectory
                   ? '-'
                   : widget.formatFileSize(widget.entry.size),
-            ).animate().fadeIn(
-                  delay: 50.ms,
-                  duration: M3Durations.medium2,
-                  curve: M3Curves.emphasizedDecelerate,
-                ),
+            ),
             const SizedBox(height: 12),
             _DetailRow(
               icon: Icons.location_on_rounded,
               label: 'Path',
               value: widget.entry.path,
               isSelectable: true,
-            ).animate().fadeIn(
-                  delay: 100.ms,
-                  duration: M3Durations.medium2,
-                  curve: M3Curves.emphasizedDecelerate,
-                ),
+            ),
             const SizedBox(height: 12),
             _DetailRow(
               icon: Icons.calendar_today_rounded,
               label: 'Modified',
               value: widget.formatTimestamp(widget.entry.modified),
-            ).animate().fadeIn(
-                  delay: 150.ms,
-                  duration: M3Durations.medium2,
-                  curve: M3Curves.emphasizedDecelerate,
-                ),
+            ),
             if (widget.entry.permissions.isNotEmpty) ...[
               const SizedBox(height: 12),
               _DetailRow(
                 icon: Icons.security_rounded,
                 label: 'Permissions',
                 value: widget.entry.permissions,
-              ).animate().fadeIn(
-                    delay: 200.ms,
-                    duration: M3Durations.medium2,
-                    curve: M3Curves.emphasizedDecelerate,
-                  ),
+              ),
             ],
-
-            // Media info section
             if (widget.isMedia) ...[
               const SizedBox(height: 20),
               _buildMediaInfoSection(colorScheme),
@@ -3907,7 +3397,7 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            CircularProgressIndicator(strokeWidth: 2),
+            const CircularProgressIndicator(strokeWidth: 2),
             const SizedBox(height: 12),
             Text(
               'Loading media info...',
@@ -3915,17 +3405,13 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
             ),
           ],
         ),
-      ).animate().fadeIn(curve: M3Curves.emphasizedDecelerate);
+      );
     }
 
-    if (_mediaInfo == null) {
-      return const SizedBox.shrink();
-    }
+    if (_mediaInfo == null) return const SizedBox.shrink();
 
     final List<Widget> mediaDetails = [];
-    int delayIndex = 250;
 
-    // Video info
     if (widget.isVideo) {
       if (_mediaInfo!['width'] != null && _mediaInfo!['height'] != null) {
         mediaDetails.add(
@@ -3933,302 +3419,70 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
             icon: Icons.aspect_ratio_rounded,
             label: 'Resolution',
             value: '${_mediaInfo!['width']}×${_mediaInfo!['height']}',
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
+          ),
         );
-        delayIndex += 50;
+        mediaDetails.add(const SizedBox(height: 12));
       }
       if (_mediaInfo!['duration'] != null) {
-        mediaDetails.add(const SizedBox(height: 12));
         mediaDetails.add(
           _DetailRow(
             icon: Icons.timer_rounded,
             label: 'Duration',
             value: _formatDuration(_mediaInfo!['duration']?.toDouble()),
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
+          ),
         );
-        delayIndex += 50;
+        mediaDetails.add(const SizedBox(height: 12));
       }
       if (_mediaInfo!['video_codec'] != null) {
-        mediaDetails.add(const SizedBox(height: 12));
         mediaDetails.add(
           _DetailRow(
             icon: Icons.videocam_rounded,
             label: 'Video Codec',
             value: _mediaInfo!['video_codec'].toString().toUpperCase(),
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
+          ),
         );
-        delayIndex += 50;
+        mediaDetails.add(const SizedBox(height: 12));
       }
       if (_mediaInfo!['video_bitrate'] != null) {
-        mediaDetails.add(const SizedBox(height: 12));
         mediaDetails.add(
           _DetailRow(
             icon: Icons.speed_rounded,
             label: 'Video Bitrate',
             value: _formatBitrate(_mediaInfo!['video_bitrate']),
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
+          ),
         );
-        delayIndex += 50;
-      }
-      if (_mediaInfo!['frame_rate'] != null) {
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(
-          _DetailRow(
-            icon: Icons.slow_motion_video_rounded,
-            label: 'Frame Rate',
-            value: '${_mediaInfo!['frame_rate'].toStringAsFixed(2)} fps',
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
-        );
-        delayIndex += 50;
       }
     }
 
-    // Audio info
     if (widget.isVideo || widget.isAudio) {
       if (_mediaInfo!['audio_codec'] != null) {
-        mediaDetails.add(const SizedBox(height: 12));
         mediaDetails.add(
           _DetailRow(
             icon: Icons.audiotrack_rounded,
             label: 'Audio Codec',
             value: _mediaInfo!['audio_codec'].toString().toUpperCase(),
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
+          ),
         );
-        delayIndex += 50;
+        mediaDetails.add(const SizedBox(height: 12));
       }
       if (_mediaInfo!['audio_bitrate'] != null) {
-        mediaDetails.add(const SizedBox(height: 12));
         mediaDetails.add(
           _DetailRow(
             icon: Icons.graphic_eq_rounded,
             label: 'Audio Bitrate',
             value: _formatBitrate(_mediaInfo!['audio_bitrate']),
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
+          ),
         );
-        delayIndex += 50;
-      }
-      if (_mediaInfo!['audio_channels'] != null) {
-        final channels = _mediaInfo!['audio_channels'];
-        String channelStr = '$channels ch';
-        if (channels == 1) {
-          channelStr = 'Mono';
-        } else if (channels == 2) {
-          channelStr = 'Stereo';
-        } else if (channels == 6) {
-          channelStr = '5.1 Surround';
-        } else if (channels == 8) {
-          channelStr = '7.1 Surround';
-        }
-
         mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(
-          _DetailRow(
-            icon: Icons.surround_sound_rounded,
-            label: 'Audio Channels',
-            value: channelStr,
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
-        );
-        delayIndex += 50;
-      }
-      if (_mediaInfo!['audio_sample_rate'] != null) {
-        mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(
-          _DetailRow(
-            icon: Icons.waves_rounded,
-            label: 'Sample Rate',
-            value:
-                '${(_mediaInfo!['audio_sample_rate'] / 1000).toStringAsFixed(1)} kHz',
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
-        );
-        delayIndex += 50;
-      }
-      // Audio tracks info
-      if (_mediaInfo!['audio_tracks'] != null &&
-          (_mediaInfo!['audio_tracks'] as List).length > 1) {
-        mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(
-          _DetailRow(
-            icon: Icons.queue_music_rounded,
-            label: 'Audio Tracks',
-            value: '${(_mediaInfo!['audio_tracks'] as List).length} tracks',
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
-        );
-        delayIndex += 50;
       }
     }
 
-    // Image EXIF info
-    if (widget.isImage && _mediaInfo!['exif'] != null) {
-      final exif = _mediaInfo!['exif'] as Map<String, dynamic>;
+    if (mediaDetails.isEmpty) return const SizedBox.shrink();
 
-      if (exif['camera_make'] != null || exif['camera_model'] != null) {
-        final camera = [
-          exif['camera_make'],
-          exif['camera_model'],
-        ].where((e) => e != null).join(' ');
-        mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(
-          _DetailRow(
-            icon: Icons.camera_alt_rounded,
-            label: 'Camera',
-            value: camera,
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
-        );
-        delayIndex += 50;
-      }
-      if (exif['date_taken'] != null) {
-        mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(
-          _DetailRow(
-            icon: Icons.calendar_month_rounded,
-            label: 'Date Taken',
-            value: exif['date_taken'],
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
-        );
-        delayIndex += 50;
-      }
-      if (exif['exposure_time'] != null) {
-        mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(
-          _DetailRow(
-            icon: Icons.shutter_speed_rounded,
-            label: 'Exposure',
-            value: exif['exposure_time'],
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
-        );
-        delayIndex += 50;
-      }
-      if (exif['f_number'] != null) {
-        mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(
-          _DetailRow(
-            icon: Icons.camera_rounded,
-            label: 'Aperture',
-            value: exif['f_number'],
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
-        );
-        delayIndex += 50;
-      }
-      if (exif['iso'] != null) {
-        mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(
-          _DetailRow(
-            icon: Icons.iso_rounded,
-            label: 'ISO',
-            value: exif['iso'].toString(),
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
-        );
-        delayIndex += 50;
-      }
-      if (exif['focal_length'] != null) {
-        mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(
-          _DetailRow(
-            icon: Icons.center_focus_strong_rounded,
-            label: 'Focal Length',
-            value: exif['focal_length'],
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
-        );
-        delayIndex += 50;
-      }
-      if (exif['gps_latitude'] != null && exif['gps_longitude'] != null) {
-        mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(
-          _DetailRow(
-            icon: Icons.location_on_rounded,
-            label: 'GPS',
-            value:
-                '${exif['gps_latitude'].toStringAsFixed(6)}, ${exif['gps_longitude'].toStringAsFixed(6)}',
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
-        );
-        delayIndex += 50;
-      }
-      if (exif['lens_model'] != null) {
-        mediaDetails.add(const SizedBox(height: 12));
-        mediaDetails.add(
-          _DetailRow(
-            icon: Icons.lens_rounded,
-            label: 'Lens',
-            value: exif['lens_model'],
-          ).animate().fadeIn(
-                delay: Duration(milliseconds: delayIndex),
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasizedDecelerate,
-              ),
-        );
-      }
-    }
-
-    if (mediaDetails.isEmpty) {
-      return const SizedBox.shrink();
+    // Remove last SizedBox
+    if (mediaDetails.isNotEmpty && mediaDetails.last is SizedBox) {
+      mediaDetails.removeLast();
     }
 
     return Column(
@@ -4256,13 +3510,81 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
               ),
             ],
           ),
-        ).animate().fadeIn(
-              delay: 200.ms,
-              duration: M3Durations.medium2,
-              curve: M3Curves.emphasizedDecelerate,
-            ),
+        ),
         ...mediaDetails,
       ],
+    );
+  }
+}
+
+class _DetailRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final bool isSelectable;
+
+  const _DetailRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.isSelectable = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: colorScheme.primaryContainer.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 18, color: colorScheme.primary),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: textTheme.labelSmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                isSelectable
+                    ? SelectableText(
+                        value,
+                        style: textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w500,
+                        ),
+                      )
+                    : Text(
+                        value,
+                        style: textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w500,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

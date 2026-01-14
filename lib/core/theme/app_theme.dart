@@ -7,8 +7,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 // Theme mode provider (Riverpod 3.x Notifier API)
-final themeModeProvider =
-    NotifierProvider<ThemeModeNotifier, ThemeMode>(ThemeModeNotifier.new);
+final themeModeProvider = NotifierProvider<ThemeModeNotifier, ThemeMode>(
+  ThemeModeNotifier.new,
+);
 
 class ThemeModeNotifier extends Notifier<ThemeMode> {
   @override
@@ -30,8 +31,9 @@ class ThemeModeNotifier extends Notifier<ThemeMode> {
 }
 
 // Seed color provider for dynamic theming
-final seedColorProvider =
-    NotifierProvider<SeedColorNotifier, Color>(SeedColorNotifier.new);
+final seedColorProvider = NotifierProvider<SeedColorNotifier, Color>(
+  SeedColorNotifier.new,
+);
 
 class SeedColorNotifier extends Notifier<Color> {
   @override
@@ -77,7 +79,8 @@ class DynamicColorNotifier extends Notifier<bool> {
 
 final systemAccentColorProvider =
     NotifierProvider<SystemAccentColorNotifier, Color?>(
-        SystemAccentColorNotifier.new);
+      SystemAccentColorNotifier.new,
+    );
 
 class SystemAccentColorNotifier extends Notifier<Color?> {
   @override
@@ -115,8 +118,9 @@ class DynamicColorService {
     if (!isPlatformSupported) return false;
 
     try {
-      final result =
-          await _channel.invokeMethod<bool>('isDynamicColorAvailable');
+      final result = await _channel.invokeMethod<bool>(
+        'isDynamicColorAvailable',
+      );
       return result ?? false;
     } on PlatformException catch (e) {
       debugPrint('Dynamic color availability check failed: ${e.message}');
@@ -146,11 +150,13 @@ class DynamicColorService {
     if (!isPlatformSupported) return null;
 
     try {
-      final result =
-          await _channel.invokeMethod<Map<dynamic, dynamic>>('getSystemColors');
+      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'getSystemColors',
+      );
       if (result != null) {
-        return result
-            .map((key, value) => MapEntry(key.toString(), Color(value as int)));
+        return result.map(
+          (key, value) => MapEntry(key.toString(), Color(value as int)),
+        );
       }
     } on PlatformException catch (e) {
       debugPrint('Get system colors failed: ${e.message}');
@@ -220,29 +226,33 @@ class AppTheme {
         style: ElevatedButton.styleFrom(
           elevation: 0,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
@@ -264,8 +274,10 @@ class AppTheme {
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide(color: colorScheme.error),
         ),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 20,
+          vertical: 18,
+        ),
       ),
       navigationBarTheme: NavigationBarThemeData(
         elevation: 0,
@@ -279,8 +291,9 @@ class AppTheme {
       navigationRailTheme: NavigationRailThemeData(
         elevation: 0,
         indicatorColor: colorScheme.secondaryContainer,
-        selectedIconTheme:
-            IconThemeData(color: colorScheme.onSecondaryContainer),
+        selectedIconTheme: IconThemeData(
+          color: colorScheme.onSecondaryContainer,
+        ),
         unselectedIconTheme: IconThemeData(color: colorScheme.onSurfaceVariant),
         indicatorShape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
@@ -368,7 +381,7 @@ class AppTheme {
   }
 }
 
-// Material Design 3 Expressive 动画曲线
+// Material Design 3 Expressive 动画曲线 - 优化性能
 class M3Curves {
   M3Curves._();
 
@@ -401,6 +414,9 @@ class M3Curves {
 
   // 容器变换曲线
   static const Curve containerTransform = Cubic(0.05, 0.7, 0.1, 1.0);
+
+  // 线性曲线 - 用于简单过渡，减少GPU负担
+  static const Curve linear = Curves.linear;
 }
 
 // Material Design 3 动画时长
@@ -466,10 +482,7 @@ extension M3AnimationExtension on Widget {
       builder: (context, value, child) {
         return Transform.scale(
           scale: value,
-          child: Opacity(
-            opacity: value.clamp(0.0, 1.0),
-            child: child,
-          ),
+          child: Opacity(opacity: value.clamp(0.0, 1.0), child: child),
         );
       },
       child: this,

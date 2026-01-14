@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:window_manager/window_manager.dart';
@@ -12,6 +13,11 @@ import 'core/services/device_discovery_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 优化渲染性能
+  if (kReleaseMode) {
+    debugPrintRebuildDirtyWidgets = false;
+  }
 
   // Initialize Hive for local storage
   await Hive.initFlutter();
