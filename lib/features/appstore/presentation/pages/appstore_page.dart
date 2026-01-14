@@ -9,14 +9,16 @@ import '../../../../core/theme/app_theme.dart';
 import '../widgets/app_install_dialog.dart' as install_dialog;
 import 'app_webview_page.dart';
 
-final storeAppsProvider =
-    FutureProvider.autoDispose<List<AppStoreItem>>((ref) async {
+final storeAppsProvider = FutureProvider.autoDispose<List<AppStoreItem>>((
+  ref,
+) async {
   final api = ref.read(apiServiceProvider);
   return await api.listStoreApps();
 });
 
-final installedAppsProvider =
-    FutureProvider.autoDispose<List<DockerApp>>((ref) async {
+final installedAppsProvider = FutureProvider.autoDispose<List<DockerApp>>((
+  ref,
+) async {
   final api = ref.read(apiServiceProvider);
   return await api.listInstalledApps();
 });
@@ -70,14 +72,8 @@ class _AppStorePageState extends ConsumerState<AppStorePage>
               indicatorSize: TabBarIndicatorSize.label,
               dividerColor: Colors.transparent,
               tabs: [
-                Tab(
-                  icon: Icon(Icons.store_rounded),
-                  text: 'Store',
-                ),
-                Tab(
-                  icon: Icon(Icons.apps_rounded),
-                  text: 'Installed',
-                ),
+                Tab(icon: Icon(Icons.store_rounded), text: 'Store'),
+                Tab(icon: Icon(Icons.apps_rounded), text: 'Installed'),
               ],
             ),
           ),
@@ -116,7 +112,7 @@ class _StoreTab extends ConsumerWidget {
               'Network',
               'Database',
               'Productivity',
-              'Management'
+              'Management',
             ];
             final aIndex = order.indexOf(a);
             final bIndex = order.indexOf(b);
@@ -134,10 +130,10 @@ class _StoreTab extends ConsumerWidget {
             final categoryApps = categories[category]!;
 
             return _CategorySection(
-              category: category,
-              apps: categoryApps,
-              onInstall: (app) => _installApp(context, ref, app),
-            )
+                  category: category,
+                  apps: categoryApps,
+                  onInstall: (app) => _installApp(context, ref, app),
+                )
                 .animate(delay: (80 * index).ms)
                 .fadeIn(curve: M3Curves.emphasizedDecelerate)
                 .slideY(begin: 0.05, curve: M3Curves.emphasized);
@@ -150,7 +146,10 @@ class _StoreTab extends ConsumerWidget {
   }
 
   Future<void> _installApp(
-      BuildContext context, WidgetRef ref, AppStoreItem app) async {
+    BuildContext context,
+    WidgetRef ref,
+    AppStoreItem app,
+  ) async {
     // Show advanced install dialog
     final result = await showDialog<bool>(
       context: context,
@@ -213,8 +212,11 @@ class _StoreTab extends ConsumerWidget {
               color: colorScheme.errorContainer,
               shape: BoxShape.circle,
             ),
-            child: Icon(Icons.error_outline_rounded,
-                size: 40, color: colorScheme.onErrorContainer),
+            child: Icon(
+              Icons.error_outline_rounded,
+              size: 40,
+              color: colorScheme.onErrorContainer,
+            ),
           ),
           const SizedBox(height: 24),
           const Text('Failed to load apps'),
@@ -243,16 +245,17 @@ class _InstalledTab extends ConsumerWidget {
           itemCount: apps.length,
           itemBuilder: (context, index) {
             return _InstalledAppCard(
-              app: apps[index],
-              onStart: () => _startApp(context, ref, apps[index]),
-              onStop: () => _stopApp(context, ref, apps[index]),
-              onRestart: () => _restartApp(context, ref, apps[index]),
-              onUninstall: () => _uninstallApp(context, ref, apps[index]),
-              onOpen: apps[index].status == 'running' &&
-                      apps[index].ports.isNotEmpty
-                  ? () => _openApp(context, ref, apps[index])
-                  : null,
-            )
+                  app: apps[index],
+                  onStart: () => _startApp(context, ref, apps[index]),
+                  onStop: () => _stopApp(context, ref, apps[index]),
+                  onRestart: () => _restartApp(context, ref, apps[index]),
+                  onUninstall: () => _uninstallApp(context, ref, apps[index]),
+                  onOpen:
+                      apps[index].status == 'running' &&
+                          apps[index].ports.isNotEmpty
+                      ? () => _openApp(context, ref, apps[index])
+                      : null,
+                )
                 .animate(delay: (60 * index).ms)
                 .fadeIn(curve: M3Curves.emphasizedDecelerate)
                 .slideY(begin: 0.05, curve: M3Curves.emphasized);
@@ -265,83 +268,95 @@ class _InstalledTab extends ConsumerWidget {
   }
 
   Future<void> _openApp(
-      BuildContext context, WidgetRef ref, DockerApp app) async {
+    BuildContext context,
+    WidgetRef ref,
+    DockerApp app,
+  ) async {
     // Get the base URL from the API client
     final baseUrl = ref.read(baseUrlProvider);
 
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => AppWebViewPage(
-          app: app,
-          baseUrl: baseUrl,
-        ),
+        builder: (context) => AppWebViewPage(app: app, baseUrl: baseUrl),
       ),
     );
   }
 
   Future<void> _startApp(
-      BuildContext context, WidgetRef ref, DockerApp app) async {
+    BuildContext context,
+    WidgetRef ref,
+    DockerApp app,
+  ) async {
     try {
       final api = ref.read(apiServiceProvider);
       await api.startApp(app.id);
       ref.invalidate(installedAppsProvider);
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${app.displayName} started')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('${app.displayName} started')));
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to start: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to start: $e')));
       }
     }
   }
 
   Future<void> _stopApp(
-      BuildContext context, WidgetRef ref, DockerApp app) async {
+    BuildContext context,
+    WidgetRef ref,
+    DockerApp app,
+  ) async {
     try {
       final api = ref.read(apiServiceProvider);
       await api.stopApp(app.id);
       ref.invalidate(installedAppsProvider);
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${app.displayName} stopped')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('${app.displayName} stopped')));
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to stop: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to stop: $e')));
       }
     }
   }
 
   Future<void> _restartApp(
-      BuildContext context, WidgetRef ref, DockerApp app) async {
+    BuildContext context,
+    WidgetRef ref,
+    DockerApp app,
+  ) async {
     try {
       final api = ref.read(apiServiceProvider);
       await api.restartApp(app.id);
       ref.invalidate(installedAppsProvider);
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${app.displayName} restarted')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('${app.displayName} restarted')));
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to restart: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to restart: $e')));
       }
     }
   }
 
   Future<void> _uninstallApp(
-      BuildContext context, WidgetRef ref, DockerApp app) async {
+    BuildContext context,
+    WidgetRef ref,
+    DockerApp app,
+  ) async {
     final colorScheme = Theme.of(context).colorScheme;
 
     final confirmed = await showDialog<bool>(
@@ -350,7 +365,8 @@ class _InstalledTab extends ConsumerWidget {
         icon: Icon(Icons.delete_rounded, size: 48, color: colorScheme.error),
         title: Text('Uninstall ${app.displayName}?'),
         content: const Text(
-            'This will stop and remove the container. Your data volumes will be preserved.'),
+          'This will stop and remove the container. Your data volumes will be preserved.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -377,9 +393,9 @@ class _InstalledTab extends ConsumerWidget {
         }
       } catch (e) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to uninstall: $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Failed to uninstall: $e')));
         }
       }
     }
@@ -405,8 +421,10 @@ class _InstalledTab extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 24),
-          Text('No apps installed',
-              style: Theme.of(context).textTheme.titleMedium),
+          Text(
+            'No apps installed',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
           const SizedBox(height: 8),
           Text(
             'Browse the store to install apps',
@@ -430,8 +448,11 @@ class _InstalledTab extends ConsumerWidget {
               color: colorScheme.errorContainer,
               shape: BoxShape.circle,
             ),
-            child: Icon(Icons.error_outline_rounded,
-                size: 40, color: colorScheme.onErrorContainer),
+            child: Icon(
+              Icons.error_outline_rounded,
+              size: 40,
+              color: colorScheme.onErrorContainer,
+            ),
           ),
           const SizedBox(height: 24),
           const Text('Failed to load installed apps'),
@@ -472,8 +493,11 @@ class _CategorySection extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
           child: Row(
             children: [
-              Icon(_getCategoryIcon(category),
-                  size: 20, color: colorScheme.primary),
+              Icon(
+                _getCategoryIcon(category),
+                size: 20,
+                color: colorScheme.primary,
+              ),
               const SizedBox(width: 8),
               Text(
                 category,
@@ -501,16 +525,16 @@ class _CategorySection extends StatelessWidget {
           ),
         ),
         SizedBox(
-          height: 200,
+          height: 260, // Increased height to show more content
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: apps.length,
             itemBuilder: (context, index) {
               return _StoreAppCard(
-                app: apps[index],
-                onInstall: () => onInstall(apps[index]),
-              )
+                    app: apps[index],
+                    onInstall: () => onInstall(apps[index]),
+                  )
                   .animate(delay: (40 * index).ms)
                   .fadeIn(curve: M3Curves.emphasizedDecelerate)
                   .slideX(begin: 0.1, curve: M3Curves.emphasized);
@@ -558,44 +582,64 @@ class _StoreAppCard extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
 
     return Card(
-      margin: const EdgeInsets.only(right: 12),
+      margin: const EdgeInsets.only(right: 12, bottom: 8),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onInstall,
         child: Container(
-          width: 160,
+          width: 180, // Increased width for better readability
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _AppIcon(iconUrl: app.icon, size: 56),
-              const SizedBox(height: 12),
-              Text(
-                app.displayName,
-                style: textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              // Icon and category row
+              Row(
+                children: [
+                  _AppIcon(iconUrl: app.icon, size: 52),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          app.displayName,
+                          style: textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          app.category,
+                          style: textTheme.labelSmall?.copyWith(
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 12),
               Expanded(
                 child: Text(
                   app.description,
                   style: textTheme.bodySmall?.copyWith(
                     color: colorScheme.onSurfaceVariant,
+                    height: 1.3,
                   ),
-                  maxLines: 3,
+                  maxLines: 4,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.tonal(
                   onPressed: onInstall,
                   style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
                   ),
                   child: const Text('Install'),
                 ),
@@ -656,7 +700,7 @@ class _AppIcon extends StatelessWidget {
                       color: colorScheme.primary,
                       value: loadingProgress.expectedTotalBytes != null
                           ? loadingProgress.cumulativeBytesLoaded /
-                              loadingProgress.expectedTotalBytes!
+                                loadingProgress.expectedTotalBytes!
                           : null,
                     ),
                   ),
@@ -680,11 +724,7 @@ class _AppIcon extends StatelessWidget {
           end: Alignment.bottomRight,
         ),
       ),
-      child: Icon(
-        Icons.apps_rounded,
-        size: size * 0.5,
-        color: Colors.white,
-      ),
+      child: Icon(Icons.apps_rounded, size: size * 0.5, color: Colors.white),
     );
   }
 }
@@ -811,9 +851,9 @@ class _InstalledAppCard extends StatelessWidget {
                 children: [
                   IconButton.filled(
                     onPressed: isRunning ? onStop : onStart,
-                    icon: Icon(isRunning
-                        ? Icons.stop_rounded
-                        : Icons.play_arrow_rounded),
+                    icon: Icon(
+                      isRunning ? Icons.stop_rounded : Icons.play_arrow_rounded,
+                    ),
                     style: IconButton.styleFrom(
                       backgroundColor: isRunning
                           ? colorScheme.errorContainer
@@ -865,11 +905,15 @@ class _InstalledAppCard extends StatelessWidget {
                         value: 'uninstall',
                         child: Row(
                           children: [
-                            Icon(Icons.delete_rounded,
-                                color: colorScheme.error),
+                            Icon(
+                              Icons.delete_rounded,
+                              color: colorScheme.error,
+                            ),
                             const SizedBox(width: 12),
-                            Text('Uninstall',
-                                style: TextStyle(color: colorScheme.error)),
+                            Text(
+                              'Uninstall',
+                              style: TextStyle(color: colorScheme.error),
+                            ),
                           ],
                         ),
                       ),

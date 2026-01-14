@@ -10,13 +10,18 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:video_player/video_player.dart';
 import 'package:http/http.dart' as http;
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/widgets/shell_scaffold.dart';
 
 /// Loop mode for media playback
 enum LoopMode { off, one, all, shuffle }
 
-/// Media player page with full controls
+/// Orientation lock mode
+enum OrientationLockMode { auto, portrait, landscapeLeft, landscapeRight }
+
+/// Media player page with full controls, orientation lock, and proper fullscreen
 class MediaPlayerPage extends ConsumerStatefulWidget {
   final String mediaUrl;
   final String fileName;
@@ -52,6 +57,9 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   String? _authToken;
+  OrientationLockMode _orientationLock = OrientationLockMode.auto;
+  bool _isLandscape = false;
+  bool _isBuffering = false;
 
   @override
   void initState() {
@@ -60,37 +68,119 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
     _enterFullScreen();
     _loadTokenAndInitialize();
     _startHideControlsTimer();
+    // Enable wakelock to prevent screen from turning off during video playback
+    WakelockPlus.enable();
   }
 
-  /// Enter immersive full screen mode
   void _enterFullScreen() {
-    // Hide system UI (status bar and navigation bar)
     SystemChrome.setEnabledSystemUIMode(
       SystemUiMode.immersiveSticky,
       overlays: [],
     );
+    _applyOrientationLock();
+    // Hide bottom navigation bar
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ref.read(bottomNavVisibleProvider.notifier).hide();
+      }
+    });
+  }
 
-    // Allow all orientations for video, enable auto-rotation with gravity sensor
-    if (widget.isVideo) {
-      SystemChrome.setPreferredOrientations([
-        DeviceOrientation.portraitUp,
-        DeviceOrientation.portraitDown,
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ]);
+  void _applyOrientationLock() {
+    switch (_orientationLock) {
+      case OrientationLockMode.auto:
+        SystemChrome.setPreferredOrientations([
+          DeviceOrientation.portraitUp,
+          DeviceOrientation.portraitDown,
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
+        break;
+      case OrientationLockMode.portrait:
+        SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+        break;
+      case OrientationLockMode.landscapeLeft:
+        SystemChrome.setPreferredOrientations([
+          DeviceOrientation.landscapeLeft,
+        ]);
+        break;
+      case OrientationLockMode.landscapeRight:
+        SystemChrome.setPreferredOrientations([
+          DeviceOrientation.landscapeRight,
+        ]);
+        break;
     }
   }
 
-  /// Exit full screen mode
+  void _cycleOrientationLock() {
+    setState(() {
+      final orientation = MediaQuery.of(context).orientation;
+      _isLandscape = orientation == Orientation.landscape;
+      switch (_orientationLock) {
+        case OrientationLockMode.auto:
+          _orientationLock = _isLandscape
+              ? OrientationLockMode.landscapeLeft
+              : OrientationLockMode.portrait;
+          break;
+        default:
+          _orientationLock = OrientationLockMode.auto;
+          break;
+      }
+    });
+    _applyOrientationLock();
+    _showOrientationLockToast();
+  }
+
+  void _showOrientationLockToast() {
+    final message = _orientationLock == OrientationLockMode.auto
+        ? 'Rotation unlocked'
+        : 'Rotation locked';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              _orientationLock == OrientationLockMode.auto
+                  ? Icons.screen_rotation_rounded
+                  : Icons.screen_lock_rotation_rounded,
+              color: Colors.white,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Text(message),
+          ],
+        ),
+        duration: const Duration(seconds: 1),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
+
+  IconData _getOrientationLockIcon() {
+    return _orientationLock == OrientationLockMode.auto
+        ? Icons.screen_rotation_rounded
+        : Icons.screen_lock_rotation_rounded;
+  }
+
   void _exitFullScreen() {
-    // Restore system UI
     SystemChrome.setEnabledSystemUIMode(
       SystemUiMode.edgeToEdge,
       overlays: SystemUiOverlay.values,
     );
-
-    // Reset to portrait only
-    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    // Allow all orientations after exiting video player
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    // Show bottom navigation bar again
+    ref.read(bottomNavVisibleProvider.notifier).show();
+    // Disable wakelock
+    WakelockPlus.disable();
   }
 
   @override
@@ -112,10 +202,8 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
   }
 
   Future<void> _loadTokenAndInitialize() async {
-    // Get auth token from secure storage
     const storage = FlutterSecureStorage();
     _authToken = await storage.read(key: 'access_token');
-    debugPrint('Auth token loaded: ${_authToken != null ? "yes" : "no"}');
     await _initializePlayer();
   }
 
@@ -124,40 +212,57 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
       _isLoading = true;
       _error = null;
     });
-
     try {
-      // Build headers with auth token
-      final headers = <String, String>{'Accept': '*/*'};
+      final headers = <String, String>{
+        'Accept': '*/*',
+        // Request range support for better streaming of large files
+        'Accept-Ranges': 'bytes',
+        // Keep connection alive for continuous streaming
+        'Connection': 'keep-alive',
+      };
       if (_authToken != null && _authToken!.isNotEmpty) {
         headers['Authorization'] = 'Bearer $_authToken';
       }
 
-      debugPrint('Media URL: ${widget.mediaUrl}');
-      debugPrint('Using auth header: ${headers.containsKey("Authorization")}');
+      // Check file type for special handling
+      final fileName = widget.fileName.toLowerCase();
+      final isMkv = fileName.endsWith('.mkv');
+      final isLargeFileFormat = isMkv ||
+          fileName.endsWith('.avi') ||
+          fileName.endsWith('.mov') ||
+          fileName.endsWith('.m2ts') ||
+          fileName.endsWith('.ts') ||
+          fileName.endsWith('.webm');
 
-      // Create video controller with network URL and headers
       _videoController = VideoPlayerController.networkUrl(
         Uri.parse(widget.mediaUrl),
         httpHeaders: headers,
         videoPlayerOptions: VideoPlayerOptions(
           mixWithOthers: false,
           allowBackgroundPlayback: false,
+          webOptions: const VideoPlayerWebOptions(
+            allowContextMenu: false,
+            allowRemotePlayback: true,
+          ),
         ),
+        // For container formats that may have complex audio, use 'other' format hint
+        formatHint: isLargeFileFormat ? VideoFormat.other : null,
       );
 
-      // Initialize the controller
-      await _videoController!.initialize();
+      // Initialize with extended timeout for large files (20GB+)
+      await _videoController!.initialize().timeout(
+        const Duration(seconds: 60),
+        onTimeout: () {
+          throw Exception(
+              'Video initialization timed out. The file may be very large or the connection is slow. Please try again.');
+        },
+      );
 
-      // Add listener for updates
       _videoController!.addListener(_onVideoUpdate);
-
-      // Set looping based on mode
       await _videoController!.setLooping(_loopMode == LoopMode.one);
-
-      // Set initial volume
       await _videoController!.setVolume(_volume);
 
-      // Auto play
+      // Start playback - the player will buffer as needed
       await _videoController!.play();
 
       if (mounted) {
@@ -167,9 +272,7 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
           _duration = _videoController!.value.duration;
         });
       }
-    } catch (e, stackTrace) {
-      debugPrint('Video initialization error: $e');
-      debugPrint('Stack trace: $stackTrace');
+    } catch (e) {
       if (mounted) {
         setState(() {
           _error = 'Failed to load media: $e';
@@ -185,16 +288,14 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
       setState(() {
         _position = value.position;
         _duration = value.duration;
+        // Track buffering state for large files
+        _isBuffering = value.isBuffering;
       });
-
-      // Check for errors
       if (value.hasError) {
         setState(() {
-          _error = value.errorDescription ?? 'Unknown playback error';
+          _error = value.errorDescription ?? 'Unknown error';
         });
       }
-
-      // Handle playback complete
       if (value.position >= value.duration &&
           value.duration > Duration.zero &&
           !value.isPlaying) {
@@ -204,26 +305,9 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
   }
 
   void _handlePlaybackComplete() {
-    switch (_loopMode) {
-      case LoopMode.one:
-        _videoController?.seekTo(Duration.zero);
-        _videoController?.play();
-        break;
-      case LoopMode.all:
-        if (widget.playlist != null &&
-            widget.currentIndex < widget.playlist!.length - 1) {
-          // Navigate to next - implement if needed
-        } else {
-          _videoController?.seekTo(Duration.zero);
-          _videoController?.play();
-        }
-        break;
-      case LoopMode.shuffle:
-        // Random next - implement if needed
-        break;
-      case LoopMode.off:
-        // Do nothing
-        break;
+    if (_loopMode == LoopMode.one || _loopMode == LoopMode.all) {
+      _videoController?.seekTo(Duration.zero);
+      _videoController?.play();
     }
   }
 
@@ -238,9 +322,7 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
 
   void _toggleControls() {
     setState(() => _showControls = !_showControls);
-    if (_showControls) {
-      _startHideControlsTimer();
-    }
+    if (_showControls) _startHideControlsTimer();
   }
 
   void _togglePlayPause() {
@@ -259,36 +341,24 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
   }
 
   void _seekForward() {
-    final newPosition = _position + const Duration(seconds: 10);
-    _seekTo(newPosition > _duration ? _duration : newPosition);
+    final newPos = _position + const Duration(seconds: 10);
+    _seekTo(newPos > _duration ? _duration : newPos);
   }
 
   void _seekBackward() {
-    final newPosition = _position - const Duration(seconds: 10);
-    _seekTo(newPosition < Duration.zero ? Duration.zero : newPosition);
+    final newPos = _position - const Duration(seconds: 10);
+    _seekTo(newPos < Duration.zero ? Duration.zero : newPos);
   }
 
-  void _setVolume(double volume) {
-    setState(() => _volume = volume);
-    _videoController?.setVolume(volume);
+  void _setVolume(double v) {
+    setState(() => _volume = v);
+    _videoController?.setVolume(v);
   }
 
   void _cycleLoopMode() {
     setState(() {
-      switch (_loopMode) {
-        case LoopMode.off:
-          _loopMode = LoopMode.one;
-          break;
-        case LoopMode.one:
-          _loopMode = LoopMode.all;
-          break;
-        case LoopMode.all:
-          _loopMode = LoopMode.shuffle;
-          break;
-        case LoopMode.shuffle:
-          _loopMode = LoopMode.off;
-          break;
-      }
+      _loopMode =
+          LoopMode.values[(_loopMode.index + 1) % LoopMode.values.length];
     });
     _videoController?.setLooping(_loopMode == LoopMode.one);
   }
@@ -308,15 +378,12 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
 
   Future<void> _downloadFile() async {
     if (_isDownloading) return;
-
-    // Request storage permission on mobile
     if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
       final status = await Permission.storage.request();
       if (!status.isGranted) {
-        // Try requesting manage external storage for Android 11+
         if (Platform.isAndroid) {
-          final manageStatus = await Permission.manageExternalStorage.request();
-          if (!manageStatus.isGranted) {
+          final ms = await Permission.manageExternalStorage.request();
+          if (!ms.isGranted) {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text('Storage permission required')),
@@ -334,12 +401,10 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
         }
       }
     }
-
     setState(() {
       _isDownloading = true;
       _downloadProgress = 0;
     });
-
     try {
       Directory? downloadDir;
       if (Platform.isAndroid) {
@@ -355,31 +420,23 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
           downloadDir = Directory('${downloadDir.path}/RockZeroDownload');
         }
       }
-
       if (downloadDir == null) {
         throw Exception('Could not find download directory');
       }
-
       if (!await downloadDir.exists()) {
         await downloadDir.create(recursive: true);
       }
-
       final filePath = '${downloadDir.path}/${widget.fileName}';
       final file = File(filePath);
-
-      // Download with auth header
       final request = http.Request('GET', Uri.parse(widget.mediaUrl));
       if (_authToken != null && _authToken!.isNotEmpty) {
         request.headers['Authorization'] = 'Bearer $_authToken';
       }
-
       final client = http.Client();
       final response = await client.send(request);
       final contentLength = response.contentLength ?? 0;
-
       final sink = file.openWrite();
       int received = 0;
-
       await for (final chunk in response.stream) {
         sink.add(chunk);
         received += chunk.length;
@@ -389,10 +446,8 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
           });
         }
       }
-
       await sink.close();
       client.close();
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -424,35 +479,56 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
     }
   }
 
-  String _formatDuration(Duration duration) {
-    final hours = duration.inHours;
-    final minutes = duration.inMinutes.remainder(60);
-    final seconds = duration.inSeconds.remainder(60);
-
-    if (hours > 0) {
-      return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  String _formatDuration(Duration d) {
+    final h = d.inHours,
+        m = d.inMinutes.remainder(60),
+        s = d.inSeconds.remainder(60);
+    if (h > 0) {
+      return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
     }
-    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
+    final cs = Theme.of(context).colorScheme;
     return PopScope(
       canPop: true,
       onPopInvokedWithResult: (didPop, result) {
-        if (didPop) {
-          _exitFullScreen();
-        }
+        if (didPop) _exitFullScreen();
       },
       child: Scaffold(
         backgroundColor: Colors.black,
+        // Remove system UI completely during video playback
+        extendBody: true,
+        extendBodyBehindAppBar: true,
         body: GestureDetector(
+          behavior: HitTestBehavior
+              .opaque, // Capture all taps, even on transparent areas
           onTap: _toggleControls,
+          onDoubleTapDown: (d) {
+            final w = MediaQuery.of(context).size.width;
+            if (d.globalPosition.dx < w / 2) {
+              _seekBackward();
+            } else {
+              _seekForward();
+            }
+          },
+          // Add horizontal drag for seeking
+          onHorizontalDragEnd: (details) {
+            if (details.primaryVelocity != null) {
+              if (details.primaryVelocity! > 200) {
+                _seekBackward();
+              } else if (details.primaryVelocity! < -200) {
+                _seekForward();
+              }
+            }
+          },
           child: Stack(
+            fit: StackFit.expand,
             children: [
-              // Media content
+              // Black background to ensure full coverage
+              Container(color: Colors.black),
               Center(
                 child: _isLoading
                     ? const CircularProgressIndicator(color: Colors.white)
@@ -462,19 +538,15 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
                             ? _buildVideoPlayer()
                             : _buildAudioPlayer(),
               ),
-
-              // Controls overlay
               if (_isInitialized)
                 AnimatedOpacity(
                   opacity: _showControls ? 1.0 : 0.0,
                   duration: M3Durations.medium2,
                   child: IgnorePointer(
                     ignoring: !_showControls,
-                    child: _buildControlsOverlay(colorScheme),
+                    child: _buildControlsOverlay(cs),
                   ),
                 ),
-
-              // Download progress
               if (_isDownloading)
                 Positioned(
                   top: MediaQuery.of(context).padding.top + 60,
@@ -512,9 +584,7 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
                         LinearProgressIndicator(
                           value: _downloadProgress,
                           backgroundColor: Colors.white24,
-                          valueColor: AlwaysStoppedAnimation(
-                            colorScheme.primary,
-                          ),
+                          valueColor: AlwaysStoppedAnimation(cs.primary),
                         ),
                       ],
                     ),
@@ -531,16 +601,76 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
     if (_videoController == null || !_videoController!.value.isInitialized) {
       return const SizedBox.shrink();
     }
-
-    return AspectRatio(
-      aspectRatio: _videoController!.value.aspectRatio,
-      child: VideoPlayer(_videoController!),
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        AspectRatio(
+          aspectRatio: _videoController!.value.aspectRatio,
+          child: VideoPlayer(_videoController!),
+        ),
+        // Enhanced buffering indicator overlay with progress info
+        if (_isBuffering)
+          TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0.0, end: 1.0),
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+            builder: (context, value, child) {
+              return Opacity(
+                opacity: value,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.7),
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.3),
+                        blurRadius: 20,
+                        spreadRadius: 5,
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 40,
+                        height: 40,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 3,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Buffering...',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Large file streaming',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.7),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+      ],
     );
   }
 
   Widget _buildAudioPlayer() {
-    final colorScheme = Theme.of(context).colorScheme;
-
+    final cs = Theme.of(context).colorScheme;
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -549,14 +679,14 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
           height: 200,
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              colors: [colorScheme.primary, colorScheme.tertiary],
+              colors: [cs.primary, cs.tertiary],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
             borderRadius: BorderRadius.circular(24),
             boxShadow: [
               BoxShadow(
-                color: colorScheme.primary.withValues(alpha: 0.4),
+                color: cs.primary.withValues(alpha: 0.4),
                 blurRadius: 30,
                 offset: const Offset(0, 10),
               ),
@@ -600,14 +730,6 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
             style: const TextStyle(color: Colors.white54),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 16),
-          Text(
-            'URL: ${widget.mediaUrl}',
-            style: const TextStyle(color: Colors.white38, fontSize: 10),
-            textAlign: TextAlign.center,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-          ),
           const SizedBox(height: 24),
           FilledButton.icon(
             onPressed: _initializePlayer,
@@ -619,7 +741,7 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
     );
   }
 
-  Widget _buildControlsOverlay(ColorScheme colorScheme) {
+  Widget _buildControlsOverlay(ColorScheme cs) {
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -637,18 +759,18 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
       child: SafeArea(
         child: Column(
           children: [
-            _buildTopBar(colorScheme),
+            _buildTopBar(cs),
             const Spacer(),
             _buildCenterControls(),
             const Spacer(),
-            _buildBottomControls(colorScheme),
+            _buildBottomControls(cs),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildTopBar(ColorScheme colorScheme) {
+  Widget _buildTopBar(ColorScheme cs) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       child: Row(
@@ -674,13 +796,25 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
             ),
           ),
           IconButton(
+            icon: Icon(
+              _getOrientationLockIcon(),
+              color: _orientationLock == OrientationLockMode.auto
+                  ? Colors.white
+                  : cs.primary,
+            ),
+            onPressed: _cycleOrientationLock,
+            tooltip: _orientationLock == OrientationLockMode.auto
+                ? 'Lock rotation'
+                : 'Unlock rotation',
+          ),
+          IconButton(
             icon: _isDownloading
                 ? SizedBox(
                     width: 24,
                     height: 24,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: colorScheme.primary,
+                      color: cs.primary,
                     ),
                   )
                 : const Icon(Icons.download_rounded, color: Colors.white),
@@ -693,7 +827,6 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
 
   Widget _buildCenterControls() {
     final isPlaying = _videoController?.value.isPlaying ?? false;
-
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -729,13 +862,12 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
     );
   }
 
-  Widget _buildBottomControls(ColorScheme colorScheme) {
+  Widget _buildBottomControls(ColorScheme cs) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Progress bar
           Row(
             children: [
               Text(
@@ -752,22 +884,22 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
                     overlayShape: const RoundSliderOverlayShape(
                       overlayRadius: 14,
                     ),
-                    activeTrackColor: colorScheme.primary,
+                    activeTrackColor: cs.primary,
                     inactiveTrackColor: Colors.white24,
-                    thumbColor: colorScheme.primary,
-                    overlayColor: colorScheme.primary.withValues(alpha: 0.2),
+                    thumbColor: cs.primary,
+                    overlayColor: cs.primary.withValues(alpha: 0.2),
                   ),
                   child: Slider(
                     value: _duration.inMilliseconds > 0
                         ? (_position.inMilliseconds / _duration.inMilliseconds)
                             .clamp(0.0, 1.0)
                         : 0,
-                    onChanged: (value) {
-                      final newPosition = Duration(
-                        milliseconds:
-                            (value * _duration.inMilliseconds).round(),
+                    onChanged: (v) {
+                      _seekTo(
+                        Duration(
+                          milliseconds: (v * _duration.inMilliseconds).round(),
+                        ),
                       );
-                      _seekTo(newPosition);
                     },
                   ),
                 ),
@@ -779,21 +911,17 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
             ],
           ),
           const SizedBox(height: 8),
-          // Additional controls
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // Loop mode
               IconButton(
                 icon: Icon(
                   _getLoopIcon(),
-                  color: _loopMode == LoopMode.off
-                      ? Colors.white54
-                      : colorScheme.primary,
+                  color:
+                      _loopMode == LoopMode.off ? Colors.white54 : cs.primary,
                 ),
                 onPressed: _cycleLoopMode,
               ),
-              // Volume
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -825,7 +953,6 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
                   ),
                 ],
               ),
-              // Placeholder for symmetry
               const SizedBox(width: 48),
             ],
           ),

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -573,73 +575,7 @@ class SettingsPage extends ConsumerWidget {
   void _showInviteCodeDialog(BuildContext context, WidgetRef ref) {
     showDialog(
       context: context,
-      builder: (context) => Consumer(
-        builder: (context, ref, _) {
-          final inviteCode = ref.watch(inviteCodeProvider);
-          final colorScheme = Theme.of(context).colorScheme;
-
-          return AlertDialog(
-            icon: Icon(Icons.card_giftcard_rounded,
-                size: 48, color: colorScheme.primary),
-            title: const Text('Invite Code'),
-            content: inviteCode.when(
-              data: (code) {
-                if (code == null) {
-                  return const Text('Failed to generate invite code');
-                }
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('Share this code with new users:'),
-                    const SizedBox(height: 20),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 24, vertical: 16),
-                      decoration: BoxDecoration(
-                        color: colorScheme.primaryContainer,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: SelectableText(
-                        code.code,
-                        style: Theme.of(context)
-                            .textTheme
-                            .headlineMedium
-                            ?.copyWith(
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 4,
-                              color: colorScheme.onPrimaryContainer,
-                            ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Expires in ${code.expiresInSeconds ~/ 60} minutes',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                    ),
-                  ],
-                );
-              },
-              loading: () => const Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('Generating code...'),
-                ],
-              ),
-              error: (e, s) => const Text('Error generating invite code'),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Close'),
-              ),
-            ],
-          );
-        },
-      ),
+      builder: (context) => _InviteCodeDialog(),
     );
   }
 
@@ -1153,5 +1089,303 @@ class _SecurityKeyTile extends StatelessWidget {
     if (diff.inDays == 1) return 'Yesterday';
     if (diff.inDays < 7) return '${diff.inDays} days ago';
     return '${date.day}/${date.month}/${date.year}';
+  }
+}
+
+/// Invite Code Dialog with real-time countdown and auto-refresh
+class _InviteCodeDialog extends ConsumerStatefulWidget {
+  @override
+  ConsumerState<_InviteCodeDialog> createState() => _InviteCodeDialogState();
+}
+
+class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
+  Timer? _countdownTimer;
+  int _remainingSeconds = 0;
+  bool _isExpired = false;
+
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startCountdown(int seconds) {
+    _countdownTimer?.cancel();
+    _remainingSeconds = seconds;
+    _isExpired = false;
+
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        setState(() {
+          _remainingSeconds--;
+          if (_remainingSeconds <= 0) {
+            _isExpired = true;
+            timer.cancel();
+            // Auto-refresh when expired
+            ref.invalidate(inviteCodeProvider);
+          }
+        });
+      } else {
+        timer.cancel();
+      }
+    });
+  }
+
+  String _formatCountdown(int seconds) {
+    final minutes = seconds ~/ 60;
+    final secs = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final inviteCode = ref.watch(inviteCodeProvider);
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    return AlertDialog(
+      icon: Container(
+        width: 64,
+        height: 64,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [colorScheme.primary, colorScheme.tertiary],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+              color: colorScheme.primary.withValues(alpha: 0.3),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: const Icon(Icons.card_giftcard_rounded,
+            size: 32, color: Colors.white),
+      ).animate().scale(
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasized,
+          ),
+      title: const Text('Invite Code'),
+      content: inviteCode.when(
+        data: (code) {
+          if (code == null) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.error_outline_rounded,
+                    size: 48, color: colorScheme.error),
+                const SizedBox(height: 12),
+                const Text('Failed to generate invite code'),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: () => ref.invalidate(inviteCodeProvider),
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Retry'),
+                ),
+              ],
+            );
+          }
+
+          // Start countdown if not already started or if code changed
+          if (_remainingSeconds == 0 || _isExpired) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                _startCountdown(code.expiresInSeconds);
+              }
+            });
+          }
+
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Share this code with new users:',
+                style: textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ).animate().fadeIn(
+                  duration: M3Durations.medium2,
+                  curve: M3Curves.emphasizedDecelerate),
+              const SizedBox(height: 20),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      colorScheme.primaryContainer,
+                      colorScheme.primaryContainer.withValues(alpha: 0.7),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: colorScheme.primary.withValues(alpha: 0.15),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: SelectableText(
+                  code.code,
+                  style: textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 4,
+                    color: colorScheme.onPrimaryContainer,
+                  ),
+                ),
+              )
+                  .animate()
+                  .fadeIn(
+                      delay: 100.ms,
+                      duration: M3Durations.medium2,
+                      curve: M3Curves.emphasizedDecelerate)
+                  .scale(
+                      begin: const Offset(0.95, 0.95),
+                      curve: M3Curves.emphasized),
+              const SizedBox(height: 20),
+              // Countdown timer with progress indicator
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest
+                      .withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          _remainingSeconds <= 60
+                              ? Icons.timer_off_rounded
+                              : Icons.timer_rounded,
+                          size: 20,
+                          color: _remainingSeconds <= 60
+                              ? colorScheme.error
+                              : colorScheme.primary,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Expires in',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        TweenAnimationBuilder<double>(
+                          tween: Tween(begin: 0, end: 1),
+                          duration: M3Durations.medium2,
+                          builder: (context, value, child) {
+                            return Text(
+                              _formatCountdown(_remainingSeconds),
+                              style: textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                fontFamily: 'monospace',
+                                color: _remainingSeconds <= 60
+                                    ? colorScheme.error
+                                    : colorScheme.primary,
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    TweenAnimationBuilder<double>(
+                      tween: Tween(
+                        begin: 1.0,
+                        end: code.expiresInSeconds > 0
+                            ? _remainingSeconds / code.expiresInSeconds
+                            : 0.0,
+                      ),
+                      duration: const Duration(seconds: 1),
+                      curve: Curves.linear,
+                      builder: (context, value, child) {
+                        return ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                            value: value.clamp(0.0, 1.0),
+                            minHeight: 6,
+                            backgroundColor:
+                                colorScheme.surfaceContainerHighest,
+                            valueColor: AlwaysStoppedAnimation(
+                              _remainingSeconds <= 60
+                                  ? colorScheme.error
+                                  : colorScheme.primary,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    if (_remainingSeconds <= 60 && _remainingSeconds > 0) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Code will refresh automatically',
+                        style: textTheme.labelSmall?.copyWith(
+                          color: colorScheme.error,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ).animate().fadeIn(
+                  delay: 200.ms,
+                  duration: M3Durations.medium2,
+                  curve: M3Curves.emphasizedDecelerate),
+            ],
+          );
+        },
+        loading: () => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 56,
+              height: 56,
+              child: CircularProgressIndicator(
+                strokeWidth: 4,
+                color: colorScheme.primary,
+              ),
+            ).animate().scale(
+                duration: M3Durations.medium2, curve: M3Curves.emphasized),
+            const SizedBox(height: 20),
+            Text(
+              'Generating code...',
+              style: textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ).animate().fadeIn(delay: 100.ms, duration: M3Durations.medium2),
+          ],
+        ),
+        error: (e, s) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline_rounded,
+                size: 48, color: colorScheme.error),
+            const SizedBox(height: 12),
+            const Text('Error generating invite code'),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: () => ref.invalidate(inviteCodeProvider),
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+      ],
+    );
   }
 }

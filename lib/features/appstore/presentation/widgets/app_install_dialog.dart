@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
+import '../../../../core/theme/app_theme.dart';
 
 /// Port configuration for app installation
 class _PortConfig {
@@ -48,11 +50,7 @@ class _EnvConfig {
   String value;
   bool required;
 
-  _EnvConfig({
-    required this.key,
-    this.value = '',
-    this.required = false,
-  });
+  _EnvConfig({required this.key, this.value = '', this.required = false});
 
   EnvVar toEnvVar() => EnvVar(key: key, value: value, required: required);
 }
@@ -83,18 +81,22 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
   void initState() {
     super.initState();
     _ports = widget.app.defaultPorts
-        .map((p) => _PortConfig(
-              containerPort: p.containerPort,
-              hostPort: p.hostPort,
-              protocol: p.protocol,
-            ))
+        .map(
+          (p) => _PortConfig(
+            containerPort: p.containerPort,
+            hostPort: p.hostPort,
+            protocol: p.protocol,
+          ),
+        )
         .toList();
     _volumes = widget.app.defaultVolumes
-        .map((v) => _VolumeConfig(
-              containerPath: v.containerPath,
-              hostPath: v.hostPath,
-              mode: v.mode,
-            ))
+        .map(
+          (v) => _VolumeConfig(
+            containerPath: v.containerPath,
+            hostPath: v.hostPath,
+            mode: v.mode,
+          ),
+        )
         .toList();
     _envVars = widget.app.requiredEnv
         .map((e) => _EnvConfig(key: e, value: '', required: true))
@@ -105,20 +107,30 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final screenHeight = MediaQuery.of(context).size.height;
+    final screenWidth = MediaQuery.of(context).size.width;
 
     return Dialog(
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: screenWidth > 600 ? screenWidth * 0.15 : 16,
+        vertical: 24,
+      ),
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 500, maxHeight: 700),
+        constraints: BoxConstraints(
+          maxWidth: 520,
+          maxHeight: screenHeight * 0.85,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Header
+            // Header with smooth animation
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 color: colorScheme.primaryContainer.withValues(alpha: 0.3),
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(28)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(28),
+                ),
               ),
               child: Row(
                 children: [
@@ -133,6 +145,8 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
                           style: textTheme.titleLarge?.copyWith(
                             fontWeight: FontWeight.bold,
                           ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 4),
                         Text(
@@ -141,13 +155,26 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
                             color: colorScheme.onSurfaceVariant,
                             fontFamily: 'monospace',
                           ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
                   ),
+                  // Close button
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close_rounded),
+                    style: IconButton.styleFrom(
+                      backgroundColor: colorScheme.surfaceContainerHighest,
+                    ),
+                  ),
                 ],
               ),
-            ),
+            ).animate().fadeIn(
+                  duration: M3Durations.medium2,
+                  curve: M3Curves.emphasizedDecelerate,
+                ),
 
             // Content
             Flexible(
@@ -158,8 +185,15 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
 
             // Actions
             if (!_isInstalling)
-              Padding(
+              Container(
                 padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  border: Border(
+                    top: BorderSide(
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+                    ),
+                  ),
+                ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
@@ -175,7 +209,11 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
                     ),
                   ],
                 ),
-              ),
+              ).animate().fadeIn(
+                    delay: 100.ms,
+                    duration: M3Durations.medium2,
+                    curve: M3Curves.emphasizedDecelerate,
+                  ),
           ],
         ),
       ),
@@ -189,7 +227,9 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Description
-          Text(widget.app.description),
+          Text(widget.app.description).animate().fadeIn(
+              duration: M3Durations.medium2,
+              curve: M3Curves.emphasizedDecelerate),
           const SizedBox(height: 20),
 
           // Ports section
@@ -198,9 +238,18 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
             textTheme,
             Icons.lan_rounded,
             'Port Mappings',
-          ),
+          ).animate().fadeIn(
+              delay: 50.ms,
+              duration: M3Durations.medium2,
+              curve: M3Curves.emphasizedDecelerate),
           const SizedBox(height: 8),
-          ..._ports.asMap().entries.map((entry) => _buildPortRow(entry.key)),
+          ..._ports.asMap().entries.map((entry) => _buildPortRow(entry.key)
+              .animate()
+              .fadeIn(
+                  delay: (80 + entry.key * 30).ms,
+                  duration: M3Durations.medium2,
+                  curve: M3Curves.emphasizedDecelerate)
+              .slideX(begin: -0.02, curve: M3Curves.emphasized)),
           TextButton.icon(
             onPressed: _addPort,
             icon: const Icon(Icons.add_rounded, size: 18),
@@ -214,12 +263,20 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
             textTheme,
             Icons.folder_rounded,
             'Volume Mappings',
-          ),
+          ).animate().fadeIn(
+              delay: 150.ms,
+              duration: M3Durations.medium2,
+              curve: M3Curves.emphasizedDecelerate),
           const SizedBox(height: 8),
-          ..._volumes
-              .asMap()
-              .entries
-              .map((entry) => _buildVolumeRow(entry.key)),
+          ..._volumes.asMap().entries.map(
+                (entry) => _buildVolumeRow(entry.key)
+                    .animate()
+                    .fadeIn(
+                        delay: (180 + entry.key * 30).ms,
+                        duration: M3Durations.medium2,
+                        curve: M3Curves.emphasizedDecelerate)
+                    .slideX(begin: -0.02, curve: M3Curves.emphasized),
+              ),
           TextButton.icon(
             onPressed: _addVolume,
             icon: const Icon(Icons.add_rounded, size: 18),
@@ -234,9 +291,18 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
               textTheme,
               Icons.settings_rounded,
               'Environment Variables',
-            ),
+            ).animate().fadeIn(
+                delay: 250.ms,
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasizedDecelerate),
             const SizedBox(height: 8),
-            ..._envVars.asMap().entries.map((entry) => _buildEnvRow(entry.key)),
+            ..._envVars.asMap().entries.map((entry) => _buildEnvRow(entry.key)
+                .animate()
+                .fadeIn(
+                    delay: (280 + entry.key * 30).ms,
+                    duration: M3Durations.medium2,
+                    curve: M3Curves.emphasizedDecelerate)
+                .slideX(begin: -0.02, curve: M3Curves.emphasized)),
             const SizedBox(height: 16),
           ],
 
@@ -246,18 +312,31 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
             textTheme,
             Icons.memory_rounded,
             'Resource Limits',
-          ),
+          ).animate().fadeIn(
+              delay: 350.ms,
+              duration: M3Durations.medium2,
+              curve: M3Curves.emphasizedDecelerate),
           const SizedBox(height: 8),
-          _buildResourceLimits(colorScheme),
+          _buildResourceLimits(colorScheme).animate().fadeIn(
+              delay: 380.ms,
+              duration: M3Durations.medium2,
+              curve: M3Curves.emphasizedDecelerate),
           const SizedBox(height: 16),
 
           // Auto start option
-          SwitchListTile(
-            title: const Text('Auto Start'),
-            subtitle: const Text('Start container after installation'),
-            value: _autoStart,
-            onChanged: (value) => setState(() => _autoStart = value),
-          ),
+          Card(
+            elevation: 0,
+            color: colorScheme.surfaceContainerLow,
+            child: SwitchListTile(
+              title: const Text('Auto Start'),
+              subtitle: const Text('Start container after installation'),
+              value: _autoStart,
+              onChanged: (value) => setState(() => _autoStart = value),
+            ),
+          ).animate().fadeIn(
+              delay: 420.ms,
+              duration: M3Durations.medium2,
+              curve: M3Curves.emphasizedDecelerate),
         ],
       ),
     );
@@ -286,116 +365,167 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
 
   Widget _buildPortRow(int index) {
     final port = _ports[index];
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextFormField(
-              initialValue: port.hostPort.toString(),
-              decoration: const InputDecoration(
-                labelText: 'Host Port',
-                isDense: true,
-              ),
-              keyboardType: TextInputType.number,
-              onChanged: (value) {
-                port.hostPort = int.tryParse(value) ?? port.hostPort;
-              },
-            ),
-          ),
-          const SizedBox(width: 8),
-          const Icon(Icons.arrow_forward_rounded, size: 16),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextFormField(
-              initialValue: port.containerPort.toString(),
-              decoration: const InputDecoration(
-                labelText: 'Container Port',
-                isDense: true,
-              ),
-              keyboardType: TextInputType.number,
-              onChanged: (value) {
-                port.containerPort = int.tryParse(value) ?? port.containerPort;
-              },
-            ),
-          ),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 70,
-            child: DropdownButtonFormField<String>(
-              initialValue: port.protocol,
-              decoration: const InputDecoration(isDense: true),
-              items: const [
-                DropdownMenuItem(value: 'tcp', child: Text('TCP')),
-                DropdownMenuItem(value: 'udp', child: Text('UDP')),
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    initialValue: port.hostPort.toString(),
+                    decoration: const InputDecoration(
+                      labelText: 'Host',
+                      isDense: true,
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (value) {
+                      port.hostPort = int.tryParse(value) ?? port.hostPort;
+                    },
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Icon(Icons.arrow_forward_rounded,
+                      size: 16, color: colorScheme.primary),
+                ),
+                Expanded(
+                  child: TextFormField(
+                    initialValue: port.containerPort.toString(),
+                    decoration: const InputDecoration(
+                      labelText: 'Container',
+                      isDense: true,
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    ),
+                    keyboardType: TextInputType.number,
+                    onChanged: (value) {
+                      port.containerPort =
+                          int.tryParse(value) ?? port.containerPort;
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 72,
+                  child: DropdownButtonFormField<String>(
+                    initialValue: port.protocol,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'tcp', child: Text('TCP')),
+                      DropdownMenuItem(value: 'udp', child: Text('UDP')),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => port.protocol = value);
+                      }
+                    },
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(Icons.delete_rounded,
+                      size: 18, color: colorScheme.error),
+                  onPressed: () => setState(() => _ports.removeAt(index)),
+                  visualDensity: VisualDensity.compact,
+                ),
               ],
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() => port.protocol = value);
-                }
-              },
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_rounded, size: 18),
-            onPressed: () => setState(() => _ports.removeAt(index)),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildVolumeRow(int index) {
     final volume = _volumes[index];
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextFormField(
-              initialValue: volume.hostPath,
-              decoration: const InputDecoration(
-                labelText: 'Host Path',
-                isDense: true,
-              ),
-              onChanged: (value) => volume.hostPath = value,
-            ),
-          ),
-          const SizedBox(width: 8),
-          const Icon(Icons.arrow_forward_rounded, size: 16),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextFormField(
-              initialValue: volume.containerPath,
-              decoration: const InputDecoration(
-                labelText: 'Container Path',
-                isDense: true,
-              ),
-              onChanged: (value) => volume.containerPath = value,
-            ),
-          ),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 60,
-            child: DropdownButtonFormField<String>(
-              initialValue: volume.mode,
-              decoration: const InputDecoration(isDense: true),
-              items: const [
-                DropdownMenuItem(value: 'rw', child: Text('RW')),
-                DropdownMenuItem(value: 'ro', child: Text('RO')),
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    initialValue: volume.hostPath,
+                    decoration: const InputDecoration(
+                      labelText: 'Host Path',
+                      isDense: true,
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    ),
+                    onChanged: (value) => volume.hostPath = value,
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(Icons.delete_rounded,
+                      size: 18, color: colorScheme.error),
+                  onPressed: () => setState(() => _volumes.removeAt(index)),
+                  visualDensity: VisualDensity.compact,
+                ),
               ],
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() => volume.mode = value);
-                }
-              },
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_rounded, size: 18),
-            onPressed: () => setState(() => _volumes.removeAt(index)),
-          ),
-        ],
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Icon(Icons.arrow_downward_rounded,
+                    size: 14, color: colorScheme.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextFormField(
+                    initialValue: volume.containerPath,
+                    decoration: const InputDecoration(
+                      labelText: 'Container Path',
+                      isDense: true,
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    ),
+                    onChanged: (value) => volume.containerPath = value,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 64,
+                  child: DropdownButtonFormField<String>(
+                    initialValue: volume.mode,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'rw', child: Text('RW')),
+                      DropdownMenuItem(value: 'ro', child: Text('RO')),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => volume.mode = value);
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -575,10 +705,12 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
 
   void _addVolume() {
     setState(() {
-      _volumes.add(_VolumeConfig(
-        containerPath: '/data',
-        hostPath: '/opt/rockzero/data/${widget.app.name}',
-      ));
+      _volumes.add(
+        _VolumeConfig(
+          containerPath: '/data',
+          hostPath: '/opt/rockzero/data/${widget.app.name}',
+        ),
+      );
     });
   }
 
@@ -588,7 +720,8 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
       if (env.required && env.value.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('Please fill in required variable: ${env.key}')),
+            content: Text('Please fill in required variable: ${env.key}'),
+          ),
         );
         return;
       }
@@ -691,11 +824,7 @@ class _AppIcon extends StatelessWidget {
           end: Alignment.bottomRight,
         ),
       ),
-      child: Icon(
-        Icons.apps_rounded,
-        size: size * 0.5,
-        color: Colors.white,
-      ),
+      child: Icon(Icons.apps_rounded, size: size * 0.5, color: Colors.white),
     );
   }
 }

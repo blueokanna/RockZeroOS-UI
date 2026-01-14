@@ -41,9 +41,8 @@ final totalStorageInfoProvider = FutureProvider.autoDispose<TotalStorageInfo?>((
       availableSpace += disk.availableSpace;
     }
 
-    final usagePercentage = totalSpace > 0
-        ? (usedSpace / totalSpace) * 100
-        : 0.0;
+    final usagePercentage =
+        totalSpace > 0 ? (usedSpace / totalSpace) * 100 : 0.0;
 
     return TotalStorageInfo(
       totalSpace: totalSpace,
@@ -164,8 +163,8 @@ class NetworkSpeedNotifier extends Notifier<NetworkInfo?> {
 
 final networkSpeedProvider =
     NotifierProvider<NetworkSpeedNotifier, NetworkInfo?>(
-      NetworkSpeedNotifier.new,
-    );
+  NetworkSpeedNotifier.new,
+);
 
 class DashboardPage extends ConsumerStatefulWidget {
   const DashboardPage({super.key});
@@ -270,40 +269,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                   const Text('Dashboard'),
                 ],
               ),
-              actions: [
-                IconButton(
-                  icon: const Icon(Icons.refresh_rounded),
-                  onPressed: () async {
-                    ref.invalidate(hardwareInfoProvider);
-                    ref.invalidate(totalStorageInfoProvider);
-                    try {
-                      final api = ref.read(apiServiceProvider);
-                      final hardware = await api.getHardwareInfo();
-                      final interfaces = hardware.networkInterfaces ?? [];
-                      final netInfo = NetworkInfo(
-                        interfaces: interfaces,
-                        totalRxBytes: interfaces.fold<int>(
-                          0,
-                          (sum, i) => sum + i.rxBytes,
-                        ),
-                        totalTxBytes: interfaces.fold<int>(
-                          0,
-                          (sum, i) => sum + i.txBytes,
-                        ),
-                      );
-                      ref
-                          .read(networkSpeedProvider.notifier)
-                          .updateFromHardware(netInfo);
-                    } catch (_) {}
-                  },
-                  tooltip: 'Refresh',
-                ),
-                IconButton(
-                  icon: const Icon(Icons.notifications_rounded),
-                  onPressed: () {},
-                  tooltip: 'Notifications',
-                ),
-              ],
+              // Removed refresh and notification buttons - auto-refresh is enabled
             ),
 
             // Content

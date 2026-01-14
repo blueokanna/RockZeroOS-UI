@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/models/api_models.dart';
@@ -13,6 +14,30 @@ import '../../../../core/services/biometric_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import 'media_player_page.dart';
 import 'image_viewer_page.dart';
+
+// View mode preference provider (persisted)
+class FilesViewModeNotifier extends Notifier<bool> {
+  @override
+  bool build() {
+    final box = Hive.box('settings');
+    // Default to false (ListView) - user preference will be saved
+    return box.get('filesGridView', defaultValue: false);
+  }
+
+  void setGridView(bool isGrid) {
+    state = isGrid;
+    final box = Hive.box('settings');
+    box.put('filesGridView', isGrid);
+  }
+
+  void toggle() {
+    setGridView(!state);
+  }
+}
+
+final filesViewModeProvider = NotifierProvider<FilesViewModeNotifier, bool>(
+  FilesViewModeNotifier.new,
+);
 
 // Current path notifier for Riverpod 3.x
 class CurrentPathNotifier extends Notifier<String> {
@@ -74,7 +99,6 @@ class FilesPage extends ConsumerStatefulWidget {
 
 class _FilesPageState extends ConsumerState<FilesPage>
     with SingleTickerProviderStateMixin {
-  bool _isGridView = true;
   String _sortBy = 'name';
   bool _sortAsc = true;
   final Set<String> _selectedFiles = {};
@@ -84,6 +108,13 @@ class _FilesPageState extends ConsumerState<FilesPage>
   late AnimationController _fabAnimationController;
   final ScrollController _scrollController = ScrollController();
   bool _showFab = true;
+
+  // Clipboard state for copy/paste
+  List<FileEntry> _clipboardFiles = [];
+  bool _isCutOperation = false;
+
+  // Use provider for grid view state (persisted)
+  bool get _isGridView => ref.watch(filesViewModeProvider);
 
   @override
   void initState() {
@@ -110,6 +141,44 @@ class _FilesPageState extends ConsumerState<FilesPage>
     }
   }
 
+  /// Handle back gesture - go to parent directory or storage view
+  void _handleBackNavigation() {
+    final currentPath = ref.read(currentPathProvider);
+
+    if (_showDisks) {
+      // Already at root storage view, let system handle back
+      return;
+    }
+
+    if (currentPath.isEmpty) {
+      // At root of files but not showing disks, show disks
+      setState(() => _showDisks = true);
+      return;
+    }
+
+    // Navigate to parent directory
+    final parts = currentPath.split('/').where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) {
+      // At root, show disk view
+      ref.read(currentPathProvider.notifier).setPath('');
+      setState(() => _showDisks = true);
+    } else if (parts.length == 1) {
+      // One level deep, go to root
+      ref.read(currentPathProvider.notifier).setPath('/');
+    } else {
+      // Go to parent
+      final parentPath = '/${parts.sublist(0, parts.length - 1).join('/')}';
+      ref.read(currentPathProvider.notifier).setPath(parentPath);
+    }
+  }
+
+  /// Check if we can pop (go back)
+  bool _canPop() {
+    final currentPath = ref.read(currentPathProvider);
+    // Only allow system back if at root storage view
+    return _showDisks && currentPath.isEmpty;
+  }
+
   @override
   void dispose() {
     _fabAnimationController.dispose();
@@ -126,46 +195,54 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
     final showDiskView = _showDisks && currentPath.isEmpty;
 
-    return Scaffold(
-      body: CustomScrollView(
-        controller: _scrollController,
-        slivers: [
-          _buildAppBar(showDiskView, currentPath),
-          if (!showDiskView)
-            SliverToBoxAdapter(child: _buildBreadcrumb(currentPath)),
-          if (_isUploading) SliverToBoxAdapter(child: _buildUploadProgress()),
-          if (showDiskView)
-            disks.when(
-              data: (diskList) => _buildDiskGrid(diskList),
-              loading: () => _buildLoadingState(),
-              error: (e, s) => _buildErrorState(e.toString()),
-            )
-          else
-            listing.when(
-              data: (data) {
-                if (data == null) {
-                  return _buildErrorState(
-                    errorMessage ?? 'Failed to load files',
-                  );
-                }
-                return _buildFileContent(data);
-              },
-              loading: () => _buildLoadingState(),
-              error: (e, s) => _buildErrorState(e.toString()),
-            ),
-        ],
-      ),
-      floatingActionButton: showDiskView
-          ? null
-          : AnimatedSlide(
-              duration: M3Durations.medium2,
-              offset: _showFab ? Offset.zero : const Offset(0, 2),
-              child: AnimatedOpacity(
-                duration: M3Durations.medium2,
-                opacity: _showFab ? 1.0 : 0.0,
-                child: _buildFAB(),
+    return PopScope(
+      canPop: _canPop(),
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) {
+          _handleBackNavigation();
+        }
+      },
+      child: Scaffold(
+        body: CustomScrollView(
+          controller: _scrollController,
+          slivers: [
+            _buildAppBar(showDiskView, currentPath),
+            if (!showDiskView)
+              SliverToBoxAdapter(child: _buildBreadcrumb(currentPath)),
+            if (_isUploading) SliverToBoxAdapter(child: _buildUploadProgress()),
+            if (showDiskView)
+              disks.when(
+                data: (diskList) => _buildDiskGrid(diskList),
+                loading: () => _buildLoadingState(),
+                error: (e, s) => _buildErrorState(e.toString()),
+              )
+            else
+              listing.when(
+                data: (data) {
+                  if (data == null) {
+                    return _buildErrorState(
+                      errorMessage ?? 'Failed to load files',
+                    );
+                  }
+                  return _buildFileContent(data);
+                },
+                loading: () => _buildLoadingState(),
+                error: (e, s) => _buildErrorState(e.toString()),
               ),
-            ),
+          ],
+        ),
+        floatingActionButton: showDiskView
+            ? null
+            : AnimatedSlide(
+                duration: M3Durations.medium2,
+                offset: _showFab ? Offset.zero : const Offset(0, 2),
+                child: AnimatedOpacity(
+                  duration: M3Durations.medium2,
+                  opacity: _showFab ? 1.0 : 0.0,
+                  child: _buildFAB(),
+                ),
+              ),
+      ),
     );
   }
 
@@ -208,7 +285,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
                 key: ValueKey(_isGridView),
               ),
             ),
-            onPressed: () => setState(() => _isGridView = !_isGridView),
+            onPressed: () => ref.read(filesViewModeProvider.notifier).toggle(),
             tooltip: _isGridView ? 'List view' : 'Grid view',
           ),
           PopupMenuButton<String>(
@@ -708,28 +785,68 @@ class _FilesPageState extends ConsumerState<FilesPage>
   Widget _buildLoadingState() {
     final colorScheme = Theme.of(context).colorScheme;
 
-    return SliverFillRemaining(
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                color: colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(20),
+    // Show skeleton loading animation with smooth non-linear animations
+    return SliverPadding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 100),
+      sliver: _isGridView
+          ? SliverGrid(
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 110,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
+                childAspectRatio: 0.82,
               ),
-              child: const Center(child: CircularProgressIndicator()),
+              delegate: SliverChildBuilderDelegate(
+                (context, index) => _SkeletonGridItem(colorScheme: colorScheme)
+                    .animate(
+                      onPlay: (controller) => controller.repeat(reverse: true),
+                    )
+                    .shimmer(
+                      duration: const Duration(milliseconds: 1800),
+                      color: colorScheme.primary.withValues(alpha: 0.08),
+                      curve: Curves.easeInOutSine,
+                    )
+                    .animate()
+                    .fadeIn(
+                      delay: Duration(milliseconds: 50 * index),
+                      duration: M3Durations.medium4,
+                      curve: M3Curves.emphasizedDecelerate,
+                    )
+                    .scale(
+                      begin: const Offset(0.92, 0.92),
+                      delay: Duration(milliseconds: 50 * index),
+                      duration: M3Durations.medium4,
+                      curve: M3Curves.emphasized,
+                    ),
+                childCount: 12,
+              ),
+            )
+          : SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) => _SkeletonListItem(colorScheme: colorScheme)
+                    .animate(
+                      onPlay: (controller) => controller.repeat(reverse: true),
+                    )
+                    .shimmer(
+                      duration: const Duration(milliseconds: 1800),
+                      color: colorScheme.primary.withValues(alpha: 0.08),
+                      curve: Curves.easeInOutSine,
+                    )
+                    .animate()
+                    .fadeIn(
+                      delay: Duration(milliseconds: 40 * index),
+                      duration: M3Durations.medium4,
+                      curve: M3Curves.emphasizedDecelerate,
+                    )
+                    .slideX(
+                      begin: -0.03,
+                      delay: Duration(milliseconds: 40 * index),
+                      duration: M3Durations.medium4,
+                      curve: M3Curves.emphasized,
+                    ),
+                childCount: 8,
+              ),
             ),
-            const SizedBox(height: 20),
-            Text(
-              'Loading...',
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -1384,126 +1501,399 @@ class _FilesPageState extends ConsumerState<FilesPage>
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Handle bar
-            Container(
-              margin: const EdgeInsets.only(top: 12),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(2),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-            Container(
-              padding: const EdgeInsets.all(20),
-              child: Row(
-                children: [
-                  _getFileIcon(entry, 56),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          entry.name,
-                          style: textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
+              Container(
+                padding: const EdgeInsets.all(20),
+                child: Row(
+                  children: [
+                    _getFileIcon(entry, 56),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            entry.name,
+                            style: textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          _formatFileSize(entry.size),
-                          style: TextStyle(color: colorScheme.onSurfaceVariant),
-                        ),
-                      ],
+                          const SizedBox(height: 4),
+                          Text(
+                            _formatFileSize(entry.size),
+                            style:
+                                TextStyle(color: colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(height: 1, color: colorScheme.outlineVariant),
+              if (isImage || isVideo || isAudio)
+                ListTile(
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      isImage
+                          ? Icons.image_rounded
+                          : isVideo
+                              ? Icons.play_circle_rounded
+                              : Icons.audiotrack_rounded,
+                      color: colorScheme.onPrimaryContainer,
                     ),
                   ),
-                ],
-              ),
-            ),
-            Divider(height: 1, color: colorScheme.outlineVariant),
-            if (isImage || isVideo || isAudio)
+                  title: Text(isImage ? 'View' : 'Play'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _openMediaPreview(entry);
+                  },
+                ),
+              // Copy option
               ListTile(
                 leading: Container(
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: colorScheme.primaryContainer,
+                    color: Colors.teal.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(
-                    isImage
-                        ? Icons.image_rounded
-                        : isVideo
-                            ? Icons.play_circle_rounded
-                            : Icons.audiotrack_rounded,
-                    color: colorScheme.onPrimaryContainer,
-                  ),
+                  child: const Icon(Icons.copy_rounded, color: Colors.teal),
                 ),
-                title: Text(isImage ? 'View' : 'Play'),
+                title: const Text('Copy'),
                 onTap: () {
                   Navigator.pop(context);
-                  _openMediaPreview(entry);
+                  _copyFile(entry);
                 },
               ),
-            ListTile(
-              leading: Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: Colors.blue.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
+              // Cut option
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.indigo.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.content_cut_rounded,
+                      color: Colors.indigo),
                 ),
-                child: const Icon(Icons.download_rounded, color: Colors.blue),
+                title: const Text('Cut'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _cutFile(entry);
+                },
               ),
-              title: const Text('Download'),
-              onTap: () {
-                Navigator.pop(context);
-                _downloadFile(entry);
-              },
-            ),
-            ListTile(
-              leading: Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: Colors.orange.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.download_rounded, color: Colors.blue),
                 ),
-                child: const Icon(Icons.edit_rounded, color: Colors.orange),
+                title: const Text('Download'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _downloadFile(entry);
+                },
               ),
-              title: const Text('Rename'),
-              onTap: () {
-                Navigator.pop(context);
-                _showRenameDialog(entry);
-              },
-            ),
-            ListTile(
-              leading: Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: colorScheme.errorContainer,
-                  borderRadius: BorderRadius.circular(10),
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.edit_rounded, color: Colors.orange),
                 ),
-                child: Icon(Icons.delete_rounded, color: colorScheme.error),
+                title: const Text('Rename'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showRenameDialog(entry);
+                },
               ),
-              title: Text('Delete', style: TextStyle(color: colorScheme.error)),
-              onTap: () {
-                Navigator.pop(context);
-                _deleteFile(entry);
-              },
-            ),
-            const SizedBox(height: 12),
-          ],
+              // Details option
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.purple.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.info_outline_rounded,
+                      color: Colors.purple),
+                ),
+                title: const Text('Details'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showFileDetails(entry);
+                },
+              ),
+              ListTile(
+                leading: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: colorScheme.errorContainer,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(Icons.delete_rounded, color: colorScheme.error),
+                ),
+                title:
+                    Text('Delete', style: TextStyle(color: colorScheme.error)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _deleteFile(entry);
+                },
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  /// Copy file to clipboard
+  void _copyFile(FileEntry entry) {
+    setState(() {
+      _clipboardFiles = [entry];
+      _isCutOperation = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.copy_rounded, color: Colors.white, size: 20),
+            const SizedBox(width: 12),
+            Expanded(child: Text('"${entry.name}" copied to clipboard')),
+          ],
+        ),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        action: SnackBarAction(
+          label: 'Paste',
+          onPressed: _pasteFiles,
+        ),
+      ),
+    );
+  }
+
+  /// Cut file to clipboard
+  void _cutFile(FileEntry entry) {
+    setState(() {
+      _clipboardFiles = [entry];
+      _isCutOperation = true;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.content_cut_rounded,
+                color: Colors.white, size: 20),
+            const SizedBox(width: 12),
+            Expanded(child: Text('"${entry.name}" ready to move')),
+          ],
+        ),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        action: SnackBarAction(
+          label: 'Paste',
+          onPressed: _pasteFiles,
+        ),
+      ),
+    );
+  }
+
+  /// Paste files from clipboard
+  Future<void> _pasteFiles() async {
+    if (_clipboardFiles.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Clipboard is empty')),
+      );
+      return;
+    }
+
+    final currentPath = ref.read(currentPathProvider);
+    final api = ref.read(apiServiceProvider);
+    final colorScheme = Theme.of(context).colorScheme;
+
+    try {
+      for (final file in _clipboardFiles) {
+        final destPath =
+            currentPath.isEmpty ? '/${file.name}' : '$currentPath/${file.name}';
+
+        if (_isCutOperation) {
+          await api.moveFiles(source: file.path, destination: destPath);
+        } else {
+          await api.copyFiles(source: file.path, destination: destPath);
+        }
+      }
+
+      final wasCut = _isCutOperation;
+
+      // Clear clipboard after cut operation
+      if (_isCutOperation) {
+        setState(() {
+          _clipboardFiles = [];
+          _isCutOperation = false;
+        });
+      }
+
+      ref.invalidate(directoryListingProvider(currentPath));
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle_rounded, color: Colors.white),
+                const SizedBox(width: 12),
+                Text(wasCut
+                    ? 'Files moved successfully'
+                    : 'Files copied successfully'),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to paste: $e'),
+            backgroundColor: colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Show file/folder details dialog
+  void _showFileDetails(FileEntry entry) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: _getFileIcon(entry, 64),
+        title: Text(
+          entry.name,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _DetailRow(
+                icon: Icons.folder_rounded,
+                label: 'Type',
+                value: entry.isDirectory
+                    ? 'Folder'
+                    : (entry.mimeType ?? 'Unknown'),
+              ).animate().fadeIn(
+                  duration: M3Durations.medium2,
+                  curve: M3Curves.emphasizedDecelerate),
+              const SizedBox(height: 12),
+              _DetailRow(
+                icon: Icons.storage_rounded,
+                label: 'Size',
+                value: entry.isDirectory ? '-' : _formatFileSize(entry.size),
+              ).animate().fadeIn(
+                  delay: 50.ms,
+                  duration: M3Durations.medium2,
+                  curve: M3Curves.emphasizedDecelerate),
+              const SizedBox(height: 12),
+              _DetailRow(
+                icon: Icons.location_on_rounded,
+                label: 'Path',
+                value: entry.path,
+                isSelectable: true,
+              ).animate().fadeIn(
+                  delay: 100.ms,
+                  duration: M3Durations.medium2,
+                  curve: M3Curves.emphasizedDecelerate),
+              const SizedBox(height: 12),
+              _DetailRow(
+                icon: Icons.calendar_today_rounded,
+                label: 'Modified',
+                value: _formatTimestamp(entry.modified),
+              ).animate().fadeIn(
+                  delay: 150.ms,
+                  duration: M3Durations.medium2,
+                  curve: M3Curves.emphasizedDecelerate),
+              if (entry.permissions.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _DetailRow(
+                  icon: Icons.security_rounded,
+                  label: 'Permissions',
+                  value: entry.permissions,
+                ).animate().fadeIn(
+                    delay: 200.ms,
+                    duration: M3Durations.medium2,
+                    curve: M3Curves.emphasizedDecelerate),
+              ],
+            ],
+          ),
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Format Unix timestamp to readable date string
+  String _formatTimestamp(int timestamp) {
+    final dateTime = DateTime.fromMillisecondsSinceEpoch(timestamp * 1000);
+    return _formatDateTime(dateTime);
+  }
+
+  String _formatDateTime(DateTime dateTime) {
+    final now = DateTime.now();
+    final diff = now.difference(dateTime);
+
+    if (diff.inDays == 0) {
+      return 'Today ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+    } else if (diff.inDays == 1) {
+      return 'Yesterday ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+    } else {
+      return '${dateTime.day}/${dateTime.month}/${dateTime.year} ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+    }
   }
 
   void _openMediaPreview(FileEntry entry) {
@@ -2486,6 +2876,200 @@ class _Fido2AuthDialogState extends State<_Fido2AuthDialog> {
             child: const Text('Retry'),
           ),
       ],
+    );
+  }
+}
+
+/// Detail row widget for file details dialog
+class _DetailRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final bool isSelectable;
+
+  const _DetailRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.isSelectable = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: colorScheme.primaryContainer.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 18, color: colorScheme.primary),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: textTheme.labelSmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                isSelectable
+                    ? SelectableText(
+                        value,
+                        style: textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w500,
+                        ),
+                      )
+                    : Text(
+                        value,
+                        style: textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Skeleton loading item for grid view
+class _SkeletonGridItem extends StatelessWidget {
+  final ColorScheme colorScheme;
+
+  const _SkeletonGridItem({required this.colorScheme});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              width: 60,
+              height: 12,
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(6),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Container(
+              width: 40,
+              height: 8,
+              decoration: BoxDecoration(
+                color:
+                    colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Skeleton loading item for list view
+class _SkeletonListItem extends StatelessWidget {
+  final ColorScheme colorScheme;
+
+  const _SkeletonListItem({required this.colorScheme});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(7),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    width: 80,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(5),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 16),
+            Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                color:
+                    colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

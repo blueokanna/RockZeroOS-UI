@@ -4,6 +4,22 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/device_discovery_service.dart';
+import '../theme/app_theme.dart';
+
+/// Notifier to control bottom navigation bar visibility (for fullscreen video)
+class BottomNavVisibleNotifier extends Notifier<bool> {
+  @override
+  bool build() => true;
+
+  void show() => state = true;
+  void hide() => state = false;
+  void toggle() => state = !state;
+}
+
+final bottomNavVisibleProvider =
+    NotifierProvider<BottomNavVisibleNotifier, bool>(
+  BottomNavVisibleNotifier.new,
+);
 
 class ShellScaffold extends ConsumerStatefulWidget {
   final Widget child;
@@ -80,30 +96,36 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
     final isWideScreen = screenWidth >= 1200;
     final isMediumScreen = screenWidth >= 600 && screenWidth < 1200;
     final connectedDevice = ref.watch(connectedDeviceProvider);
+    final bottomNavVisible = ref.watch(bottomNavVisibleProvider);
 
     return Scaffold(
       body: Row(
         children: [
           // Navigation Rail for medium/wide screens
-          if (isMediumScreen || isWideScreen)
-            NavigationRail(
-              extended: isWideScreen,
-              selectedIndex: _selectedIndex,
-              onDestinationSelected: _onDestinationSelected,
-              leading: _buildNavLeading(isWideScreen, connectedDevice),
-              destinations: _destinations
-                  .map(
-                    (d) => NavigationRailDestination(
-                      icon: d.icon,
-                      selectedIcon: d.selectedIcon,
-                      label: Text(d.label),
-                    ),
-                  )
-                  .toList(),
-            ).animate().fadeIn(duration: 200.ms).slideX(begin: -0.1, end: 0),
+          if ((isMediumScreen || isWideScreen) && bottomNavVisible)
+            AnimatedSlide(
+              duration: M3Durations.medium2,
+              curve: M3Curves.emphasized,
+              offset: bottomNavVisible ? Offset.zero : const Offset(-1, 0),
+              child: NavigationRail(
+                extended: isWideScreen,
+                selectedIndex: _selectedIndex,
+                onDestinationSelected: _onDestinationSelected,
+                leading: _buildNavLeading(isWideScreen, connectedDevice),
+                destinations: _destinations
+                    .map(
+                      (d) => NavigationRailDestination(
+                        icon: d.icon,
+                        selectedIcon: d.selectedIcon,
+                        label: Text(d.label),
+                      ),
+                    )
+                    .toList(),
+              ).animate().fadeIn(duration: 200.ms).slideX(begin: -0.1, end: 0),
+            ),
 
           // Vertical divider
-          if (isMediumScreen || isWideScreen)
+          if ((isMediumScreen || isWideScreen) && bottomNavVisible)
             VerticalDivider(
               width: 1,
               thickness: 1,
@@ -115,13 +137,28 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
         ],
       ),
 
-      // Bottom Navigation for narrow screens
+      // Bottom Navigation for narrow screens - with animated visibility
       bottomNavigationBar: (!isMediumScreen && !isWideScreen)
-          ? NavigationBar(
-              selectedIndex: _selectedIndex,
-              onDestinationSelected: _onDestinationSelected,
-              destinations: _destinations,
-            ).animate().fadeIn(duration: 200.ms).slideY(begin: 0.1, end: 0)
+          ? AnimatedSlide(
+              duration: M3Durations.medium2,
+              curve: M3Curves.emphasized,
+              offset: bottomNavVisible ? Offset.zero : const Offset(0, 1),
+              child: AnimatedOpacity(
+                duration: M3Durations.medium2,
+                curve: M3Curves.emphasized,
+                opacity: bottomNavVisible ? 1.0 : 0.0,
+                child: bottomNavVisible
+                    ? NavigationBar(
+                        selectedIndex: _selectedIndex,
+                        onDestinationSelected: _onDestinationSelected,
+                        destinations: _destinations,
+                      )
+                        .animate()
+                        .fadeIn(duration: 200.ms)
+                        .slideY(begin: 0.1, end: 0)
+                    : const SizedBox.shrink(),
+              ),
+            )
           : null,
     );
   }
