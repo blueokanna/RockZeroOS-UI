@@ -693,18 +693,29 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 
   Widget _buildDiskGrid(List<DiskInfo> disks) {
-    // Filter out VFAT/FAT32 disks and /boot partition
+    // Filter out unwanted disks
     final filteredDisks = disks.where((disk) {
       final fs = disk.fileSystem.toUpperCase();
       final mountPoint = disk.mountPoint.toLowerCase();
+      final name = disk.name.toLowerCase();
 
-      // Skip VFAT/FAT formats
+      // Skip VFAT/FAT formats (usually boot partitions)
       if (fs == 'VFAT' || fs == 'FAT32' || fs == 'FAT16' || fs == 'FAT') {
         return false;
       }
 
       // Skip /boot partition
       if (mountPoint == '/boot' || mountPoint.startsWith('/boot/')) {
+        return false;
+      }
+
+      // Skip eMMC boot partitions (mmcblk*boot0, mmcblk*boot1, etc.)
+      if (name.contains('boot0') || name.contains('boot1')) {
+        return false;
+      }
+
+      // Skip eMMC RPMB partition
+      if (name.contains('rpmb')) {
         return false;
       }
 
@@ -2046,12 +2057,12 @@ class _FilesPageState extends ConsumerState<FilesPage>
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
+            onPressed: () => Navigator.of(dialogContext).pop(),
             child: const Text('Cancel'),
           ),
           FilledButton.icon(
             onPressed: () {
-              Navigator.pop(dialogContext);
+              Navigator.of(dialogContext).pop();
               _mountDisk(disk);
             },
             icon: const Icon(Icons.check_circle_rounded),
@@ -2064,13 +2075,16 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
   Future<void> _mountDisk(DiskInfo disk) async {
     final colorScheme = Theme.of(context).colorScheme;
-    final navigator = Navigator.of(context);
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
 
-    // Show loading indicator
+    // Store references before async operations
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    final rootNavigator = Navigator.of(context, rootNavigator: true);
+
+    // Show loading dialog
     showDialog(
       context: context,
       barrierDismissible: false,
+      useRootNavigator: true,
       builder: (dialogContext) => PopScope(
         canPop: false,
         child: AlertDialog(
@@ -2101,14 +2115,18 @@ class _FilesPageState extends ConsumerState<FilesPage>
       );
 
       // Wait a bit for the system to update
-      await Future.delayed(const Duration(milliseconds: 800));
+      await Future.delayed(const Duration(milliseconds: 500));
 
+      // Close loading dialog
       if (mounted) {
-        navigator.pop(); // Close loading dialog
+        rootNavigator.pop();
+      }
 
-        // Refresh disk list
-        ref.invalidate(diskInfoProvider);
+      // Refresh disk list
+      ref.invalidate(diskInfoProvider);
 
+      // Show success message
+      if (mounted) {
         scaffoldMessenger.showSnackBar(
           SnackBar(
             content: Row(
@@ -2129,9 +2147,13 @@ class _FilesPageState extends ConsumerState<FilesPage>
         );
       }
     } catch (e) {
+      // Close loading dialog
       if (mounted) {
-        navigator.pop(); // Close loading dialog
+        rootNavigator.pop();
+      }
 
+      // Show error message
+      if (mounted) {
         scaffoldMessenger.showSnackBar(
           SnackBar(
             content: Row(

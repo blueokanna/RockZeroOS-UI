@@ -32,11 +32,23 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
   double _downloadSpeed = 0;
   double _uploadSpeed = 0;
   int _ping = 0;
+  double _jitter = 0;
   String? _error;
   String? _authToken;
   String? _serverUrl;
 
+  // 测试进度
+  double _testProgress = 0;
+  String _testPhase = '';
+
   late AnimationController _pulseController;
+  late AnimationController _gaugeController;
+
+  // 测试配置 (参考 OpenSpeedTest)
+  static const int _pingTestCount = 20; // ping 测试次数
+  static const int _downloadTestDurationSec = 10; // 下载测试时长
+  static const int _uploadTestDurationSec = 10; // 上传测试时长
+  static const int _downloadChunkSizeMB = 25; // 每次下载块大小
 
   @override
   void initState() {
@@ -45,6 +57,10 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       vsync: this,
       duration: const Duration(milliseconds: 1000),
     )..repeat(reverse: true);
+    _gaugeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
     _loadConfig();
   }
 
@@ -61,6 +77,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
   @override
   void dispose() {
     _pulseController.dispose();
+    _gaugeController.dispose();
     super.dispose();
   }
 
@@ -82,19 +99,41 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       _downloadSpeed = 0;
       _uploadSpeed = 0;
       _ping = 0;
+      _jitter = 0;
       _error = null;
+      _testProgress = 0;
+      _testPhase = 'Initializing...';
     });
 
     try {
+      // Phase 1: Ping Test
+      setState(() {
+        _testPhase = 'Testing latency...';
+        _testProgress = 0;
+      });
       await _testPing();
 
-      setState(() => _state = SpeedTestState.testingDownload);
+      // Phase 2: Download Test
+      setState(() {
+        _state = SpeedTestState.testingDownload;
+        _testPhase = 'Testing download speed...';
+        _testProgress = 0;
+      });
       await _testDownload();
 
-      setState(() => _state = SpeedTestState.testingUpload);
+      // Phase 3: Upload Test
+      setState(() {
+        _state = SpeedTestState.testingUpload;
+        _testPhase = 'Testing upload speed...';
+        _testProgress = 0;
+      });
       await _testUpload();
 
-      setState(() => _state = SpeedTestState.completed);
+      setState(() {
+        _state = SpeedTestState.completed;
+        _testPhase = 'Test completed';
+        _testProgress = 1.0;
+      });
     } catch (e) {
       setState(() {
         _state = SpeedTestState.error;
@@ -103,158 +142,170 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     }
   }
 
+  /// Ping 测试 - 参考 OpenSpeedTest 的多次采样取平均
   Future<void> _testPing() async {
     if (_serverUrl == null) return;
 
-    // 测试6秒，每200ms采样一次，计算平均延迟
     final List<int> pings = [];
-    final testDuration = const Duration(seconds: 6);
-    final sampleInterval = const Duration(milliseconds: 200);
-    final startTime = DateTime.now();
+    final uri = Uri.parse('$_serverUrl/api/v1/speedtest/ping');
+    final headers = <String, String>{};
+    if (_authToken != null) {
+      headers['Authorization'] = 'Bearer $_authToken';
+    }
 
-    try {
-      final uri = Uri.parse('$_serverUrl/api/v1/health');
-      final headers = <String, String>{};
-      if (_authToken != null) {
-        headers['Authorization'] = 'Bearer $_authToken';
-      }
-
-      while (DateTime.now().difference(startTime) < testDuration) {
+    for (int i = 0; i < _pingTestCount; i++) {
+      try {
         final stopwatch = Stopwatch()..start();
-        try {
-          await http.get(uri, headers: headers);
-          stopwatch.stop();
+        final response = await http.get(uri, headers: headers);
+        stopwatch.stop();
+
+        if (response.statusCode == 200) {
           pings.add(stopwatch.elapsedMilliseconds);
 
-          // 实时更新平均延迟
-          final avgPing = pings.reduce((a, b) => a + b) ~/ pings.length;
-          setState(() => _ping = avgPing);
-        } catch (e) {
-          // 忽略单次失败
+          // 更新进度和实时延迟
+          if (mounted) {
+            final avgPing = pings.reduce((a, b) => a + b) ~/ pings.length;
+            setState(() {
+              _ping = avgPing;
+              _testProgress = (i + 1) / _pingTestCount;
+            });
+          }
         }
-
-        await Future.delayed(sampleInterval);
+      } catch (e) {
+        debugPrint('[SpeedTest] Ping error: $e');
       }
 
-      // 计算最终平均延迟
-      if (pings.isNotEmpty) {
-        final avgPing = pings.reduce((a, b) => a + b) ~/ pings.length;
-        setState(() => _ping = avgPing);
-      } else {
-        setState(() => _ping = -1);
+      // 短暂延迟避免请求过快
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+
+    // 计算最终结果
+    if (pings.isNotEmpty) {
+      final avgPing = pings.reduce((a, b) => a + b) ~/ pings.length;
+
+      // 计算抖动 (jitter) - 相邻延迟差的平均值
+      double jitterSum = 0;
+      for (int i = 1; i < pings.length; i++) {
+        jitterSum += (pings[i] - pings[i - 1]).abs();
       }
-    } catch (e) {
-      setState(() => _ping = -1);
+      final jitter = pings.length > 1 ? jitterSum / (pings.length - 1) : 0.0;
+
+      setState(() {
+        _ping = avgPing;
+        _jitter = jitter;
+      });
     }
   }
 
+  /// 下载测试 - 参考 OpenSpeedTest 的流式下载
   Future<void> _testDownload() async {
     if (_serverUrl == null) return;
 
     final client = http.Client();
     final List<double> speeds = [];
-    final testDuration = const Duration(seconds: 8);
-    final sampleInterval = const Duration(milliseconds: 200);
     final startTime = DateTime.now();
-    int totalBytes = 0;
-    final stopwatch = Stopwatch()..start();
+    final testDuration = Duration(seconds: _downloadTestDurationSec);
 
     try {
-      final uri = Uri.parse('$_serverUrl/api/v1/speedtest/download');
-      final request = http.Request('GET', uri);
-      if (_authToken != null) {
-        request.headers['Authorization'] = 'Bearer $_authToken';
-      }
+      while (DateTime.now().difference(startTime) < testDuration) {
+        final chunkStart = DateTime.now();
+        int bytesReceived = 0;
 
-      final response = await client.send(request);
-      DateTime lastSample = DateTime.now();
-      int bytesInInterval = 0;
-
-      await for (final chunk in response.stream) {
-        totalBytes += chunk.length;
-        bytesInInterval += chunk.length;
-
-        final now = DateTime.now();
-        final intervalElapsed = now.difference(lastSample);
-
-        // 每200ms采样一次速度
-        if (intervalElapsed >= sampleInterval) {
-          final intervalSeconds = intervalElapsed.inMilliseconds / 1000.0;
-          if (intervalSeconds > 0) {
-            final speedMbps =
-                (bytesInInterval * 8) / (intervalSeconds * 1000000);
-            speeds.add(speedMbps);
-
-            // 实时计算并显示平均速度
-            final avgSpeed = speeds.reduce((a, b) => a + b) / speeds.length;
-            setState(() {
-              _currentSpeed = avgSpeed;
-              _downloadSpeed = avgSpeed;
-            });
-          }
-
-          lastSample = now;
-          bytesInInterval = 0;
+        // 请求下载数据
+        final uri = Uri.parse(
+            '$_serverUrl/api/v1/speedtest/download?size=$_downloadChunkSizeMB');
+        final request = http.Request('GET', uri);
+        if (_authToken != null) {
+          request.headers['Authorization'] = 'Bearer $_authToken';
         }
 
-        // 测试8秒后停止
-        if (DateTime.now().difference(startTime) >= testDuration) break;
+        final response = await client.send(request);
+
+        // 流式读取数据
+        await for (final chunk in response.stream) {
+          bytesReceived += chunk.length;
+
+          // 每100ms更新一次速度
+          final elapsed = DateTime.now().difference(chunkStart);
+          if (elapsed.inMilliseconds >= 100) {
+            final speedMbps =
+                (bytesReceived * 8) / (elapsed.inMilliseconds / 1000) / 1000000;
+            speeds.add(speedMbps);
+
+            // 更新UI
+            if (mounted) {
+              // 使用移动平均计算当前速度
+              final recentSpeeds = speeds.length > 10
+                  ? speeds.sublist(speeds.length - 10)
+                  : speeds;
+              final avgSpeed =
+                  recentSpeeds.reduce((a, b) => a + b) / recentSpeeds.length;
+
+              final progress = DateTime.now().difference(startTime).inSeconds /
+                  _downloadTestDurationSec;
+
+              setState(() {
+                _currentSpeed = avgSpeed;
+                _downloadSpeed = avgSpeed;
+                _testProgress = progress.clamp(0.0, 1.0);
+              });
+            }
+          }
+
+          // 检查是否超时
+          if (DateTime.now().difference(startTime) >= testDuration) break;
+        }
       }
 
-      stopwatch.stop();
+      // 计算最终平均速度 (去掉最高和最低10%的异常值)
+      if (speeds.isNotEmpty) {
+        speeds.sort();
+        final trimCount = (speeds.length * 0.1).round();
+        final trimmedSpeeds = speeds.length > trimCount * 2
+            ? speeds.sublist(trimCount, speeds.length - trimCount)
+            : speeds;
 
-      // 计算最终平均速度
+        final avgSpeed =
+            trimmedSpeeds.reduce((a, b) => a + b) / trimmedSpeeds.length;
+        setState(() {
+          _downloadSpeed = avgSpeed;
+          _currentSpeed = avgSpeed;
+        });
+      }
+    } catch (e) {
+      debugPrint('[SpeedTest] Download error: $e');
+      // 使用已收集的数据计算速度
       if (speeds.isNotEmpty) {
         final avgSpeed = speeds.reduce((a, b) => a + b) / speeds.length;
         setState(() {
           _downloadSpeed = avgSpeed;
           _currentSpeed = avgSpeed;
         });
-      } else if (totalBytes > 0) {
-        final elapsed = stopwatch.elapsedMilliseconds / 1000;
-        if (elapsed > 0) {
-          final speedMbps = (totalBytes * 8) / (elapsed * 1000000);
-          setState(() {
-            _downloadSpeed = speedMbps;
-            _currentSpeed = speedMbps;
-          });
-        }
-      } else {
-        setState(() {
-          _downloadSpeed = _ping > 0 ? 100.0 / (_ping / 10) : 50.0;
-          _currentSpeed = _downloadSpeed;
-        });
       }
-    } catch (e) {
-      setState(() {
-        _downloadSpeed =
-            _ping > 0 ? math.min(1000.0, 100.0 / (_ping / 50)) : 50.0;
-        _currentSpeed = _downloadSpeed;
-      });
     } finally {
       client.close();
     }
   }
 
+  /// 上传测试 - 参考 OpenSpeedTest 的多次上传
   Future<void> _testUpload() async {
     if (_serverUrl == null) return;
 
     final client = http.Client();
     final List<double> speeds = [];
-    final testDuration = const Duration(seconds: 8);
-    final sampleInterval = const Duration(milliseconds: 200);
     final startTime = DateTime.now();
+    final testDuration = Duration(seconds: _uploadTestDurationSec);
+
+    // 创建测试数据 (1MB)
+    final testData = Uint8List(1024 * 1024);
+    final rng = math.Random();
+    for (int i = 0; i < testData.length; i++) {
+      testData[i] = rng.nextInt(256);
+    }
 
     try {
-      // 创建1MB测试数据
-      final testData = Uint8List(1024 * 1024);
-      for (int i = 0; i < testData.length; i++) {
-        testData[i] = i % 256;
-      }
-
-      // 持续上传8秒，每200ms计算一次速度
       while (DateTime.now().difference(startTime) < testDuration) {
-        final stopwatch = Stopwatch()..start();
+        final uploadStart = Stopwatch()..start();
 
         try {
           final uri = Uri.parse('$_serverUrl/api/v1/speedtest/upload');
@@ -265,58 +316,68 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
           request.files.add(http.MultipartFile.fromBytes(
             'file',
             testData,
-            filename: 'speedtest.bin',
+            filename: 'speedtest_${DateTime.now().millisecondsSinceEpoch}.bin',
           ));
 
           final response = await client.send(request);
           await response.stream.drain();
 
-          stopwatch.stop();
-          final elapsed = stopwatch.elapsedMilliseconds / 1000;
+          uploadStart.stop();
+          final elapsed = uploadStart.elapsedMilliseconds / 1000;
           if (elapsed > 0) {
             final speedMbps = (testData.length * 8) / (elapsed * 1000000);
             speeds.add(speedMbps);
 
-            // 实时计算并显示平均速度
-            final avgSpeed = speeds.reduce((a, b) => a + b) / speeds.length;
-            setState(() {
-              _uploadSpeed = avgSpeed;
-              _currentSpeed = avgSpeed;
-            });
+            // 更新UI
+            if (mounted) {
+              final recentSpeeds = speeds.length > 5
+                  ? speeds.sublist(speeds.length - 5)
+                  : speeds;
+              final avgSpeed =
+                  recentSpeeds.reduce((a, b) => a + b) / recentSpeeds.length;
+
+              final progress = DateTime.now().difference(startTime).inSeconds /
+                  _uploadTestDurationSec;
+
+              setState(() {
+                _uploadSpeed = avgSpeed;
+                _currentSpeed = avgSpeed;
+                _testProgress = progress.clamp(0.0, 1.0);
+              });
+            }
           }
         } catch (e) {
-          // 忽略单次失败
+          debugPrint('[SpeedTest] Single upload error: $e');
         }
 
-        // 等待到下一个采样间隔
-        final elapsed = DateTime.now().difference(startTime);
-        if (elapsed < testDuration) {
-          final waitTime = sampleInterval.inMilliseconds -
-              (elapsed.inMilliseconds % sampleInterval.inMilliseconds);
-          if (waitTime > 0) {
-            await Future.delayed(Duration(milliseconds: waitTime));
-          }
-        }
+        // 短暂延迟
+        await Future.delayed(const Duration(milliseconds: 50));
       }
 
       // 计算最终平均速度
+      if (speeds.isNotEmpty) {
+        speeds.sort();
+        final trimCount = (speeds.length * 0.1).round();
+        final trimmedSpeeds = speeds.length > trimCount * 2
+            ? speeds.sublist(trimCount, speeds.length - trimCount)
+            : speeds;
+
+        final avgSpeed =
+            trimmedSpeeds.reduce((a, b) => a + b) / trimmedSpeeds.length;
+        setState(() {
+          _uploadSpeed = avgSpeed;
+          _currentSpeed = avgSpeed;
+        });
+      }
+    } catch (e) {
+      debugPrint('[SpeedTest] Upload error: $e');
       if (speeds.isNotEmpty) {
         final avgSpeed = speeds.reduce((a, b) => a + b) / speeds.length;
         setState(() {
           _uploadSpeed = avgSpeed;
           _currentSpeed = avgSpeed;
         });
-      } else {
-        setState(() {
-          _uploadSpeed = _downloadSpeed * 0.3;
-          _currentSpeed = _uploadSpeed;
-        });
       }
-    } catch (e) {
-      setState(() {
-        _uploadSpeed = _downloadSpeed * 0.3;
-        _currentSpeed = _uploadSpeed;
-      });
     } finally {
       client.close();
     }
@@ -393,8 +454,15 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
             const SizedBox(height: 32),
 
             _buildSpeedGauge(colorScheme, textTheme),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
 
+            // 测试进度条
+            if (_state != SpeedTestState.idle &&
+                _state != SpeedTestState.completed &&
+                _state != SpeedTestState.error)
+              _buildProgressIndicator(colorScheme, textTheme),
+
+            const SizedBox(height: 8),
             _buildStatusText(colorScheme, textTheme),
             const SizedBox(height: 32),
 
@@ -435,20 +503,50 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     );
   }
 
+  Widget _buildProgressIndicator(ColorScheme colorScheme, TextTheme textTheme) {
+    return Column(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: _testProgress,
+            minHeight: 6,
+            backgroundColor: colorScheme.surfaceContainerHighest,
+            valueColor: AlwaysStoppedAnimation(colorScheme.primary),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          _testPhase,
+          style: textTheme.bodySmall?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildSpeedGauge(ColorScheme colorScheme, TextTheme textTheme) {
     final isActive = _state != SpeedTestState.idle &&
         _state != SpeedTestState.completed &&
         _state != SpeedTestState.error;
 
+    // 动态调整最大速度显示
+    final maxSpeed = _currentSpeed > 500
+        ? 1000.0
+        : _currentSpeed > 100
+            ? 500.0
+            : 200.0;
+
     return SizedBox(
-      width: 240,
-      height: 240,
+      width: 260,
+      height: 260,
       child: Stack(
         alignment: Alignment.center,
         children: [
           Container(
-            width: 220,
-            height: 220,
+            width: 240,
+            height: 240,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: colorScheme.surfaceContainerHighest,
@@ -462,9 +560,9 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
             ),
           ),
           CustomPaint(
-            size: const Size(200, 200),
+            size: const Size(220, 220),
             painter: _SpeedGaugePainter(
-              progress: (_currentSpeed / 500).clamp(0, 1),
+              progress: (_currentSpeed / maxSpeed).clamp(0, 1),
               color: _getSpeedColor(_currentSpeed),
               backgroundColor: colorScheme.surfaceContainerHigh,
             ),
@@ -474,8 +572,8 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
               animation: _pulseController,
               builder: (context, child) {
                 return Container(
-                  width: 140 + _pulseController.value * 15,
-                  height: 140 + _pulseController.value * 15,
+                  width: 150 + _pulseController.value * 15,
+                  height: 150 + _pulseController.value * 15,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     border: Border.all(
@@ -587,6 +685,15 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
           value: '$_ping ms',
           color: Colors.orange,
         ),
+        if (_jitter > 0) ...[
+          const SizedBox(height: 12),
+          _ResultRow(
+            icon: Icons.swap_vert_rounded,
+            label: 'Jitter',
+            value: '${_jitter.toStringAsFixed(1)} ms',
+            color: Colors.purple,
+          ),
+        ],
       ],
     );
   }

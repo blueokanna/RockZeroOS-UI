@@ -459,6 +459,64 @@ class ApiService {
     await _dio.post('/api/v1/disk/eject/$device');
   }
 
+  /// Initialize a new disk with partition table and filesystem
+  Future<Map<String, dynamic>> initializeDisk({
+    required String device,
+    required String fileSystem,
+    String? label,
+    String partitionTable = 'gpt',
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/disk/initialize',
+      data: {
+        'device': device,
+        'file_system': fileSystem,
+        if (label != null) 'label': label,
+        'partition_table': partitionTable,
+      },
+    );
+    return response.data;
+  }
+
+  /// Rename disk label
+  Future<Map<String, dynamic>> renameDisk({
+    required String device,
+    required String newLabel,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/disk/rename',
+      data: {
+        'device': device,
+        'new_label': newLabel,
+      },
+    );
+    return response.data;
+  }
+
+  /// Scan for new disks
+  Future<List<DiskDetail>> scanDisks() async {
+    final response = await _dio.post('/api/v1/disk/scan');
+    return (response.data as List).map((e) => DiskDetail.fromJson(e)).toList();
+  }
+
+  /// Get detailed disk information
+  Future<Map<String, dynamic>> getDiskDetails(String device) async {
+    final response = await _dio.get('/api/v1/disk/details/$device');
+    return response.data;
+  }
+
+  /// Get ZFS status and pools
+  Future<Map<String, dynamic>> getZfsStatus() async {
+    final response = await _dio.get('/api/v1/disk/zfs');
+    return response.data;
+  }
+
+  /// Get supported filesystems
+  Future<List<Map<String, dynamic>>> getSupportedFilesystems() async {
+    final response = await _dio.get('/api/v1/disk/filesystems');
+    return (response.data as List).cast<Map<String, dynamic>>();
+  }
+
   // ============ App Store API ============
 
   Future<List<AppStoreItem>> listStoreApps() async {
