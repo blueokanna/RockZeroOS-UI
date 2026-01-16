@@ -242,7 +242,7 @@ class _EnhancedMediaPlayerPageState
   // 多轨道支持
   int _selectedAudioTrack = 0;
   int _selectedSubtitleTrack = -1; // -1 表示关闭字幕
-  List<SubtitleTrackInfo> _externalSubtitles = [];
+  final List<SubtitleTrackInfo> _externalSubtitles = [];
 
   // 播放速度
   double _playbackSpeed = 1.0;
