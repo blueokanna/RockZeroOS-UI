@@ -1,12 +1,15 @@
+import 'dart:io';
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/device_discovery_service.dart';
+import '../services/wallpaper_service.dart';
 import '../theme/app_theme.dart';
 
-/// Notifier to control bottom navigation bar visibility (for fullscreen video)
 class BottomNavVisibleNotifier extends Notifier<bool> {
   @override
   bool build() => true;
@@ -97,70 +100,160 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
     final isMediumScreen = screenWidth >= 600 && screenWidth < 1200;
     final connectedDevice = ref.watch(connectedDeviceProvider);
     final bottomNavVisible = ref.watch(bottomNavVisibleProvider);
+    final backgroundMode = ref.watch(backgroundModeProvider);
+    final wallpaperPath = ref.watch(customWallpaperPathProvider);
+    final colorScheme = Theme.of(context).colorScheme;
+
+    final hasWallpaper = backgroundMode == BackgroundMode.customWallpaper &&
+        wallpaperPath != null &&
+        wallpaperPath.isNotEmpty;
+
+    Widget content = Row(
+      children: [
+        // Navigation Rail for medium/wide screens
+        if ((isMediumScreen || isWideScreen) && bottomNavVisible)
+          AnimatedSlide(
+            duration: M3Durations.medium2,
+            curve: M3Curves.emphasized,
+            offset: bottomNavVisible ? Offset.zero : const Offset(-1, 0),
+            child: _buildNavigationRail(
+              isWideScreen,
+              connectedDevice,
+              hasWallpaper,
+              colorScheme,
+            ),
+          ),
+
+        // Vertical divider
+        if ((isMediumScreen || isWideScreen) && bottomNavVisible)
+          VerticalDivider(
+            width: 1,
+            thickness: 1,
+            color: colorScheme.outlineVariant
+                .withValues(alpha: hasWallpaper ? 0.3 : 1.0),
+          ),
+
+        // Main content
+        Expanded(child: widget.child),
+      ],
+    );
+
+    Widget? bottomNav;
+    if (!isMediumScreen && !isWideScreen) {
+      bottomNav = AnimatedSlide(
+        duration: M3Durations.medium2,
+        curve: M3Curves.emphasized,
+        offset: bottomNavVisible ? Offset.zero : const Offset(0, 1),
+        child: AnimatedOpacity(
+          duration: M3Durations.medium2,
+          curve: M3Curves.emphasized,
+          opacity: bottomNavVisible ? 1.0 : 0.0,
+          child: bottomNavVisible
+              ? _buildBottomNav(hasWallpaper, colorScheme)
+              : const SizedBox.shrink(),
+        ),
+      );
+    }
+
+    // If wallpaper is set, wrap with glass effect
+    if (hasWallpaper) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          // Wallpaper image
+          Image.file(
+            File(wallpaperPath),
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              return Container(color: colorScheme.surface);
+            },
+          ),
+          // Glass overlay with blur
+          ClipRect(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+              child: Container(
+                color: colorScheme.surface.withValues(alpha: 0.7),
+              ),
+            ),
+          ),
+          // Scaffold
+          Scaffold(
+            backgroundColor: Colors.transparent,
+            body: content,
+            bottomNavigationBar: bottomNav,
+          ),
+        ],
+      );
+    }
 
     return Scaffold(
-      body: Row(
-        children: [
-          // Navigation Rail for medium/wide screens
-          if ((isMediumScreen || isWideScreen) && bottomNavVisible)
-            AnimatedSlide(
-              duration: M3Durations.medium2,
-              curve: M3Curves.emphasized,
-              offset: bottomNavVisible ? Offset.zero : const Offset(-1, 0),
-              child: NavigationRail(
-                extended: isWideScreen,
-                selectedIndex: _selectedIndex,
-                onDestinationSelected: _onDestinationSelected,
-                leading: _buildNavLeading(isWideScreen, connectedDevice),
-                destinations: _destinations
-                    .map(
-                      (d) => NavigationRailDestination(
-                        icon: d.icon,
-                        selectedIcon: d.selectedIcon,
-                        label: Text(d.label),
-                      ),
-                    )
-                    .toList(),
-              ).animate().fadeIn(duration: 200.ms).slideX(begin: -0.1, end: 0),
-            ),
+      body: content,
+      bottomNavigationBar: bottomNav,
+    );
+  }
 
-          // Vertical divider
-          if ((isMediumScreen || isWideScreen) && bottomNavVisible)
-            VerticalDivider(
-              width: 1,
-              thickness: 1,
-              color: Theme.of(context).colorScheme.outlineVariant,
-            ),
-
-          // Main content
-          Expanded(child: widget.child),
-        ],
-      ),
-
-      // Bottom Navigation for narrow screens - with animated visibility
-      bottomNavigationBar: (!isMediumScreen && !isWideScreen)
-          ? AnimatedSlide(
-              duration: M3Durations.medium2,
-              curve: M3Curves.emphasized,
-              offset: bottomNavVisible ? Offset.zero : const Offset(0, 1),
-              child: AnimatedOpacity(
-                duration: M3Durations.medium2,
-                curve: M3Curves.emphasized,
-                opacity: bottomNavVisible ? 1.0 : 0.0,
-                child: bottomNavVisible
-                    ? NavigationBar(
-                        selectedIndex: _selectedIndex,
-                        onDestinationSelected: _onDestinationSelected,
-                        destinations: _destinations,
-                      )
-                        .animate()
-                        .fadeIn(duration: 200.ms)
-                        .slideY(begin: 0.1, end: 0)
-                    : const SizedBox.shrink(),
-              ),
+  Widget _buildNavigationRail(
+    bool extended,
+    DiscoveredDevice? device,
+    bool hasWallpaper,
+    ColorScheme colorScheme,
+  ) {
+    return Container(
+      decoration: hasWallpaper
+          ? BoxDecoration(
+              color: colorScheme.surface.withValues(alpha: 0.5),
             )
           : null,
+      child: NavigationRail(
+        extended: extended,
+        backgroundColor: hasWallpaper ? Colors.transparent : null,
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: _onDestinationSelected,
+        leading: _buildNavLeading(extended, device),
+        destinations: _destinations
+            .map(
+              (d) => NavigationRailDestination(
+                icon: d.icon,
+                selectedIcon: d.selectedIcon,
+                label: Text(d.label),
+              ),
+            )
+            .toList(),
+      ).animate().fadeIn(duration: 200.ms).slideX(begin: -0.1, end: 0),
     );
+  }
+
+  Widget _buildBottomNav(bool hasWallpaper, ColorScheme colorScheme) {
+    if (hasWallpaper) {
+      return ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+          child: Container(
+            decoration: BoxDecoration(
+              color: colorScheme.surface.withValues(alpha: 0.6),
+              border: Border(
+                top: BorderSide(
+                  color: colorScheme.outline.withValues(alpha: 0.2),
+                ),
+              ),
+            ),
+            child: NavigationBar(
+              backgroundColor: Colors.transparent,
+              selectedIndex: _selectedIndex,
+              onDestinationSelected: _onDestinationSelected,
+              destinations: _destinations,
+            ),
+          ),
+        ),
+      ).animate().fadeIn(duration: 200.ms).slideY(begin: 0.1, end: 0);
+    }
+
+    return NavigationBar(
+      selectedIndex: _selectedIndex,
+      onDestinationSelected: _onDestinationSelected,
+      destinations: _destinations,
+    ).animate().fadeIn(duration: 200.ms).slideY(begin: 0.1, end: 0);
   }
 
   Widget _buildNavLeading(bool extended, DiscoveredDevice? device) {
@@ -211,7 +304,7 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
                   Container(
                     width: 8,
                     height: 8,
-                    decoration: BoxDecoration(
+                    decoration: const BoxDecoration(
                       color: Colors.green,
                       shape: BoxShape.circle,
                     ),

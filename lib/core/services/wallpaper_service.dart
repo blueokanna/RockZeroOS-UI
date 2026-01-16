@@ -8,7 +8,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:palette_generator/palette_generator.dart';
 
 import '../theme/app_theme.dart';
 
@@ -47,21 +46,80 @@ class WallpaperService {
     return null;
   }
 
-  /// 从图片提取主色调
+  /// 从图片提取主色调 (使用 Flutter 内置方法)
   static Future<Color?> extractDominantColor(Uint8List imageBytes) async {
     try {
-      final codec = await ui.instantiateImageCodec(imageBytes);
+      final codec = await ui.instantiateImageCodec(
+        imageBytes,
+        targetWidth: 100, // 缩小图片加快处理
+        targetHeight: 100,
+      );
       final frame = await codec.getNextFrame();
       final image = frame.image;
 
-      final paletteGenerator = await PaletteGenerator.fromImage(
-        image,
-        maximumColorCount: 16,
-      );
+      // 获取像素数据
+      final byteData =
+          await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      if (byteData == null) return null;
 
-      // 优先使用 vibrant 颜色，其次是 dominant
-      return paletteGenerator.vibrantColor?.color ??
-          paletteGenerator.dominantColor?.color;
+      final pixels = byteData.buffer.asUint8List();
+
+      // 统计颜色频率
+      final colorCounts = <int, int>{};
+      for (var i = 0; i < pixels.length; i += 4) {
+        final r = pixels[i];
+        final g = pixels[i + 1];
+        final b = pixels[i + 2];
+        final a = pixels[i + 3];
+
+        // 跳过透明像素和接近白色/黑色的像素
+        if (a < 128) continue;
+        if ((r > 240 && g > 240 && b > 240) || (r < 15 && g < 15 && b < 15)) {
+          continue;
+        }
+
+        // 量化颜色以减少变体
+        final quantizedR = (r ~/ 32) * 32;
+        final quantizedG = (g ~/ 32) * 32;
+        final quantizedB = (b ~/ 32) * 32;
+
+        final colorKey = (quantizedR << 16) | (quantizedG << 8) | quantizedB;
+        colorCounts[colorKey] = (colorCounts[colorKey] ?? 0) + 1;
+      }
+
+      if (colorCounts.isEmpty) return null;
+
+      // 找出最常见的颜色，优先选择饱和度较高的
+      int? bestColor;
+      double bestScore = 0;
+
+      for (final entry in colorCounts.entries) {
+        final r = (entry.key >> 16) & 0xFF;
+        final g = (entry.key >> 8) & 0xFF;
+        final b = entry.key & 0xFF;
+
+        // 计算饱和度
+        final maxC = [r, g, b].reduce((a, b) => a > b ? a : b);
+        final minC = [r, g, b].reduce((a, b) => a < b ? a : b);
+        final saturation = maxC > 0 ? (maxC - minC) / maxC.toDouble() : 0.0;
+
+        // 分数 = 频率 * (1 + 饱和度)
+        final score = entry.value * (1 + saturation);
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestColor = entry.key;
+        }
+      }
+
+      if (bestColor == null) return null;
+
+      return Color.fromARGB(
+        255,
+        (bestColor >> 16) & 0xFF,
+        (bestColor >> 8) & 0xFF,
+        bestColor & 0xFF,
+      );
     } catch (e) {
       debugPrint('Extract color failed: $e');
       return null;

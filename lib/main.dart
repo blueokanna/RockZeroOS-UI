@@ -13,17 +13,14 @@ import 'core/services/device_discovery_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 优化渲染性能
   if (kReleaseMode) {
     debugPrintRebuildDirtyWidgets = false;
   }
 
-  // Initialize Hive for local storage
   await Hive.initFlutter();
   await Hive.openBox('settings');
   await Hive.openBox('cache');
 
-  // Set window size for desktop platforms
   if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
     await _setupDesktopWindow();
   }

@@ -81,7 +81,7 @@ class AuthenticatedNetworkImage
       '${objectRuntimeType(this, 'AuthenticatedNetworkImage')}("$url")';
 }
 
-/// Image viewer with zoom, pan, and download support
+/// Image viewer with pinch-to-zoom, pan, and download support
 class ImageViewerPage extends ConsumerStatefulWidget {
   final String imageUrl;
   final String fileName;
@@ -108,6 +108,11 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
   double _downloadProgress = 0;
   String? _authToken;
   bool _isLoading = true;
+
+  // Zoom state
+  double _currentScale = 1.0;
+  final double _minScale = 0.5;
+  final double _maxScale = 5.0;
 
   @override
   void initState() {
@@ -181,9 +186,8 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
       // Get download directory
       Directory? downloadDir;
       if (Platform.isAndroid) {
-        downloadDir = Directory(
-          '/storage/emulated/0/Download/RockZeroDownload',
-        );
+        downloadDir =
+            Directory('/storage/emulated/0/Download/RockZeroDownload');
       } else if (Platform.isIOS) {
         downloadDir = await getApplicationDocumentsDirectory();
         downloadDir = Directory('${downloadDir.path}/RockZeroDownload');
@@ -290,7 +294,7 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
         onTap: _toggleControls,
         child: Stack(
           children: [
-            // Image viewer
+            // Image viewer with pinch-to-zoom
             if (hasGallery)
               PhotoViewGallery.builder(
                 pageController: _pageController,
@@ -298,105 +302,59 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
                 builder: (context, index) {
                   return PhotoViewGalleryPageOptions(
                     imageProvider: _getImageProvider(widget.gallery![index]),
-                    minScale: PhotoViewComputedScale.contained,
-                    maxScale: PhotoViewComputedScale.covered * 4,
-                    heroAttributes: PhotoViewHeroAttributes(
-                      tag: 'image_$index',
-                    ),
+                    initialScale: PhotoViewComputedScale.contained,
+                    minScale: PhotoViewComputedScale.contained * _minScale,
+                    maxScale: PhotoViewComputedScale.covered * _maxScale,
+                    heroAttributes:
+                        PhotoViewHeroAttributes(tag: 'image_$index'),
+                    // Enable gesture detection for zoom
+                    gestureDetectorBehavior: HitTestBehavior.opaque,
+                    onScaleEnd: (context, details, controllerValue) {
+                      setState(() {
+                        _currentScale = controllerValue.scale ?? 1.0;
+                      });
+                    },
                     errorBuilder: (context, error, stackTrace) {
-                      return Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(
-                              Icons.broken_image_rounded,
-                              size: 64,
-                              color: Colors.white54,
-                            ),
-                            const SizedBox(height: 16),
-                            const Text(
-                              'Failed to load image',
-                              style: TextStyle(color: Colors.white54),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              error.toString(),
-                              style: const TextStyle(
-                                color: Colors.white38,
-                                fontSize: 10,
-                              ),
-                              textAlign: TextAlign.center,
-                              maxLines: 3,
-                            ),
-                          ],
-                        ),
-                      );
+                      return _buildErrorWidget(error);
                     },
                   );
                 },
                 onPageChanged: (index) {
-                  setState(() => _currentIndex = index);
+                  setState(() {
+                    _currentIndex = index;
+                    _currentScale = 1.0;
+                  });
                 },
                 loadingBuilder: (context, event) {
-                  return Center(
-                    child: CircularProgressIndicator(
-                      value: event?.expectedTotalBytes != null
-                          ? event!.cumulativeBytesLoaded /
-                              event.expectedTotalBytes!
-                          : null,
-                      color: colorScheme.primary,
-                    ),
-                  );
+                  return _buildLoadingWidget(colorScheme, event);
                 },
                 backgroundDecoration: const BoxDecoration(color: Colors.black),
+                // Enable scroll physics for smooth swiping
+                scrollPhysics: const BouncingScrollPhysics(),
               )
             else
               PhotoView(
                 imageProvider: _getImageProvider(widget.imageUrl),
-                minScale: PhotoViewComputedScale.contained,
-                maxScale: PhotoViewComputedScale.covered * 4,
+                initialScale: PhotoViewComputedScale.contained,
+                minScale: PhotoViewComputedScale.contained * _minScale,
+                maxScale: PhotoViewComputedScale.covered * _maxScale,
                 heroAttributes: const PhotoViewHeroAttributes(tag: 'image'),
+                // Enable gesture detection for zoom
+                gestureDetectorBehavior: HitTestBehavior.opaque,
+                onScaleEnd: (context, details, controllerValue) {
+                  setState(() {
+                    _currentScale = controllerValue.scale ?? 1.0;
+                  });
+                },
                 loadingBuilder: (context, event) {
-                  return Center(
-                    child: CircularProgressIndicator(
-                      value: event?.expectedTotalBytes != null
-                          ? event!.cumulativeBytesLoaded /
-                              event.expectedTotalBytes!
-                          : null,
-                      color: colorScheme.primary,
-                    ),
-                  );
+                  return _buildLoadingWidget(colorScheme, event);
                 },
                 errorBuilder: (context, error, stackTrace) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(
-                          Icons.broken_image_rounded,
-                          size: 64,
-                          color: Colors.white54,
-                        ),
-                        const SizedBox(height: 16),
-                        const Text(
-                          'Failed to load image',
-                          style: TextStyle(color: Colors.white54),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          error.toString(),
-                          style: const TextStyle(
-                            color: Colors.white38,
-                            fontSize: 10,
-                          ),
-                          textAlign: TextAlign.center,
-                          maxLines: 3,
-                        ),
-                      ],
-                    ),
-                  );
+                  return _buildErrorWidget(error);
                 },
                 backgroundDecoration: const BoxDecoration(color: Colors.black),
+                // Enable double tap to zoom
+                enableRotation: false,
               ),
 
             // Controls overlay
@@ -425,7 +383,29 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
                         // Top bar
                         _buildTopBar(colorScheme, hasGallery),
                         const Spacer(),
-                        // Bottom indicator
+                        // Zoom indicator
+                        if (_currentScale != 1.0)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              '${(_currentScale * 100).toInt()}%',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 16),
+                        // Bottom controls
+                        _buildBottomControls(colorScheme),
+                        // Page indicator
                         if (hasGallery) _buildPageIndicator(colorScheme),
                       ],
                     ),
@@ -451,10 +431,8 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
                     children: [
                       Row(
                         children: [
-                          const Icon(
-                            Icons.download_rounded,
-                            color: Colors.white,
-                          ),
+                          const Icon(Icons.download_rounded,
+                              color: Colors.white),
                           const SizedBox(width: 12),
                           const Expanded(
                             child: Text(
@@ -480,6 +458,56 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingWidget(ColorScheme colorScheme, ImageChunkEvent? event) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircularProgressIndicator(
+            value: event?.expectedTotalBytes != null
+                ? event!.cumulativeBytesLoaded / event.expectedTotalBytes!
+                : null,
+            color: colorScheme.primary,
+          ),
+          if (event?.expectedTotalBytes != null) ...[
+            const SizedBox(height: 16),
+            Text(
+              '${((event!.cumulativeBytesLoaded / event.expectedTotalBytes!) * 100).toInt()}%',
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorWidget(Object error) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.broken_image_rounded,
+            size: 64,
+            color: Colors.white54,
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Failed to load image',
+            style: TextStyle(color: Colors.white54),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            error.toString(),
+            style: const TextStyle(color: Colors.white38, fontSize: 10),
+            textAlign: TextAlign.center,
+            maxLines: 3,
+          ),
+        ],
       ),
     );
   }
@@ -529,6 +557,60 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
                   )
                 : const Icon(Icons.download_rounded, color: Colors.white),
             onPressed: _isDownloading ? null : _downloadImage,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomControls(ColorScheme colorScheme) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          // Zoom out
+          IconButton(
+            icon: const Icon(Icons.zoom_out_rounded, color: Colors.white),
+            onPressed: () {
+              // Zoom out hint
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Pinch to zoom out'),
+                  duration: Duration(seconds: 1),
+                ),
+              );
+            },
+          ),
+          const SizedBox(width: 16),
+          // Reset zoom
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white24,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              'Pinch to zoom',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.9),
+                fontSize: 12,
+              ),
+            ),
+          ),
+          const SizedBox(width: 16),
+          // Zoom in
+          IconButton(
+            icon: const Icon(Icons.zoom_in_rounded, color: Colors.white),
+            onPressed: () {
+              // Zoom in hint
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Pinch to zoom in or double-tap'),
+                  duration: Duration(seconds: 1),
+                ),
+              );
+            },
           ),
         ],
       ),

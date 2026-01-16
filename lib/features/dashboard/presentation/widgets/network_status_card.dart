@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../pages/dashboard_page.dart';
+import '../pages/speed_test_page.dart';
 
 class NetworkStatusCard extends StatelessWidget {
   final AsyncValue<NetworkInfo?> networkInfo;
@@ -15,109 +15,107 @@ class NetworkStatusCard extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
 
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [colorScheme.tertiary, colorScheme.primary],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
+      child: InkWell(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const SpeedTestPage()),
+          );
+        },
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [colorScheme.tertiary, colorScheme.primary],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: [
+                        BoxShadow(
+                          color: colorScheme.tertiary.withValues(alpha: 0.3),
+                          blurRadius: 8,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
                     ),
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                        color: colorScheme.tertiary.withValues(alpha: 0.3),
-                        blurRadius: 8,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.wifi_rounded,
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Network',
-                        style: textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        'Real-time traffic',
-                        style: textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                // Live indicator
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: Colors.green.withValues(alpha: 0.3),
+                    child: const Icon(
+                      Icons.wifi_rounded,
+                      color: Colors.white,
+                      size: 24,
                     ),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                            width: 8,
-                            height: 8,
-                            decoration: const BoxDecoration(
-                              color: Colors.green,
-                              shape: BoxShape.circle,
-                            ),
-                          )
-                          .animate(onPlay: (c) => c.repeat())
-                          .fadeIn(duration: 500.ms)
-                          .then()
-                          .fadeOut(duration: 500.ms),
-                      const SizedBox(width: 6),
-                      Text(
-                        'LIVE',
-                        style: textTheme.labelSmall?.copyWith(
-                          color: Colors.green,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.5,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Network',
+                          style: textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                    ],
+                        Text(
+                          'Tap for speed test',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            networkInfo.when(
-              data: (info) {
-                if (info == null) return _buildErrorState(context);
-                return _buildContent(context, info);
-              },
-              loading: () => _buildLoadingState(context),
-              error: (e, s) => _buildErrorState(context),
-            ),
-          ],
+                  // Speed test button
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.speed_rounded,
+                          size: 16,
+                          color: colorScheme.onPrimaryContainer,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Test',
+                          style: textTheme.labelSmall?.copyWith(
+                            color: colorScheme.onPrimaryContainer,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              networkInfo.when(
+                data: (info) {
+                  if (info == null) return _buildErrorState(context);
+                  return _buildContent(context, info);
+                },
+                loading: () => _buildLoadingState(context),
+                error: (e, s) => _buildErrorState(context),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -210,7 +208,6 @@ class NetworkStatusCard extends StatelessWidget {
         ),
         const SizedBox(height: 16),
 
-        // Primary interface info
         if (primaryInterface != null) ...[
           Container(
             padding: const EdgeInsets.all(16),

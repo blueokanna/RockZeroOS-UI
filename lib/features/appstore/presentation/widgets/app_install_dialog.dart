@@ -742,6 +742,14 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
         _installStatus = 'Pulling Docker image...';
       });
 
+      // Add a small delay to show progress
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      setState(() {
+        _installProgress = 0.3;
+        _installStatus = 'Creating container...';
+      });
+
       await api.installApp(
         name: widget.app.name,
         dockerImage: widget.app.dockerImage,
@@ -750,6 +758,21 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
         volumes: _volumes.map((v) => v.toVolumeMapping()).toList(),
         environment: _envVars.map((e) => e.toEnvVar()).toList(),
       );
+
+      setState(() {
+        _installProgress = 0.9;
+        _installStatus = 'Starting container...';
+      });
+
+      // If autoStart is enabled, try to start the container
+      if (_autoStart) {
+        try {
+          await api.startApp(widget.app.name);
+        } catch (e) {
+          // Container created but failed to start - still consider it a partial success
+          debugPrint('Failed to auto-start container: $e');
+        }
+      }
 
       setState(() {
         _installProgress = 1.0;
@@ -762,8 +785,45 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
         Navigator.pop(context, true);
       }
     } catch (e) {
+      String errorMessage = e.toString();
+
+      // Parse common error messages
+      if (errorMessage.contains('port is already allocated') ||
+          errorMessage.contains('address already in use')) {
+        errorMessage =
+            'Port conflict: One or more ports are already in use. Please change the host port mappings.';
+      } else if (errorMessage.contains('no such image') ||
+          errorMessage.contains('pull access denied')) {
+        errorMessage =
+            'Failed to pull Docker image. Please check your network connection and image name.';
+      } else if (errorMessage.contains('permission denied')) {
+        errorMessage =
+            'Permission denied. Please check volume path permissions.';
+      } else if (errorMessage.contains('Failed to start container')) {
+        errorMessage =
+            'Container created but failed to start. Please check the configuration and try starting it manually from the Apps page.';
+      } else if (errorMessage.contains('Bad request')) {
+        errorMessage =
+            'Invalid configuration. Please check port mappings, volume paths, and environment variables.';
+      } else if (errorMessage.contains('timeout') ||
+          errorMessage.contains('Timeout')) {
+        errorMessage =
+            'Connection timeout. The server may be busy pulling the image. Please try again later.';
+      } else if (errorMessage.contains('DioException')) {
+        // Clean up Dio error messages
+        final match = RegExp(r'Error:\s*(.+)').firstMatch(errorMessage);
+        if (match != null) {
+          errorMessage = match.group(1) ?? errorMessage;
+        }
+        // Further cleanup
+        if (errorMessage.contains('null')) {
+          errorMessage =
+              'Server error occurred. Please check the NAS logs for details.';
+        }
+      }
+
       setState(() {
-        _installError = e.toString();
+        _installError = errorMessage;
       });
     }
   }

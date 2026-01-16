@@ -16,6 +16,7 @@ import '../../../../core/theme/app_theme.dart';
 import 'enhanced_media_player_page.dart';
 import 'enhanced_audio_player_page.dart';
 import 'image_viewer_page.dart';
+import 'network_shares_page.dart';
 
 // ============ Path Encoding Utilities ============
 
@@ -136,7 +137,10 @@ final diskInfoProvider = FutureProvider<List<DiskInfo>>((ref) async {
   }
 
   final api = ref.read(apiServiceProvider);
-  return await api.getDiskInfo();
+  final allDisks = await api.getDiskInfo();
+
+  // 返回所有磁盘（包括未挂载的），但过滤掉无效的磁盘
+  return allDisks.where((disk) => disk.totalSpace > 0).toList();
 });
 
 // ============ Main Page ============
@@ -689,16 +693,43 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 
   Widget _buildDiskGrid(List<DiskInfo> disks) {
-    if (disks.isEmpty) {
+    // Filter out VFAT/FAT32 disks and /boot partition
+    final filteredDisks = disks.where((disk) {
+      final fs = disk.fileSystem.toUpperCase();
+      final mountPoint = disk.mountPoint.toLowerCase();
+
+      // Skip VFAT/FAT formats
+      if (fs == 'VFAT' || fs == 'FAT32' || fs == 'FAT16' || fs == 'FAT') {
+        return false;
+      }
+
+      // Skip /boot partition
+      if (mountPoint == '/boot' || mountPoint.startsWith('/boot/')) {
+        return false;
+      }
+
+      return true;
+    }).toList();
+
+    if (filteredDisks.isEmpty) {
       return SliverFillRemaining(child: _buildEmptyDiskState());
     }
+
+    // Separate mounted and unmounted disks
+    final mountedDisks =
+        filteredDisks.where((d) => d.mountPoint != 'Not mounted').toList();
+    final unmountedDisks =
+        filteredDisks.where((d) => d.mountPoint == 'Not mounted').toList();
+
+    // Use filtered disks for display
+    final displayDisks = [...mountedDisks, ...unmountedDisks];
 
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
     int totalSpace = 0;
     int usedSpace = 0;
-    for (final disk in disks) {
+    for (final disk in mountedDisks) {
       totalSpace += disk.totalSpace;
       usedSpace += disk.usedSpace;
     }
@@ -750,7 +781,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${disks.length} ${disks.length == 1 ? 'disk' : 'disks'} connected',
+                          '${mountedDisks.length} ${mountedDisks.length == 1 ? 'disk' : 'disks'} mounted',
                           style: textTheme.bodySmall?.copyWith(
                             color: colorScheme.onSurfaceVariant,
                           ),
@@ -823,6 +854,23 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     color: colorScheme.primary,
                   ),
                 ),
+                const Spacer(),
+                // Network shares button
+                TextButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const NetworkSharesPage(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.folder_shared_rounded, size: 18),
+                  label: const Text('Network'),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                  ),
+                ),
               ],
             ),
           ),
@@ -835,16 +883,21 @@ class _FilesPageState extends ConsumerState<FilesPage>
               crossAxisSpacing: 12,
               childAspectRatio: 1.35,
             ),
-            itemCount: disks.length,
+            itemCount: displayDisks.length,
             itemBuilder: (context, index) {
-              final disk = disks[index];
+              final disk = displayDisks[index];
               return _DiskCard(
                 disk: disk,
                 onTap: () {
-                  ref
-                      .read(currentPathProvider.notifier)
-                      .setPath(disk.mountPoint);
-                  setState(() => _showDisks = false);
+                  if (disk.mountPoint != 'Not mounted') {
+                    ref
+                        .read(currentPathProvider.notifier)
+                        .setPath(disk.mountPoint);
+                    setState(() => _showDisks = false);
+                  } else {
+                    // Show mount dialog for unmounted disks
+                    _showMountDialog(disk);
+                  }
                 },
               );
             },
@@ -1917,6 +1970,186 @@ class _FilesPageState extends ConsumerState<FilesPage>
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Failed to create folder: $e')));
+      }
+    }
+  }
+
+  void _showMountDialog(DiskInfo disk) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [colorScheme.primary, colorScheme.tertiary],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: const Icon(
+            Icons.storage_rounded,
+            size: 32,
+            color: Colors.white,
+          ),
+        ),
+        title: const Text('Mount Disk'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Do you want to mount "${disk.name}"?',
+              style: textTheme.bodyLarge,
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: colorScheme.primaryContainer.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.info_outline,
+                          size: 18, color: colorScheme.primary),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Disk Information',
+                        style: textTheme.labelMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: colorScheme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text('Size: ${_formatBytes(disk.totalSpace)}',
+                      style: textTheme.bodySmall),
+                  Text('Type: ${disk.diskType}', style: textTheme.bodySmall),
+                  if (disk.fileSystem != 'Unknown')
+                    Text('File System: ${disk.fileSystem}',
+                        style: textTheme.bodySmall),
+                ],
+              ),
+            ),
+          ],
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              _mountDisk(disk);
+            },
+            icon: const Icon(Icons.check_circle_rounded),
+            label: const Text('Mount'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _mountDisk(DiskInfo disk) async {
+    final colorScheme = Theme.of(context).colorScheme;
+    final navigator = Navigator.of(context);
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text('Mounting ${disk.name}...'),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    try {
+      final api = ref.read(apiServiceProvider);
+
+      // Generate mount point
+      final mountPoint = '/mnt/${disk.name}';
+
+      // Call mount API
+      await api.mountDisk(
+        device: '/dev/${disk.name}',
+        mountPoint: mountPoint,
+        fileSystem:
+            disk.fileSystem != 'Unknown' ? disk.fileSystem.toLowerCase() : null,
+      );
+
+      // Wait a bit for the system to update
+      await Future.delayed(const Duration(milliseconds: 800));
+
+      if (mounted) {
+        navigator.pop(); // Close loading dialog
+
+        // Refresh disk list
+        ref.invalidate(diskInfoProvider);
+
+        scaffoldMessenger.showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: colorScheme.onPrimary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text('${disk.name} mounted to $mountPoint'),
+                ),
+              ],
+            ),
+            backgroundColor: colorScheme.primary,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        navigator.pop(); // Close loading dialog
+
+        scaffoldMessenger.showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.error_outline, color: colorScheme.onError),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text('Failed to mount ${disk.name}: ${e.toString()}'),
+                ),
+              ],
+            ),
+            backgroundColor: colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            duration: const Duration(seconds: 5),
+          ),
+        );
       }
     }
   }

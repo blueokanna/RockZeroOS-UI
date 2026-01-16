@@ -380,6 +380,27 @@ class CpuCoreInfo {
 }
 
 @JsonSerializable()
+class CpuCoreArchInfo {
+  @JsonKey(name: 'core_name')
+  final String coreName;
+  @JsonKey(name: 'part_id')
+  final String partId;
+  final int count;
+  final String? implementer;
+
+  CpuCoreArchInfo({
+    required this.coreName,
+    required this.partId,
+    required this.count,
+    this.implementer,
+  });
+
+  factory CpuCoreArchInfo.fromJson(Map<String, dynamic> json) =>
+      _$CpuCoreArchInfoFromJson(json);
+  Map<String, dynamic> toJson() => _$CpuCoreArchInfoToJson(this);
+}
+
+@JsonSerializable()
 class CpuInfo {
   final String name;
   final String vendor;
@@ -390,6 +411,8 @@ class CpuInfo {
   final double? temperature;
   @JsonKey(name: 'per_core_usage')
   final List<CpuCoreInfo>? perCoreUsage;
+  @JsonKey(name: 'core_types')
+  final List<CpuCoreArchInfo>? coreTypes;
 
   CpuInfo({
     required this.name,
@@ -400,6 +423,7 @@ class CpuInfo {
     required this.usage,
     this.temperature,
     this.perCoreUsage,
+    this.coreTypes,
   });
 
   factory CpuInfo.fromJson(Map<String, dynamic> json) =>
