@@ -712,23 +712,50 @@ class _DiskCard extends ConsumerWidget {
   }
 
   void _showDiskDetails(BuildContext context, WidgetRef ref) {
-    final isUnpartitioned =
-        disk.fileSystem == 'Unknown' || disk.fileSystem.isEmpty;
+    // 如果磁盘已挂载，直接显示详情页
+    final isMounted = disk.isMounted &&
+        disk.mountPoint.isNotEmpty &&
+        disk.mountPoint != 'Not mounted';
+
+    if (isMounted) {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        builder: (context) =>
+            _DiskDetailsSheet(disk: disk, onRefresh: onRefresh),
+      );
+      return;
+    }
+
+    // 检查磁盘状态
+    final isRawDisk = _isRawDisk();
     final isNonLinuxNative = _isNonLinuxNativeFs();
     final isUnsupported = _isUnsupportedFs();
 
-    // 如果是未分区或不支持的文件系统，显示初始化/格式化对话框
-    if (isUnpartitioned || isUnsupported) {
+    // 如果是裸盘（无分区无文件系统），显示初始化对话框
+    if (isRawDisk) {
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
         builder: (context) => _InitializeDiskSheet(
           disk: disk,
           onComplete: onRefresh,
-          isReformat: isUnsupported,
+          isReformat: false,
         ),
       );
-    } else if (isNonLinuxNative && !disk.isMounted) {
+    } else if (isUnsupported) {
+      // 不支持的文件系统，需要格式化
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        builder: (context) => _InitializeDiskSheet(
+          disk: disk,
+          onComplete: onRefresh,
+          isReformat: true,
+        ),
+      );
+    } else if (isNonLinuxNative) {
+      // 非Linux原生文件系统，可以挂载或格式化
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
@@ -738,6 +765,7 @@ class _DiskCard extends ConsumerWidget {
         ),
       );
     } else {
+      // 正常的Linux文件系统，未挂载，显示详情/挂载页
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
@@ -745,6 +773,12 @@ class _DiskCard extends ConsumerWidget {
             _DiskDetailsSheet(disk: disk, onRefresh: onRefresh),
       );
     }
+  }
+
+  /// 检查是否是裸盘（无分区，无文件系统）
+  bool _isRawDisk() {
+    final fs = disk.fileSystem.toLowerCase();
+    return fs.isEmpty || fs == 'unknown';
   }
 }
 
@@ -1451,16 +1485,21 @@ class _MountDiskDialogState extends ConsumerState<_MountDiskDialog> {
     setState(() => _isMounting = true);
     try {
       final api = ref.read(apiServiceProvider);
-      await api.post('/api/v1/disk/mount', data: {
+      final response = await api.post('/api/v1/disk/mount', data: {
         'device': widget.disk.devicePath,
         'mount_point': _mountPointController.text,
         if (_selectedFs != 'auto') 'file_system': _selectedFs,
       });
       if (mounted) {
         Navigator.pop(context);
+        final isAlreadyMounted = response.data['already_mounted'] == true;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('磁盘挂载成功'), backgroundColor: Colors.green),
+          SnackBar(
+            content: Text(isAlreadyMounted
+                ? '磁盘已挂载于 ${response.data['mount_point']}'
+                : '磁盘挂载成功'),
+            backgroundColor: Colors.green,
+          ),
         );
         widget.onComplete();
       }
