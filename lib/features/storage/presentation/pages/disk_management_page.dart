@@ -460,11 +460,24 @@ class _DiskCard extends ConsumerWidget {
                 runSpacing: 8,
                 children: [
                   if (disk.fileSystem.isNotEmpty &&
-                      disk.fileSystem != 'Unknown')
+                      disk.fileSystem != 'Unknown' &&
+                      disk.fileSystem != 'unknown')
                     Chip(
                       label: Text(disk.fileSystem.toUpperCase()),
                       labelStyle: textTheme.labelSmall,
                       visualDensity: VisualDensity.compact,
+                    )
+                  else if (isUnpartitioned)
+                    Chip(
+                      avatar: Icon(Icons.warning_rounded,
+                          size: 14, color: colorScheme.error),
+                      label: const Text('未格式化'),
+                      labelStyle: textTheme.labelSmall?.copyWith(
+                        color: colorScheme.error,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                      backgroundColor:
+                          colorScheme.errorContainer.withValues(alpha: 0.3),
                     ),
                   Chip(
                     label: Text(disk.diskType),
@@ -848,34 +861,59 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
   bool _isLoading = false;
 
   Future<void> _mountDisk() async {
-    setState(() => _isLoading = true);
-    try {
-      final api = ref.read(apiServiceProvider);
-      final mountPoint = '/mnt/${widget.disk.label ?? widget.disk.name}';
-      await api.post('/api/v1/disk/mount', data: {
-        'device': widget.disk.devicePath,
-        'mount_point': mountPoint,
-        'file_system': widget.disk.fileSystem,
-      });
+    // 检查是否是未分区的整盘设备
+    final devicePath = widget.disk.devicePath;
+    final isWholeDisk = _isWholeDiskDevice(devicePath);
+    final hasNoFileSystem = widget.disk.fileSystem.isEmpty ||
+        widget.disk.fileSystem == 'Unknown' ||
+        widget.disk.fileSystem == 'unknown';
+
+    if (isWholeDisk && hasNoFileSystem) {
+      // 显示初始化对话框
       if (mounted) {
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('磁盘挂载成功'), backgroundColor: Colors.green),
-        );
-        widget.onRefresh();
+        _showInitializeDialog();
       }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('挂载失败: $e'), backgroundColor: Colors.red),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      return;
     }
+
+    // 显示挂载选项对话框
+    _showMountOptionsDialog();
+  }
+
+  bool _isWholeDiskDevice(String devicePath) {
+    // 检查是否是整盘设备（如 /dev/sdb）而不是分区（如 /dev/sdb1）
+    final name = devicePath.split('/').last;
+    // sda, sdb, nvme0n1 等是整盘，sda1, sdb1, nvme0n1p1 是分区
+    if (name.startsWith('sd') && name.length == 3) return true;
+    if (name.startsWith('vd') && name.length == 3) return true;
+    if (name.startsWith('hd') && name.length == 3) return true;
+    if (RegExp(r'^nvme\d+n\d+$').hasMatch(name)) return true;
+    return false;
+  }
+
+  void _showInitializeDialog() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => _InitializeDiskSheet(
+        disk: widget.disk,
+        onComplete: widget.onRefresh,
+      ),
+    );
+  }
+
+  void _showMountOptionsDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => _MountDiskDialog(
+        disk: widget.disk,
+        onComplete: () {
+          Navigator.pop(context); // 关闭详情sheet
+          widget.onRefresh();
+        },
+      ),
+    );
   }
 
   Future<void> _unmountDisk() async {
@@ -1073,12 +1111,27 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
                               height: 20,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Icon(Icons.play_arrow_rounded),
-                      label: const Text('挂载磁盘'),
+                          : Icon(_needsInitialization()
+                              ? Icons.build_rounded
+                              : Icons.play_arrow_rounded),
+                      label: Text(_needsInitialization() ? '初始化磁盘' : '挂载磁盘'),
                       style: FilledButton.styleFrom(
                         minimumSize: const Size(double.infinity, 48),
+                        backgroundColor: _needsInitialization()
+                            ? Theme.of(context).colorScheme.error
+                            : null,
                       ),
                     ),
+                    if (_needsInitialization()) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        '此磁盘未分区或未格式化，需要先初始化',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
                     const SizedBox(height: 12),
                   ] else ...[
                     FilledButton.tonalIcon(
@@ -1129,6 +1182,252 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
           ],
         ),
       ),
+    );
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes >= 1024 * 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024 * 1024)).toStringAsFixed(2)} TB';
+    }
+    if (bytes >= 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+    }
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / 1024).toStringAsFixed(0)} KB';
+  }
+
+  bool _needsInitialization() {
+    final devicePath = widget.disk.devicePath;
+    final isWholeDisk = _isWholeDiskDevice(devicePath);
+    final hasNoFileSystem = widget.disk.fileSystem.isEmpty ||
+        widget.disk.fileSystem == 'Unknown' ||
+        widget.disk.fileSystem == 'unknown';
+    return isWholeDisk && hasNoFileSystem;
+  }
+}
+
+/// 挂载磁盘对话框 - 支持选择文件系统类型
+class _MountDiskDialog extends ConsumerStatefulWidget {
+  final DiskDetail disk;
+  final VoidCallback onComplete;
+
+  const _MountDiskDialog({required this.disk, required this.onComplete});
+
+  @override
+  ConsumerState<_MountDiskDialog> createState() => _MountDiskDialogState();
+}
+
+class _MountDiskDialogState extends ConsumerState<_MountDiskDialog> {
+  String _selectedFs = 'auto';
+  final _mountPointController = TextEditingController();
+  bool _isMounting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 预填充文件系统类型
+    if (widget.disk.fileSystem.isNotEmpty &&
+        widget.disk.fileSystem != 'Unknown' &&
+        widget.disk.fileSystem != 'unknown') {
+      _selectedFs = widget.disk.fileSystem.toLowerCase();
+    }
+    // 预填充挂载点
+    _mountPointController.text =
+        '/mnt/${widget.disk.label ?? widget.disk.name}';
+  }
+
+  @override
+  void dispose() {
+    _mountPointController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _mountDisk() async {
+    setState(() => _isMounting = true);
+    try {
+      final api = ref.read(apiServiceProvider);
+      await api.post('/api/v1/disk/mount', data: {
+        'device': widget.disk.devicePath,
+        'mount_point': _mountPointController.text,
+        if (_selectedFs != 'auto') 'file_system': _selectedFs,
+      });
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('磁盘挂载成功'), backgroundColor: Colors.green),
+        );
+        widget.onComplete();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('挂载失败: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isMounting = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    // 可选的文件系统列表
+    final fsOptions = [
+      {'name': 'auto', 'displayName': '自动检测', 'description': '让系统自动检测文件系统'},
+      ...supportedFileSystems,
+    ];
+
+    return AlertDialog(
+      title: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  colorScheme.primaryContainer,
+                  colorScheme.primaryContainer.withValues(alpha: 0.7),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(Icons.play_arrow_rounded,
+                color: colorScheme.onPrimaryContainer),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(child: Text('挂载磁盘')),
+        ],
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 磁盘信息
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: colorScheme.primaryContainer.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.info_outline,
+                          size: 16, color: colorScheme.primary),
+                      const SizedBox(width: 8),
+                      Text('磁盘信息',
+                          style: textTheme.labelMedium?.copyWith(
+                            color: colorScheme.primary,
+                            fontWeight: FontWeight.bold,
+                          )),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text('设备: ${widget.disk.devicePath}',
+                      style: textTheme.bodySmall),
+                  Text('容量: ${_formatBytes(widget.disk.totalSpace)}',
+                      style: textTheme.bodySmall),
+                  if (widget.disk.fileSystem.isNotEmpty &&
+                      widget.disk.fileSystem != 'Unknown')
+                    Text('检测到的文件系统: ${widget.disk.fileSystem.toUpperCase()}',
+                        style: textTheme.bodySmall),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // 文件系统选择
+            Text('文件系统类型',
+                style: textTheme.titleSmall
+                    ?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              value: _selectedFs,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                isDense: true,
+                prefixIcon: Icon(Icons.storage_rounded),
+              ),
+              items: fsOptions
+                  .map((fs) => DropdownMenuItem(
+                        value: fs['name'] as String,
+                        child: Row(
+                          children: [
+                            Text(fs['displayName'] as String),
+                            if (fs['name'] == 'auto') ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.primaryContainer,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text('推荐',
+                                    style: textTheme.labelSmall?.copyWith(
+                                      color: colorScheme.onPrimaryContainer,
+                                    )),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ))
+                  .toList(),
+              onChanged: (v) {
+                if (v != null) setState(() => _selectedFs = v);
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // 挂载点
+            Text('挂载点',
+                style: textTheme.titleSmall
+                    ?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _mountPointController,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                isDense: true,
+                prefixIcon: Icon(Icons.folder_rounded),
+                hintText: '/mnt/disk_name',
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton.icon(
+          onPressed: _isMounting ? null : _mountDisk,
+          icon: _isMounting
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white),
+                )
+              : const Icon(Icons.check_rounded),
+          label: Text(_isMounting ? '挂载中...' : '挂载'),
+        ),
+      ],
     );
   }
 
