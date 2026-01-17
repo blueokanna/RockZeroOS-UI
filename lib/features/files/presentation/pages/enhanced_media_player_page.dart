@@ -504,15 +504,14 @@ class _EnhancedMediaPlayerPageState
     }
 
     try {
-      // 清理旧的控制器
-      await _chewieController?.pause();
+      // 清理旧的控制器 - 不要调用pause，直接dispose
       _chewieController?.dispose();
       _chewieController = null;
-      await _videoController?.dispose();
+      _videoController?.dispose();
       _videoController = null;
 
       // 等待资源释放
-      await Future.delayed(const Duration(milliseconds: 200));
+      await Future.delayed(const Duration(milliseconds: 100));
       if (_disposed) {
         return;
       }
@@ -522,13 +521,10 @@ class _EnhancedMediaPlayerPageState
         headers['Authorization'] = 'Bearer $_authToken';
       }
 
-      // 添加Range支持（随点随播）
-      headers['Accept-Ranges'] = 'bytes';
-
       final streamUrl = _getStreamUrl(audioTrack: _selectedAudioTrack);
       debugPrint('[MediaPlayer] Initializing: $streamUrl');
 
-      // 创建视频控制器（支持随点随播）
+      // 创建视频控制器 - VLC模式，简单直接
       _videoController = VideoPlayerController.networkUrl(
         Uri.parse(streamUrl),
         httpHeaders: headers,
@@ -538,7 +534,7 @@ class _EnhancedMediaPlayerPageState
         ),
       );
 
-      // 初始化，带超时 - 流媒体协议使用更长的超时
+      // 初始化，带超时
       final timeout = _isStreamingProtocol
           ? const Duration(seconds: 60)
           : const Duration(seconds: 30);
@@ -567,17 +563,17 @@ class _EnhancedMediaPlayerPageState
       // 获取主题颜色
       final primaryColor = Theme.of(context).colorScheme.primary;
 
-      // 创建 Chewie 控制器（VLC级别配置 - 完全简化）
+      // 创建 Chewie 控制器 - VLC级别配置
       _chewieController = ChewieController(
         videoPlayerController: _videoController!,
-        autoPlay: true, // 自动播放
+        autoPlay: true,
         looping: _isLooping,
         showControls: true,
         allowFullScreen: false,
         allowMuting: true,
         allowPlaybackSpeedChanging: true,
         playbackSpeeds: _playbackSpeeds,
-        autoInitialize: true,
+        autoInitialize: false, // 已经手动初始化了
         showOptions: false,
         allowedScreenSleep: false,
         draggableProgressBar: true,
@@ -600,14 +596,16 @@ class _EnhancedMediaPlayerPageState
       // 设置播放速度
       await _videoController!.setPlaybackSpeed(_playbackSpeed);
 
+      // 确保开始播放 - 这是关键！
+      await _videoController!.play();
+
       _retryCount = 0;
 
       if (mounted && !_disposed) {
         setState(() => _isLoading = false);
       }
 
-      debugPrint(
-          '[MediaPlayer] Initialization complete - VLC mode (no monitoring)');
+      debugPrint('[MediaPlayer] Initialization complete - VLC mode, playing');
     } catch (e) {
       debugPrint('[MediaPlayer] Error: $e');
 

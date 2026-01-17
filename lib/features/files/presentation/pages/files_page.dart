@@ -17,7 +17,7 @@ import '../../../../core/services/device_discovery_service.dart';
 import '../../../../core/services/filesystem_monitor_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../storage/presentation/pages/disk_management_page.dart';
-import 'enhanced_media_player_page.dart';
+import 'hls_video_player.dart';
 import 'enhanced_audio_player_page.dart';
 import 'image_viewer_page.dart';
 import 'network_shares_page.dart';
@@ -2777,16 +2777,16 @@ class _FilesPageState extends ConsumerState<FilesPage>
         ),
       );
     } else if (mimeType.startsWith('video/')) {
-      final streamUrl = api.getMediaStreamUrl(entry.path);
-      // Use enhanced video player with better buffering
+      final api = ref.read(apiServiceProvider);
+      // Use HLS player - Rust backend converts to HLS, supports all formats
       Navigator.push(
         context,
         PageRouteBuilder(
           pageBuilder: (context, animation, secondaryAnimation) =>
-              EnhancedMediaPlayerPage(
-            mediaUrl: streamUrl,
+              HlsVideoPlayer(
+            filePath: entry.path,
             fileName: entry.name,
-            isVideo: true,
+            baseUrl: api.baseUrl,
           ),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return FadeTransition(

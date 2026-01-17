@@ -43,7 +43,6 @@ dependencies:
   chewie: ^1.10.0
   just_audio: ^0.10.5
   photo_view: ^0.15.0
-  # Audio visualization for music player
   audio_waveforms: ^2.0.2
   # Advanced animations
   flutter_staggered_animations: ^1.1.1

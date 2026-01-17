@@ -15,8 +15,8 @@ final apiServiceProvider = Provider<ApiService>((ref) {
 
 class ApiService {
   final Dio _dio;
-
   ApiService(this._dio);
+  String get baseUrl => _dio.options.baseUrl;
 
   // ============ Generic HTTP Methods ============
 
