@@ -530,10 +530,13 @@ class _EnhancedMediaPlayerPageState
         headers['Authorization'] = 'Bearer $_authToken';
       }
 
+      // 添加Range支持（随点随播）
+      headers['Accept-Ranges'] = 'bytes';
+
       final streamUrl = _getStreamUrl(audioTrack: _selectedAudioTrack);
       debugPrint('[MediaPlayer] Initializing: $streamUrl');
 
-      // 创建视频控制器
+      // 创建视频控制器（支持随点随播）
       _videoController = VideoPlayerController.networkUrl(
         Uri.parse(streamUrl),
         httpHeaders: headers,
@@ -565,13 +568,14 @@ class _EnhancedMediaPlayerPageState
       }
 
       debugPrint(
-        '[MediaPlayer] Video initialized: ${_videoController!.value.size}',
+        '[MediaPlayer] Video initialized: ${_videoController!.value.size}, '
+        'Duration: ${_videoController!.value.duration}',
       );
 
       // 获取主题颜色
       final primaryColor = Theme.of(context).colorScheme.primary;
 
-      // 创建 Chewie 控制器
+      // 创建 Chewie 控制器（VLC级别配置）
       _chewieController = ChewieController(
         videoPlayerController: _videoController!,
         autoPlay: true,
@@ -583,6 +587,10 @@ class _EnhancedMediaPlayerPageState
         playbackSpeeds: _playbackSpeeds,
         autoInitialize: false,
         showOptions: false,
+        // VLC级别：启用随点随播
+        allowedScreenSleep: false,
+        // 启用进度条拖动
+        draggableProgressBar: true,
         placeholder: Container(
           color: Colors.black,
           child: const Center(
@@ -662,12 +670,33 @@ class _EnhancedMediaPlayerPageState
     }
   }
 
+  /// 随点随播：跳转到指定位置
+  // ignore: unused_element
+  Future<void> _seekTo(Duration position) async {
+    if (_videoController == null || !_videoController!.value.isInitialized) {
+      return;
+    }
+
+    try {
+      debugPrint('[MediaPlayer] Seeking to: $position');
+      await _videoController!.seekTo(position);
+
+      // 重置卡顿计数
+      _stallCount = 0;
+      _lastPositionUpdate = DateTime.now();
+      _lastPosition = position;
+    } catch (e) {
+      debugPrint('[MediaPlayer] Seek failed: $e');
+    }
+  }
+
   void _startPlaybackMonitor() {
     _playbackMonitor?.cancel();
     _lastPositionUpdate = DateTime.now();
     _lastPosition = Duration.zero;
 
-    _playbackMonitor = Timer.periodic(const Duration(seconds: 3), (timer) {
+    // VLC级别的稳定性 - 使用更长的检测间隔和容忍度
+    _playbackMonitor = Timer.periodic(const Duration(seconds: 7), (timer) {
       if (_disposed || _videoController == null || !mounted) {
         timer.cancel();
         return;
@@ -681,18 +710,20 @@ class _EnhancedMediaPlayerPageState
         final positionDiff =
             (value.position - _lastPosition).inMilliseconds.abs();
 
-        // 如果位置没有变化且超过5秒，才认为是卡顿
-        if (positionDiff < 100 &&
+        // VLC级别：位置没有变化且超过15秒，才认为是真正卡顿
+        if (positionDiff < 300 &&
             _lastPositionUpdate != null &&
-            now.difference(_lastPositionUpdate!).inSeconds > 5) {
+            now.difference(_lastPositionUpdate!).inSeconds > 15) {
           _stallCount++;
-          debugPrint('[MediaPlayer] Playback stalled, count: $_stallCount');
+          debugPrint(
+              '[MediaPlayer] Playback stalled (VLC-level), count: $_stallCount');
 
-          // 增加容忍度，5次卡顿才尝试恢复
-          if (_stallCount >= 5) {
+          // 极高容忍度：15次卡顿才尝试恢复（约105秒）
+          // 这样可以处理UDP/TCP混合传输的网络波动
+          if (_stallCount >= 15) {
             _recoverPlayback();
           }
-        } else if (positionDiff >= 100) {
+        } else if (positionDiff >= 300) {
           // 位置有变化，重置卡顿计数
           _stallCount = 0;
           _lastPositionUpdate = now;
@@ -722,12 +753,12 @@ class _EnhancedMediaPlayerPageState
 
       // 暂停
       await _videoController!.pause();
-      await Future.delayed(const Duration(milliseconds: 300));
+      await Future.delayed(const Duration(milliseconds: 500));
 
-      // 跳转到稍后的位置
-      final newPosition = currentPosition + const Duration(milliseconds: 500);
+      // 跳转到稍后的位置（跳过可能卡住的部分）
+      final newPosition = currentPosition + const Duration(seconds: 1);
       await _videoController!.seekTo(newPosition);
-      await Future.delayed(const Duration(milliseconds: 200));
+      await Future.delayed(const Duration(milliseconds: 500));
 
       // 如果之前在播放，恢复播放
       if (wasPlaying && !_disposed) {
@@ -735,6 +766,10 @@ class _EnhancedMediaPlayerPageState
       }
 
       debugPrint('[MediaPlayer] Playback recovered');
+
+      // 重置监控状态
+      _lastPositionUpdate = DateTime.now();
+      _lastPosition = _videoController!.value.position;
     } catch (e) {
       debugPrint('[MediaPlayer] Recovery failed: $e');
       // 恢复失败，重置计数避免无限循环

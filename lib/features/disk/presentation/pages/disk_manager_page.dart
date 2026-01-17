@@ -1213,13 +1213,14 @@ class _DiskCard extends ConsumerWidget {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('磁盘格式化成功 ($fileSystem)'),
+          content: Text('磁盘格式化成功 ($fileSystem)，正在刷新...'),
           backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
         ),
       );
 
-      // 等待一下让文件系统信息更新
-      await Future.delayed(const Duration(seconds: 2));
+      // 等待文件系统信息更新
+      await Future.delayed(const Duration(seconds: 3));
 
       // 刷新磁盘列表以显示新的文件系统
       ref.invalidate(diskListProvider);

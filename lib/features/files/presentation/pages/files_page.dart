@@ -2231,16 +2231,18 @@ class _FilesPageState extends ConsumerState<FilesPage>
             disk.fileSystem != 'Unknown' ? disk.fileSystem.toLowerCase() : null,
       );
 
-      // Wait a bit for the system to update
-      await Future.delayed(const Duration(milliseconds: 500));
+      // Wait for the system to update
+      await Future.delayed(const Duration(milliseconds: 1500));
 
       // Close loading dialog
       if (mounted) {
         rootNavigator.pop();
       }
 
-      // Refresh disk list
+      // Refresh disk list and file list
       ref.invalidate(diskInfoProvider);
+      final currentPath = ref.read(currentPathProvider);
+      ref.invalidate(directoryListingProvider(currentPath));
 
       // Show success message
       if (mounted) {

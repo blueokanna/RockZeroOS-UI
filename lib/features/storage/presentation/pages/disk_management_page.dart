@@ -1201,8 +1201,12 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content: Text('磁盘卸载成功'), backgroundColor: Colors.green),
+              content: Text('磁盘卸载成功，正在刷新...'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 2)),
         );
+        // 等待卸载完成后自动刷新
+        await Future.delayed(const Duration(milliseconds: 1000));
         widget.onRefresh();
       }
     } catch (e) {
@@ -1540,10 +1544,13 @@ class _MountDiskDialogState extends ConsumerState<_MountDiskDialog> {
           SnackBar(
             content: Text(isAlreadyMounted
                 ? '磁盘已挂载于 ${response.data['mount_point']}'
-                : '磁盘挂载成功'),
+                : '磁盘挂载成功，正在刷新...'),
             backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
           ),
         );
+        // 等待挂载完成后自动刷新
+        await Future.delayed(const Duration(milliseconds: 1000));
         widget.onComplete();
       }
     } catch (e) {
