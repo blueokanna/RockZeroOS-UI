@@ -602,8 +602,21 @@ class _EnhancedMediaPlayerPageState
       // 设置播放速度
       await _videoController!.setPlaybackSpeed(_playbackSpeed);
 
-      // 启动播放监控
-      _startPlaybackMonitor();
+      // 等待一下再开始播放，确保资源准备好
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      // 确保视频开始播放
+      if (!_disposed &&
+          _videoController != null &&
+          _videoController!.value.isInitialized) {
+        await _videoController!.play();
+      }
+
+      // 延迟启动播放监控，避免初始化阶段误判
+      await Future.delayed(const Duration(seconds: 2));
+      if (!_disposed) {
+        _startPlaybackMonitor();
+      }
 
       _retryCount = 0;
       _stallCount = 0;
@@ -654,7 +667,7 @@ class _EnhancedMediaPlayerPageState
     _lastPositionUpdate = DateTime.now();
     _lastPosition = Duration.zero;
 
-    _playbackMonitor = Timer.periodic(const Duration(seconds: 2), (timer) {
+    _playbackMonitor = Timer.periodic(const Duration(seconds: 3), (timer) {
       if (_disposed || _videoController == null || !mounted) {
         timer.cancel();
         return;
@@ -663,28 +676,40 @@ class _EnhancedMediaPlayerPageState
       final value = _videoController!.value;
       final now = DateTime.now();
 
-      if (value.isPlaying && !value.isBuffering) {
-        if (_lastPosition == value.position &&
+      // 只在真正播放时检测卡顿（不在缓冲、暂停或初始化状态）
+      if (value.isPlaying && !value.isBuffering && value.isInitialized) {
+        final positionDiff =
+            (value.position - _lastPosition).inMilliseconds.abs();
+
+        // 如果位置没有变化且超过5秒，才认为是卡顿
+        if (positionDiff < 100 &&
             _lastPositionUpdate != null &&
-            now.difference(_lastPositionUpdate!).inSeconds > 3) {
+            now.difference(_lastPositionUpdate!).inSeconds > 5) {
           _stallCount++;
           debugPrint('[MediaPlayer] Playback stalled, count: $_stallCount');
 
-          if (_stallCount >= 3) {
+          // 增加容忍度，5次卡顿才尝试恢复
+          if (_stallCount >= 5) {
             _recoverPlayback();
           }
-        } else {
+        } else if (positionDiff >= 100) {
+          // 位置有变化，重置卡顿计数
           _stallCount = 0;
+          _lastPositionUpdate = now;
         }
+      } else {
+        // 非播放状态，重置计数
+        _stallCount = 0;
       }
 
       _lastPosition = value.position;
-      _lastPositionUpdate = now;
     });
   }
 
   Future<void> _recoverPlayback() async {
-    if (_disposed || _videoController == null) {
+    if (_disposed ||
+        _videoController == null ||
+        !_videoController!.value.isInitialized) {
       return;
     }
 
@@ -693,15 +718,27 @@ class _EnhancedMediaPlayerPageState
 
     try {
       final currentPosition = _videoController!.value.position;
+      final wasPlaying = _videoController!.value.isPlaying;
+
+      // 暂停
       await _videoController!.pause();
-      await Future.delayed(const Duration(milliseconds: 200));
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      // 跳转到稍后的位置
       final newPosition = currentPosition + const Duration(milliseconds: 500);
       await _videoController!.seekTo(newPosition);
-      await Future.delayed(const Duration(milliseconds: 100));
+      await Future.delayed(const Duration(milliseconds: 200));
 
-      await _videoController!.play();
+      // 如果之前在播放，恢复播放
+      if (wasPlaying && !_disposed) {
+        await _videoController!.play();
+      }
+
+      debugPrint('[MediaPlayer] Playback recovered');
     } catch (e) {
       debugPrint('[MediaPlayer] Recovery failed: $e');
+      // 恢复失败，重置计数避免无限循环
+      _stallCount = 0;
     }
   }
 
