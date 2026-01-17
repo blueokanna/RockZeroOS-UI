@@ -871,10 +871,14 @@ class _InitializeDiskSheetState extends ConsumerState<_InitializeDiskSheet> {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(widget.isReformat ? '磁盘格式化成功' : '磁盘初始化成功'),
+            content:
+                Text(widget.isReformat ? '磁盘格式化成功，正在刷新...' : '磁盘初始化成功，正在刷新...'),
             backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
           ),
         );
+        // 等待文件系统信息更新后再刷新
+        await Future.delayed(const Duration(milliseconds: 2000));
         widget.onComplete();
       }
     } catch (e) {
@@ -1127,14 +1131,20 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
     if (isWholeDisk && hasNoFileSystem) {
       // 显示初始化对话框
       if (mounted) {
-        Navigator.pop(context);
-        _showInitializeDialog();
+        Navigator.pop(context); // 先关闭详情页
+        // 等待动画完成后再显示对话框
+        await Future.delayed(const Duration(milliseconds: 300));
+        if (mounted) {
+          _showInitializeDialog();
+        }
       }
       return;
     }
 
-    // 显示挂载选项对话框
-    _showMountOptionsDialog();
+    // 显示挂载选项对话框（不关闭详情页，直接在上面显示）
+    if (mounted) {
+      _showMountOptionsDialog();
+    }
   }
 
   bool _isWholeDiskDevice(String devicePath) {
@@ -1160,14 +1170,23 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
   }
 
   void _showMountOptionsDialog() {
-    showDialog(
+    // 使用 showModalBottomSheet 而不是 showDialog，更适合移动端
+    showModalBottomSheet(
       context: context,
-      builder: (context) => _MountDiskDialog(
-        disk: widget.disk,
-        onComplete: () {
-          Navigator.pop(context); // 关闭详情sheet
-          widget.onRefresh();
-        },
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: _MountDiskDialog(
+          disk: widget.disk,
+          onComplete: () {
+            Navigator.pop(context); // 关闭挂载对话框
+            Navigator.pop(context); // 关闭详情sheet
+            widget.onRefresh();
+          },
+        ),
       ),
     );
   }
@@ -1226,12 +1245,17 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
   }
 
   void _showFormatDialog() {
-    showDialog(
+    // 使用 showModalBottomSheet 而不是 showDialog
+    showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      isDismissible: false, // 防止误触关闭
       builder: (context) => _FormatDiskDialog(
         disk: widget.disk,
         onComplete: () {
-          Navigator.pop(context);
+          Navigator.pop(context); // 关闭格式化对话框
+          Navigator.pop(context); // 关闭详情sheet
           widget.onRefresh();
         },
       ),
@@ -1546,149 +1570,186 @@ class _MountDiskDialogState extends ConsumerState<_MountDiskDialog> {
       ...supportedFileSystems,
     ];
 
-    return AlertDialog(
-      title: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  colorScheme.primaryContainer,
-                  colorScheme.primaryContainer.withValues(alpha: 0.7),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(Icons.play_arrow_rounded,
-                color: colorScheme.onPrimaryContainer),
-          ),
-          const SizedBox(width: 12),
-          const Expanded(child: Text('挂载磁盘')),
-        ],
+    return Container(
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 磁盘信息
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: colorScheme.primaryContainer.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 标题
+              Row(
                 children: [
-                  Row(
-                    children: [
-                      Icon(Icons.info_outline,
-                          size: 16, color: colorScheme.primary),
-                      const SizedBox(width: 8),
-                      Text('磁盘信息',
-                          style: textTheme.labelMedium?.copyWith(
-                            color: colorScheme.primary,
-                            fontWeight: FontWeight.bold,
-                          )),
-                    ],
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          colorScheme.primaryContainer,
+                          colorScheme.primaryContainer.withValues(alpha: 0.7),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(Icons.play_arrow_rounded,
+                        color: colorScheme.onPrimaryContainer),
                   ),
-                  const SizedBox(height: 8),
-                  Text('设备: ${widget.disk.devicePath}',
-                      style: textTheme.bodySmall),
-                  Text('容量: ${_formatBytes(widget.disk.totalSpace)}',
-                      style: textTheme.bodySmall),
-                  if (widget.disk.fileSystem.isNotEmpty &&
-                      widget.disk.fileSystem != 'Unknown')
-                    Text('检测到的文件系统: ${widget.disk.fileSystem.toUpperCase()}',
-                        style: textTheme.bodySmall),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '挂载磁盘',
+                      style: textTheme.titleLarge
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded),
+                    onPressed: () => Navigator.pop(context),
+                  ),
                 ],
               ),
-            ),
-            const SizedBox(height: 16),
+              const SizedBox(height: 24),
 
-            // 文件系统选择
-            Text('文件系统类型',
-                style: textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              initialValue: _selectedFs,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                isDense: true,
-                prefixIcon: Icon(Icons.storage_rounded),
+              // 磁盘信息
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: colorScheme.primaryContainer.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.info_outline,
+                            size: 16, color: colorScheme.primary),
+                        const SizedBox(width: 8),
+                        Text('磁盘信息',
+                            style: textTheme.labelMedium?.copyWith(
+                              color: colorScheme.primary,
+                              fontWeight: FontWeight.bold,
+                            )),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text('设备: ${widget.disk.devicePath}',
+                        style: textTheme.bodySmall),
+                    Text('容量: ${_formatBytes(widget.disk.totalSpace)}',
+                        style: textTheme.bodySmall),
+                    if (widget.disk.fileSystem.isNotEmpty &&
+                        widget.disk.fileSystem != 'Unknown')
+                      Text('检测到的文件系统: ${widget.disk.fileSystem.toUpperCase()}',
+                          style: textTheme.bodySmall),
+                  ],
+                ),
               ),
-              items: fsOptions
-                  .map((fs) => DropdownMenuItem(
-                        value: fs['name'] as String,
-                        child: Row(
-                          children: [
-                            Text(fs['displayName'] as String),
-                            if (fs['name'] == 'auto') ...[
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: colorScheme.primaryContainer,
-                                  borderRadius: BorderRadius.circular(4),
+              const SizedBox(height: 16),
+
+              // 文件系统选择
+              Text('文件系统类型',
+                  style: textTheme.titleSmall
+                      ?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: _selectedFs,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                  prefixIcon: Icon(Icons.storage_rounded),
+                ),
+                items: fsOptions
+                    .map((fs) => DropdownMenuItem(
+                          value: fs['name'] as String,
+                          child: Row(
+                            children: [
+                              Text(fs['displayName'] as String),
+                              if (fs['name'] == 'auto') ...[
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: colorScheme.primaryContainer,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text('推荐',
+                                      style: textTheme.labelSmall?.copyWith(
+                                        color: colorScheme.onPrimaryContainer,
+                                      )),
                                 ),
-                                child: Text('推荐',
-                                    style: textTheme.labelSmall?.copyWith(
-                                      color: colorScheme.onPrimaryContainer,
-                                    )),
-                              ),
+                              ],
                             ],
-                          ],
-                        ),
-                      ))
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) setState(() => _selectedFs = v);
-              },
-            ),
-            const SizedBox(height: 16),
-
-            // 挂载点
-            Text('挂载点',
-                style: textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _mountPointController,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                isDense: true,
-                prefixIcon: Icon(Icons.folder_rounded),
-                hintText: '/mnt/disk_name',
+                          ),
+                        ))
+                    .toList(),
+                onChanged: (v) {
+                  if (v != null) setState(() => _selectedFs = v);
+                },
               ),
-            ),
-          ],
+              const SizedBox(height: 16),
+
+              // 挂载点
+              Text('挂载点',
+                  style: textTheme.titleSmall
+                      ?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _mountPointController,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                  prefixIcon: Icon(Icons.folder_rounded),
+                  hintText: '/mnt/disk_name',
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // 操作按钮
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(0, 48),
+                      ),
+                      child: const Text('取消'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: FilledButton.icon(
+                      onPressed: _isMounting ? null : _mountDisk,
+                      icon: _isMounting
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.check_rounded),
+                      label: Text(_isMounting ? '挂载中...' : '挂载'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 48),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('取消'),
-        ),
-        FilledButton.icon(
-          onPressed: _isMounting ? null : _mountDisk,
-          icon: _isMounting
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white),
-                )
-              : const Icon(Icons.check_rounded),
-          label: Text(_isMounting ? '挂载中...' : '挂载'),
-        ),
-      ],
     );
   }
 
@@ -1744,8 +1805,14 @@ class _FormatDiskDialogState extends ConsumerState<_FormatDiskDialog> {
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('格式化成功'), backgroundColor: Colors.green),
+          const SnackBar(
+            content: Text('格式化成功，正在刷新...'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
         );
+        // 等待文件系统信息更新后再刷新
+        await Future.delayed(const Duration(milliseconds: 2000));
         widget.onComplete();
       }
     } catch (e) {
@@ -1761,83 +1828,261 @@ class _FormatDiskDialogState extends ConsumerState<_FormatDiskDialog> {
     }
   }
 
+  String _formatBytes(int bytes) {
+    if (bytes >= 1024 * 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024 * 1024)).toStringAsFixed(2)} TB';
+    }
+    if (bytes >= 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    }
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(0)} MB';
+    }
+    return '${(bytes / 1024).toStringAsFixed(0)} KB';
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
 
-    return AlertDialog(
-      title: Row(
-        children: [
-          Icon(Icons.warning_rounded, color: colorScheme.error),
-          const SizedBox(width: 8),
-          const Text('格式化磁盘'),
-        ],
+    return Container(
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (!_confirmed) ...[
-              Text('确定要格式化 ${widget.disk.label ?? widget.disk.name} 吗？'),
-              const SizedBox(height: 8),
-              Text(
-                '此操作将清除磁盘上的所有数据！',
-                style: TextStyle(
-                    color: colorScheme.error, fontWeight: FontWeight.bold),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 标题
+              Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: colorScheme.errorContainer,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(Icons.warning_rounded,
+                        color: colorScheme.onErrorContainer),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '格式化磁盘',
+                      style: textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: colorScheme.error,
+                      ),
+                    ),
+                  ),
+                  if (!_confirmed)
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                ],
               ),
-            ] else ...[
-              const Text('选择文件系统:'),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: _selectedFs,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  isDense: true,
+              const SizedBox(height: 24),
+
+              if (!_confirmed) ...[
+                // 警告信息
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: colorScheme.errorContainer.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: colorScheme.error.withValues(alpha: 0.5),
+                      width: 2,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.error_outline,
+                              color: colorScheme.error, size: 24),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              '危险操作警告',
+                              style: textTheme.titleMedium?.copyWith(
+                                color: colorScheme.error,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        '确定要格式化 ${widget.disk.label ?? widget.disk.name} 吗？',
+                        style: textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '⚠️ 此操作将永久清除磁盘上的所有数据！\n⚠️ 此操作不可撤销！',
+                        style: textTheme.bodySmall?.copyWith(
+                          color: colorScheme.error,
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: colorScheme.surface,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('磁盘信息:',
+                                style: textTheme.labelSmall?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                )),
+                            const SizedBox(height: 4),
+                            Text('设备: ${widget.disk.devicePath}',
+                                style: textTheme.bodySmall),
+                            Text('容量: ${_formatBytes(widget.disk.totalSpace)}',
+                                style: textTheme.bodySmall),
+                            if (widget.disk.fileSystem.isNotEmpty)
+                              Text('当前文件系统: ${widget.disk.fileSystem}',
+                                  style: textTheme.bodySmall),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                items: supportedFileSystems
-                    .map((fs) => DropdownMenuItem(
-                          value: fs['name'] as String,
-                          child: Text(fs['displayName'] as String),
-                        ))
-                    .toList(),
-                onChanged: (v) {
-                  if (v != null) {
-                    setState(() => _selectedFs = v);
-                  }
-                },
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _labelController,
-                decoration: const InputDecoration(
-                  labelText: '磁盘标签 (可选)',
-                  border: OutlineInputBorder(),
-                  isDense: true,
+              ] else ...[
+                // 格式化选项
+                Text('选择文件系统',
+                    style: textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedFs,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                    prefixIcon: Icon(Icons.storage_rounded),
+                  ),
+                  items: supportedFileSystems
+                      .map((fs) => DropdownMenuItem(
+                            value: fs['name'] as String,
+                            child: Row(
+                              children: [
+                                Icon(fs['icon'] as IconData, size: 20),
+                                const SizedBox(width: 8),
+                                Text(fs['displayName'] as String),
+                                if (fs['recommended'] == true) ...[
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: colorScheme.primaryContainer,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text('推荐',
+                                        style: textTheme.labelSmall?.copyWith(
+                                          color: colorScheme.onPrimaryContainer,
+                                        )),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ))
+                      .toList(),
+                  onChanged: (v) {
+                    if (v != null) {
+                      setState(() => _selectedFs = v);
+                    }
+                  },
                 ),
+                const SizedBox(height: 16),
+                Text('磁盘标签 (可选)',
+                    style: textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _labelController,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                    prefixIcon: Icon(Icons.label_rounded),
+                    hintText: '例如: MyDisk',
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 24),
+
+              // 操作按钮
+              Row(
+                children: [
+                  if (_confirmed)
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: _isFormatting
+                            ? null
+                            : () => setState(() => _confirmed = false),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(0, 48),
+                        ),
+                        child: const Text('返回'),
+                      ),
+                    )
+                  else
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(0, 48),
+                        ),
+                        child: const Text('取消'),
+                      ),
+                    ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: FilledButton.icon(
+                      onPressed: _isFormatting ? null : _formatDisk,
+                      icon: _isFormatting
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white),
+                            )
+                          : Icon(_confirmed
+                              ? Icons.check_rounded
+                              : Icons.arrow_forward_rounded),
+                      label: Text(_isFormatting
+                          ? '格式化中...'
+                          : (_confirmed ? '确认格式化' : '继续')),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 48),
+                        backgroundColor: colorScheme.error,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
-          ],
+          ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: _isFormatting ? null : _formatDisk,
-          style: FilledButton.styleFrom(backgroundColor: colorScheme.error),
-          child: _isFormatting
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white),
-                )
-              : Text(_confirmed ? '确认格式化' : '继续'),
-        ),
-      ],
     );
   }
 }
