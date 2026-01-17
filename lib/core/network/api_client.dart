@@ -53,8 +53,8 @@ class ApiClient {
       BaseOptions(
         baseUrl: device?.baseUrl ?? '',
         connectTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(seconds: 30),
-        sendTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(minutes: 5), // 增加接收超时到5分钟
+        sendTimeout: const Duration(minutes: 30), // 增加发送超时到30分钟（用于大文件上传）
         headers: {
           'Content-Type': 'application/json; charset=utf-8',
           'Accept': 'application/json',

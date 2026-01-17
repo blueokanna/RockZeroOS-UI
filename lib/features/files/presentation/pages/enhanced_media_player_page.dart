@@ -233,12 +233,6 @@ class _EnhancedMediaPlayerPageState
   bool _isInitializing = false;
   bool _disposed = false;
 
-  // 播放状态监控
-  Timer? _playbackMonitor;
-  DateTime? _lastPositionUpdate;
-  Duration _lastPosition = Duration.zero;
-  int _stallCount = 0;
-
   // 多轨道支持
   int _selectedAudioTrack = 0;
   int _selectedSubtitleTrack = -1; // -1 表示关闭字幕
@@ -325,7 +319,6 @@ class _EnhancedMediaPlayerPageState
   @override
   void dispose() {
     _disposed = true;
-    _playbackMonitor?.cancel();
     _chewieController?.dispose();
     _videoController?.dispose();
     _exitFullScreen();
@@ -512,7 +505,6 @@ class _EnhancedMediaPlayerPageState
 
     try {
       // 清理旧的控制器
-      _playbackMonitor?.cancel();
       await _chewieController?.pause();
       _chewieController?.dispose();
       _chewieController = null;
@@ -575,21 +567,19 @@ class _EnhancedMediaPlayerPageState
       // 获取主题颜色
       final primaryColor = Theme.of(context).colorScheme.primary;
 
-      // 创建 Chewie 控制器（VLC级别配置）
+      // 创建 Chewie 控制器（VLC级别配置 - 完全简化）
       _chewieController = ChewieController(
         videoPlayerController: _videoController!,
-        autoPlay: true,
+        autoPlay: true, // 自动播放
         looping: _isLooping,
         showControls: true,
         allowFullScreen: false,
         allowMuting: true,
         allowPlaybackSpeedChanging: true,
         playbackSpeeds: _playbackSpeeds,
-        autoInitialize: false,
+        autoInitialize: true,
         showOptions: false,
-        // VLC级别：启用随点随播
         allowedScreenSleep: false,
-        // 启用进度条拖动
         draggableProgressBar: true,
         placeholder: Container(
           color: Colors.black,
@@ -610,28 +600,14 @@ class _EnhancedMediaPlayerPageState
       // 设置播放速度
       await _videoController!.setPlaybackSpeed(_playbackSpeed);
 
-      // 等待一下再开始播放，确保资源准备好
-      await Future.delayed(const Duration(milliseconds: 300));
-
-      // 确保视频开始播放
-      if (!_disposed &&
-          _videoController != null &&
-          _videoController!.value.isInitialized) {
-        await _videoController!.play();
-      }
-
-      // 延迟启动播放监控，避免初始化阶段误判
-      await Future.delayed(const Duration(seconds: 2));
-      if (!_disposed) {
-        _startPlaybackMonitor();
-      }
-
       _retryCount = 0;
-      _stallCount = 0;
 
       if (mounted && !_disposed) {
         setState(() => _isLoading = false);
       }
+
+      debugPrint(
+          '[MediaPlayer] Initialization complete - VLC mode (no monitoring)');
     } catch (e) {
       debugPrint('[MediaPlayer] Error: $e');
 
@@ -667,113 +643,6 @@ class _EnhancedMediaPlayerPageState
       }
     } finally {
       _isInitializing = false;
-    }
-  }
-
-  /// 随点随播：跳转到指定位置
-  // ignore: unused_element
-  Future<void> _seekTo(Duration position) async {
-    if (_videoController == null || !_videoController!.value.isInitialized) {
-      return;
-    }
-
-    try {
-      debugPrint('[MediaPlayer] Seeking to: $position');
-      await _videoController!.seekTo(position);
-
-      // 重置卡顿计数
-      _stallCount = 0;
-      _lastPositionUpdate = DateTime.now();
-      _lastPosition = position;
-    } catch (e) {
-      debugPrint('[MediaPlayer] Seek failed: $e');
-    }
-  }
-
-  void _startPlaybackMonitor() {
-    _playbackMonitor?.cancel();
-    _lastPositionUpdate = DateTime.now();
-    _lastPosition = Duration.zero;
-
-    // VLC级别的稳定性 - 使用更长的检测间隔和容忍度
-    _playbackMonitor = Timer.periodic(const Duration(seconds: 7), (timer) {
-      if (_disposed || _videoController == null || !mounted) {
-        timer.cancel();
-        return;
-      }
-
-      final value = _videoController!.value;
-      final now = DateTime.now();
-
-      // 只在真正播放时检测卡顿（不在缓冲、暂停或初始化状态）
-      if (value.isPlaying && !value.isBuffering && value.isInitialized) {
-        final positionDiff =
-            (value.position - _lastPosition).inMilliseconds.abs();
-
-        // VLC级别：位置没有变化且超过15秒，才认为是真正卡顿
-        if (positionDiff < 300 &&
-            _lastPositionUpdate != null &&
-            now.difference(_lastPositionUpdate!).inSeconds > 15) {
-          _stallCount++;
-          debugPrint(
-              '[MediaPlayer] Playback stalled (VLC-level), count: $_stallCount');
-
-          // 极高容忍度：15次卡顿才尝试恢复（约105秒）
-          // 这样可以处理UDP/TCP混合传输的网络波动
-          if (_stallCount >= 15) {
-            _recoverPlayback();
-          }
-        } else if (positionDiff >= 300) {
-          // 位置有变化，重置卡顿计数
-          _stallCount = 0;
-          _lastPositionUpdate = now;
-        }
-      } else {
-        // 非播放状态，重置计数
-        _stallCount = 0;
-      }
-
-      _lastPosition = value.position;
-    });
-  }
-
-  Future<void> _recoverPlayback() async {
-    if (_disposed ||
-        _videoController == null ||
-        !_videoController!.value.isInitialized) {
-      return;
-    }
-
-    debugPrint('[MediaPlayer] Attempting to recover playback...');
-    _stallCount = 0;
-
-    try {
-      final currentPosition = _videoController!.value.position;
-      final wasPlaying = _videoController!.value.isPlaying;
-
-      // 暂停
-      await _videoController!.pause();
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // 跳转到稍后的位置（跳过可能卡住的部分）
-      final newPosition = currentPosition + const Duration(seconds: 1);
-      await _videoController!.seekTo(newPosition);
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // 如果之前在播放，恢复播放
-      if (wasPlaying && !_disposed) {
-        await _videoController!.play();
-      }
-
-      debugPrint('[MediaPlayer] Playback recovered');
-
-      // 重置监控状态
-      _lastPositionUpdate = DateTime.now();
-      _lastPosition = _videoController!.value.position;
-    } catch (e) {
-      debugPrint('[MediaPlayer] Recovery failed: $e');
-      // 恢复失败，重置计数避免无限循环
-      _stallCount = 0;
     }
   }
 

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/api_models.dart';
@@ -610,7 +611,12 @@ class ApiService {
     void Function(int, int)? onProgress,
   }) async {
     final formData = FormData();
+    int totalSize = 0;
+
     for (final file in files) {
+      final fileSize = file.lengthSync();
+      totalSize += fileSize;
+
       formData.files.add(
         MapEntry(
           'file',
@@ -622,11 +628,27 @@ class ApiService {
       );
     }
 
+    // 根据文件大小动态计算超时时间
+    // 假设最低速度 100KB/s，加上30秒的缓冲时间
+    final estimatedSeconds = (totalSize / (100 * 1024)).ceil() + 30;
+    final sendTimeout =
+        Duration(seconds: estimatedSeconds.clamp(60, 3600)); // 最少1分钟，最多1小时
+
+    debugPrint(
+        '[Upload] Total size: ${totalSize / (1024 * 1024)} MB, timeout: ${sendTimeout.inSeconds}s');
+
     await _dio.post(
       '/api/v1/filemanager/upload',
       data: formData,
       queryParameters: {'path': path},
       onSendProgress: onProgress,
+      options: Options(
+        sendTimeout: sendTimeout, // 动态超时
+        receiveTimeout: const Duration(minutes: 5),
+        headers: {
+          'Connection': 'keep-alive',
+        },
+      ),
     );
   }
 

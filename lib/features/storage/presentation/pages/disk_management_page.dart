@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/network/api_service.dart';
 import '../../../../core/services/biometric_service.dart';
 import '../../../../core/services/device_discovery_service.dart';
+import '../../../../core/services/filesystem_monitor_service.dart';
 
 /// Supported file systems for formatting
 const List<Map<String, dynamic>> supportedFileSystems = [
@@ -12,42 +15,56 @@ const List<Map<String, dynamic>> supportedFileSystems = [
     'displayName': 'EXT4',
     'description': 'Linux 默认文件系统，稳定可靠',
     'icon': Icons.storage_rounded,
-    'recommended': true
+    'recommended': true,
+    'category': 'linux'
   },
   {
     'name': 'xfs',
     'displayName': 'XFS',
     'description': '高性能文件系统，适合大文件',
     'icon': Icons.speed_rounded,
-    'recommended': false
+    'recommended': false,
+    'category': 'linux'
   },
   {
     'name': 'btrfs',
     'displayName': 'Btrfs',
     'description': '现代 CoW 文件系统，支持快照',
     'icon': Icons.layers_rounded,
-    'recommended': false
+    'recommended': false,
+    'category': 'linux'
   },
   {
     'name': 'f2fs',
     'displayName': 'F2FS',
-    'description': '闪存优化文件系统',
+    'description': '闪存优化文件系统，适合SSD',
     'icon': Icons.flash_on_rounded,
-    'recommended': false
-  },
-  {
-    'name': 'exfat',
-    'displayName': 'exFAT',
-    'description': '跨平台兼容，支持大文件',
-    'icon': Icons.devices_rounded,
-    'recommended': false
+    'recommended': false,
+    'category': 'linux'
   },
   {
     'name': 'ntfs',
     'displayName': 'NTFS',
-    'description': 'Windows 兼容',
+    'description': 'Windows 原生文件系统，完全兼容',
     'icon': Icons.window_rounded,
-    'recommended': false
+    'recommended': true,
+    'category': 'windows'
+  },
+  {
+    'name': 'exfat',
+    'displayName': 'exFAT',
+    'description': '跨平台兼容，Windows/Linux/Mac通用',
+    'icon': Icons.devices_rounded,
+    'recommended': true,
+    'category': 'cross-platform'
+  },
+  {
+    'name': 'fat32',
+    'displayName': 'FAT32',
+    'description': '最大兼容性，但单文件限制4GB',
+    'icon': Icons.sd_card_rounded,
+    'recommended': false,
+    'category': 'cross-platform'
   },
 ];
 
@@ -132,6 +149,63 @@ class DiskManagementPage extends ConsumerStatefulWidget {
 
 class _DiskManagementPageState extends ConsumerState<DiskManagementPage> {
   bool _isScanning = false;
+  Timer? _autoRefreshTimer;
+  StreamSubscription<FileSystemEvent>? _fsEventSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // 自动刷新：每5秒刷新一次磁盘状态
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (mounted) {
+        ref.invalidate(allDisksDetailProvider);
+      }
+    });
+
+    // 监听文件系统事件（磁盘相关）
+    final monitor = ref.read(fileSystemMonitorProvider);
+    _fsEventSubscription = monitor.listenToDiskEvents().listen((event) {
+      debugPrint('[DiskManagement] Received FS event: $event');
+      if (mounted) {
+        // 立即刷新磁盘信息
+        ref.invalidate(allDisksDetailProvider);
+
+        // 显示提示
+        String message = '';
+        switch (event.type) {
+          case FileSystemEventType.diskFormatted:
+            message = '磁盘 ${event.diskName} 格式化完成';
+            break;
+          case FileSystemEventType.diskMounted:
+            message = '磁盘 ${event.diskName} 已挂载';
+            break;
+          case FileSystemEventType.diskUnmounted:
+            message = '磁盘 ${event.diskName} 已卸载';
+            break;
+          default:
+            break;
+        }
+
+        if (message.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(message),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    _fsEventSubscription?.cancel();
+    super.dispose();
+  }
 
   Future<void> _scanDisks() async {
     setState(() => _isScanning = true);
@@ -348,23 +422,82 @@ class _DiskCard extends ConsumerWidget {
     'bcachefs',
   };
 
-  // Linux 可以挂载但非原生的文件系统
-  static const Set<String> linuxCompatibleFileSystems = {
-    'ntfs',
-    'exfat',
-    'vfat',
-    'fat32',
-    'fat16',
-    'hfsplus',
-    'udf',
+  // Linux 完全兼容的跨平台文件系统（推荐使用）
+  static const Set<String> crossPlatformFileSystems = {
+    'ntfs', // Windows原生，Linux完全支持（通过ntfs-3g）
+    'exfat', // 跨平台，Windows/Linux/Mac通用
+    'fat32', // 最大兼容性
+    'vfat', // FAT32的Linux名称
   };
 
-  // 检查是否是非 Linux 原生文件系统
+  // 其他兼容的文件系统
+  static const Set<String> otherCompatibleFileSystems = {
+    'fat16',
+    'hfsplus', // Mac文件系统
+    'udf', // 光盘文件系统
+  };
+
+  // 获取文件系统类别和推荐度
+  Map<String, dynamic> _getFileSystemInfo() {
+    final fs = disk.fileSystem.toLowerCase();
+
+    if (linuxNativeFileSystems.contains(fs)) {
+      return {
+        'category': 'Linux原生',
+        'color': Colors.green,
+        'icon': Icons.check_circle_rounded,
+        'needsFormat': false,
+        'description': 'Linux原生文件系统，性能最佳',
+      };
+    }
+
+    if (fs == 'ntfs') {
+      return {
+        'category': 'Windows兼容',
+        'color': Colors.blue,
+        'icon': Icons.window_rounded,
+        'needsFormat': false,
+        'description': 'Windows原生，Linux完全支持',
+      };
+    }
+
+    if (fs == 'exfat') {
+      return {
+        'category': '跨平台',
+        'color': Colors.purple,
+        'icon': Icons.devices_rounded,
+        'needsFormat': false,
+        'description': 'Windows/Linux/Mac通用',
+      };
+    }
+
+    if (crossPlatformFileSystems.contains(fs) ||
+        otherCompatibleFileSystems.contains(fs)) {
+      return {
+        'category': '兼容',
+        'color': Colors.orange,
+        'icon': Icons.info_rounded,
+        'needsFormat': false,
+        'description': '兼容文件系统',
+      };
+    }
+
+    return {
+      'category': '不支持',
+      'color': Colors.red,
+      'icon': Icons.warning_rounded,
+      'needsFormat': true,
+      'description': '需要格式化',
+    };
+  }
+
+  // 检查是否是非 Linux 原生文件系统（但兼容）
   bool _isNonLinuxNativeFs() {
     final fs = disk.fileSystem.toLowerCase();
     if (fs.isEmpty || fs == 'unknown') return false;
     return !linuxNativeFileSystems.contains(fs) &&
-        linuxCompatibleFileSystems.contains(fs);
+        (crossPlatformFileSystems.contains(fs) ||
+            otherCompatibleFileSystems.contains(fs));
   }
 
   // 检查是否是完全不支持的文件系统
@@ -372,7 +505,8 @@ class _DiskCard extends ConsumerWidget {
     final fs = disk.fileSystem.toLowerCase();
     if (fs.isEmpty || fs == 'unknown') return false;
     return !linuxNativeFileSystems.contains(fs) &&
-        !linuxCompatibleFileSystems.contains(fs);
+        !crossPlatformFileSystems.contains(fs) &&
+        !otherCompatibleFileSystems.contains(fs);
   }
 
   @override
@@ -480,55 +614,78 @@ class _DiskCard extends ConsumerWidget {
                 const SizedBox(height: 12),
                 Text('容量: ${_formatBytes(disk.totalSpace)}',
                     style: textTheme.bodyMedium),
-                if (isNonLinuxNative) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color:
-                          colorScheme.tertiaryContainer.withValues(alpha: 0.3),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
+                // 显示文件系统信息
+                () {
+                  final fsInfo = _getFileSystemInfo();
+                  final needsFormat = fsInfo['needsFormat'] as bool;
+
+                  if (needsFormat) {
+                    // 不支持的文件系统
+                    return Column(
                       children: [
-                        Icon(Icons.info_rounded,
-                            color: colorScheme.tertiary, size: 20),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '${disk.fileSystem.toUpperCase()} 非 Linux 原生格式，建议格式化为 EXT4/XFS',
-                            style: textTheme.bodySmall
-                                ?.copyWith(color: colorScheme.tertiary),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: colorScheme.errorContainer
+                                .withValues(alpha: 0.3),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(fsInfo['icon'] as IconData,
+                                  color: fsInfo['color'] as Color, size: 20),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  '${disk.fileSystem.toUpperCase()} ${fsInfo['description']}',
+                                  style: textTheme.bodySmall?.copyWith(
+                                      color: fsInfo['color'] as Color),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
-                    ),
-                  ),
-                ],
-                if (isUnsupported) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: colorScheme.errorContainer.withValues(alpha: 0.3),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
+                    );
+                  } else if (fsInfo['category'] == 'Windows兼容' ||
+                      fsInfo['category'] == '跨平台') {
+                    // Windows/跨平台文件系统 - 显示为正常可用
+                    return Column(
                       children: [
-                        Icon(Icons.warning_rounded,
-                            color: colorScheme.error, size: 20),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '${disk.fileSystem.toUpperCase()} 不受支持，需要格式化',
-                            style: textTheme.bodySmall
-                                ?.copyWith(color: colorScheme.error),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: (fsInfo['color'] as Color)
+                                .withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: (fsInfo['color'] as Color)
+                                  .withValues(alpha: 0.3),
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(fsInfo['icon'] as IconData,
+                                  color: fsInfo['color'] as Color, size: 20),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  '${disk.fileSystem.toUpperCase()} - ${fsInfo['description']}',
+                                  style: textTheme.bodySmall?.copyWith(
+                                      color: fsInfo['color'] as Color),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
-                    ),
-                  ),
-                ],
+                    );
+                  }
+                  return const SizedBox.shrink();
+                }(),
               ] else ...[
                 const SizedBox(height: 12),
                 Container(
@@ -868,6 +1025,17 @@ class _InitializeDiskSheetState extends ConsumerState<_InitializeDiskSheet> {
       }
 
       if (mounted) {
+        // 发送文件系统事件
+        final monitor = ref.read(fileSystemMonitorProvider);
+        monitor.emitDiskFormatted(
+          widget.disk.name,
+          metadata: {
+            'device': widget.disk.devicePath,
+            'filesystem': _selectedFs,
+            'label': _labelController.text,
+          },
+        );
+
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

@@ -11,16 +11,11 @@ import 'package:path_provider/path_provider.dart';
 
 import '../theme/app_theme.dart';
 
-/// 背景设置模式
 enum BackgroundMode {
-  /// 默认 - 从系统取色
   defaultMode,
-
-  /// 自定义壁纸
   customWallpaper,
 }
 
-/// 壁纸服务 - 处理背景图片和取色
 class WallpaperService {
   static const _channel = MethodChannel('rockzero/wallpaper');
 

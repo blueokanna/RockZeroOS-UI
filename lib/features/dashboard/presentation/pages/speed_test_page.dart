@@ -18,6 +18,11 @@ enum SpeedTestState {
   error,
 }
 
+enum SpeedUnit {
+  mbps, // Megabits per second
+  mbs, // Megabytes per second (MB/s)
+}
+
 class SpeedTestPage extends ConsumerStatefulWidget {
   const SpeedTestPage({super.key});
 
@@ -37,12 +42,18 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
   String? _authToken;
   String? _serverUrl;
   bool _configLoaded = false;
+  SpeedUnit _speedUnit = SpeedUnit.mbps;
 
   double _testProgress = 0;
   String _testPhase = '';
 
   late AnimationController _pulseController;
   late AnimationController _gaugeController;
+
+  // 用于取消测试的标志
+  bool _isCancelled = false;
+  Timer? _downloadUpdateTimer;
+  Timer? _uploadUpdateTimer;
 
   static const int _pingTestCount = 10;
   static const int _downloadTestDurationSec = 10;
@@ -88,6 +99,10 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
   @override
   void dispose() {
+    // 停止所有测试
+    _isCancelled = true;
+    _downloadUpdateTimer?.cancel();
+    _uploadUpdateTimer?.cancel();
     _pulseController.dispose();
     _gaugeController.dispose();
     super.dispose();
@@ -124,6 +139,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       _error = null;
       _testProgress = 0;
       _testPhase = '初始化...';
+      _isCancelled = false; // 重置取消标志
     });
 
     try {
@@ -133,7 +149,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       });
       await _testPing();
 
-      if (!mounted) return;
+      if (!mounted || _isCancelled) return;
 
       setState(() {
         _state = SpeedTestState.testingDownload;
@@ -142,7 +158,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       });
       await _testDownload();
 
-      if (!mounted) return;
+      if (!mounted || _isCancelled) return;
 
       setState(() {
         _state = SpeedTestState.testingUpload;
@@ -151,7 +167,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       });
       await _testUpload();
 
-      if (!mounted) return;
+      if (!mounted || _isCancelled) return;
 
       setState(() {
         _state = SpeedTestState.completed;
@@ -160,7 +176,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       });
     } catch (e) {
       debugPrint('[SpeedTest] Error: $e');
-      if (mounted) {
+      if (mounted && !_isCancelled) {
         setState(() {
           _state = SpeedTestState.error;
           _error = e.toString();
@@ -180,7 +196,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     }
 
     for (int i = 0; i < _pingTestCount; i++) {
-      if (!mounted) return;
+      if (!mounted || _isCancelled) return;
 
       try {
         final stopwatch = Stopwatch()..start();
@@ -192,7 +208,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
         if (response.statusCode == 200) {
           pings.add(stopwatch.elapsedMilliseconds);
 
-          if (mounted) {
+          if (mounted && !_isCancelled) {
             final avgPing = pings.reduce((a, b) => a + b) ~/ pings.length;
             setState(() {
               _ping = avgPing;
@@ -215,7 +231,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       }
       final jitter = pings.length > 1 ? jitterSum / (pings.length - 1) : 0.0;
 
-      if (mounted) {
+      if (mounted && !_isCancelled) {
         setState(() {
           _ping = avgPing;
           _jitter = jitter;
@@ -238,13 +254,13 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
     try {
       // 使用定时器每50ms更新一次速度显示
-      Timer? updateTimer;
       double currentInstantSpeed = 0;
       int totalBytesReceived = 0;
       final overallStart = Stopwatch()..start();
 
-      updateTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
-        if (!mounted) {
+      _downloadUpdateTimer =
+          Timer.periodic(const Duration(milliseconds: 50), (timer) {
+        if (!mounted || _isCancelled) {
           timer.cancel();
           return;
         }
@@ -277,7 +293,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
       // 并发下载多个块以获得更准确的速度
       while (DateTime.now().difference(startTime) < testDuration) {
-        if (!mounted) break;
+        if (!mounted || _isCancelled) break;
 
         final chunkStart = Stopwatch()..start();
         final uri = Uri.parse(
@@ -297,6 +313,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
             int chunkBytes = 0;
 
             await for (final chunk in streamedResponse.stream) {
+              if (_isCancelled) break;
               chunkBytes += chunk.length;
               totalBytesReceived += chunk.length;
             }
@@ -317,10 +334,10 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
         await Future.delayed(const Duration(milliseconds: 100));
       }
 
-      updateTimer.cancel();
+      _downloadUpdateTimer?.cancel();
       overallStart.stop();
 
-      if (speeds.isNotEmpty && mounted) {
+      if (speeds.isNotEmpty && mounted && !_isCancelled) {
         // 使用中位数而不是平均值，更准确
         speeds.sort();
         final medianSpeed = speeds[speeds.length ~/ 2];
@@ -332,13 +349,15 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       }
     } catch (e) {
       debugPrint('[SpeedTest] Download error: $e');
-      if (speeds.isNotEmpty && mounted) {
+      if (speeds.isNotEmpty && mounted && !_isCancelled) {
         final avgSpeed = speeds.reduce((a, b) => a + b) / speeds.length;
         setState(() {
           _downloadSpeed = avgSpeed;
           _currentSpeed = avgSpeed;
         });
       }
+    } finally {
+      _downloadUpdateTimer?.cancel();
     }
   }
 
@@ -366,13 +385,13 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
     try {
       // 使用定时器每50ms更新一次速度显示
-      Timer? updateTimer;
       double currentInstantSpeed = 0;
       int totalBytesUploaded = 0;
       final overallStart = Stopwatch()..start();
 
-      updateTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
-        if (!mounted) {
+      _uploadUpdateTimer =
+          Timer.periodic(const Duration(milliseconds: 50), (timer) {
+        if (!mounted || _isCancelled) {
           timer.cancel();
           return;
         }
@@ -405,7 +424,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
       // 并发上传
       while (DateTime.now().difference(startTime) < testDuration) {
-        if (!mounted) break;
+        if (!mounted || _isCancelled) break;
 
         final uploadStart = Stopwatch()..start();
 
@@ -433,10 +452,10 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
         await Future.delayed(const Duration(milliseconds: 100));
       }
 
-      updateTimer.cancel();
+      _uploadUpdateTimer?.cancel();
       overallStart.stop();
 
-      if (speeds.isNotEmpty && mounted) {
+      if (speeds.isNotEmpty && mounted && !_isCancelled) {
         speeds.sort();
         final medianSpeed = speeds[speeds.length ~/ 2];
 
@@ -447,13 +466,15 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       }
     } catch (e) {
       debugPrint('[SpeedTest] Upload error: $e');
-      if (speeds.isNotEmpty && mounted) {
+      if (speeds.isNotEmpty && mounted && !_isCancelled) {
         final avgSpeed = speeds.reduce((a, b) => a + b) / speeds.length;
         setState(() {
           _uploadSpeed = avgSpeed;
           _currentSpeed = avgSpeed;
         });
       }
+    } finally {
+      _uploadUpdateTimer?.cancel();
     }
   }
 
@@ -467,6 +488,72 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       appBar: AppBar(
         title: const Text('网速测试'),
         centerTitle: true,
+        actions: [
+          // 单位切换按钮
+          PopupMenuButton<SpeedUnit>(
+            icon: Icon(
+              _speedUnit == SpeedUnit.mbps
+                  ? Icons.speed_rounded
+                  : Icons.storage_rounded,
+            ),
+            tooltip: '切换单位',
+            onSelected: (unit) {
+              setState(() => _speedUnit = unit);
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: SpeedUnit.mbps,
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.speed_rounded,
+                      color: _speedUnit == SpeedUnit.mbps
+                          ? colorScheme.primary
+                          : null,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      'Mbps (兆比特/秒)',
+                      style: TextStyle(
+                        color: _speedUnit == SpeedUnit.mbps
+                            ? colorScheme.primary
+                            : null,
+                        fontWeight: _speedUnit == SpeedUnit.mbps
+                            ? FontWeight.bold
+                            : null,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: SpeedUnit.mbs,
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.storage_rounded,
+                      color: _speedUnit == SpeedUnit.mbs
+                          ? colorScheme.primary
+                          : null,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      'MB/s (兆字节/秒)',
+                      style: TextStyle(
+                        color: _speedUnit == SpeedUnit.mbs
+                            ? colorScheme.primary
+                            : null,
+                        fontWeight: _speedUnit == SpeedUnit.mbs
+                            ? FontWeight.bold
+                            : null,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
@@ -616,16 +703,24 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
         _state != SpeedTestState.completed &&
         _state != SpeedTestState.error;
 
-    final maxSpeed = _currentSpeed > 500
-        ? 1000.0
-        : _currentSpeed > 100
-            ? 500.0
-            : 200.0;
+    // 根据单位调整最大速度刻度
+    final displaySpeed = _convertSpeed(_currentSpeed);
+    final maxSpeed = _speedUnit == SpeedUnit.mbps
+        ? (displaySpeed > 500
+            ? 1000.0
+            : displaySpeed > 100
+                ? 500.0
+                : 200.0)
+        : (displaySpeed > 62.5
+            ? 125.0
+            : displaySpeed > 12.5
+                ? 62.5
+                : 25.0);
 
     return TweenAnimationBuilder<double>(
       duration: const Duration(milliseconds: 800),
       curve: Curves.easeOutCubic,
-      tween: Tween<double>(begin: 0, end: _currentSpeed),
+      tween: Tween<double>(begin: 0, end: displaySpeed),
       builder: (context, animatedSpeed, child) {
         return SizedBox(
           width: 280,
@@ -736,7 +831,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Mbps',
+                    _getSpeedUnitString(),
                     style: textTheme.titleMedium?.copyWith(
                       color: colorScheme.onSurfaceVariant,
                       fontWeight: FontWeight.w500,
@@ -811,14 +906,16 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
         _ResultRow(
           icon: Icons.download_rounded,
           label: '下载',
-          value: '${_downloadSpeed.toStringAsFixed(1)} Mbps',
+          value:
+              '${_convertSpeed(_downloadSpeed).toStringAsFixed(1)} ${_getSpeedUnitString()}',
           color: Colors.green,
         ),
         const SizedBox(height: 12),
         _ResultRow(
           icon: Icons.upload_rounded,
           label: '上传',
-          value: '${_uploadSpeed.toStringAsFixed(1)} Mbps',
+          value:
+              '${_convertSpeed(_uploadSpeed).toStringAsFixed(1)} ${_getSpeedUnitString()}',
           color: Colors.blue,
         ),
         const SizedBox(height: 12),
@@ -863,11 +960,26 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     );
   }
 
+  // 转换速度单位
+  double _convertSpeed(double speedMbps) {
+    if (_speedUnit == SpeedUnit.mbs) {
+      return speedMbps / 8; // Mbps to MB/s
+    }
+    return speedMbps;
+  }
+
+  // 获取单位字符串
+  String _getSpeedUnitString() {
+    return _speedUnit == SpeedUnit.mbps ? 'Mbps' : 'MB/s';
+  }
+
   Color _getSpeedColor(double speed) {
-    if (speed >= 100) return Colors.green;
-    if (speed >= 50) return Colors.lightGreen;
-    if (speed >= 20) return Colors.orange;
-    if (speed >= 5) return Colors.deepOrange;
+    // 根据单位调整阈值
+    final threshold = _speedUnit == SpeedUnit.mbps ? 1.0 : 0.125;
+    if (speed >= 100 * threshold) return Colors.green;
+    if (speed >= 50 * threshold) return Colors.lightGreen;
+    if (speed >= 20 * threshold) return Colors.orange;
+    if (speed >= 5 * threshold) return Colors.deepOrange;
     return Colors.red;
   }
 }

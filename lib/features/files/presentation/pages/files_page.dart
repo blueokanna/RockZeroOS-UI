@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -12,6 +14,7 @@ import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
 import '../../../../core/services/biometric_service.dart';
 import '../../../../core/services/device_discovery_service.dart';
+import '../../../../core/services/filesystem_monitor_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../storage/presentation/pages/disk_management_page.dart';
 import 'enhanced_media_player_page.dart';
@@ -164,6 +167,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
   late AnimationController _fabAnimationController;
   final ScrollController _scrollController = ScrollController();
   bool _showFab = true;
+  Timer? _autoRefreshTimer;
+  StreamSubscription<FileSystemEvent>? _fsEventSubscription;
 
   List<FileEntry> _clipboardFiles = [];
   bool _isCutOperation = false;
@@ -178,6 +183,73 @@ class _FilesPageState extends ConsumerState<FilesPage>
       duration: M3Durations.medium2,
     );
     _scrollController.addListener(_onScroll);
+
+    // 自动刷新：每3秒刷新一次文件列表和磁盘信息
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (mounted) {
+        final currentPath = ref.read(currentPathProvider);
+        if (_showDisks && currentPath.isEmpty) {
+          // 刷新磁盘信息
+          ref.invalidate(diskInfoProvider);
+        } else {
+          // 刷新文件列表
+          ref.invalidate(directoryListingProvider(currentPath));
+        }
+      }
+    });
+
+    // 监听文件系统事件
+    final monitor = ref.read(fileSystemMonitorProvider);
+    _fsEventSubscription = monitor.eventStream.listen((event) {
+      debugPrint('[FilesPage] Received FS event: $event');
+      if (mounted) {
+        final currentPath = ref.read(currentPathProvider);
+
+        // 判断事件是否影响当前视图
+        bool shouldRefresh = false;
+
+        if (_showDisks && currentPath.isEmpty) {
+          // 在磁盘视图，监听磁盘事件
+          if (event.type == FileSystemEventType.diskFormatted ||
+              event.type == FileSystemEventType.diskMounted ||
+              event.type == FileSystemEventType.diskUnmounted) {
+            shouldRefresh = true;
+          }
+        } else {
+          // 在文件视图，监听文件/目录事件
+          if (event.path != null && event.path!.isNotEmpty) {
+            // 检查事件路径是否在当前目录下
+            final lastSlash = event.path!.lastIndexOf('/');
+            if (lastSlash > 0) {
+              final eventDir = event.path!.substring(0, lastSlash);
+              if (eventDir == currentPath || currentPath.isEmpty) {
+                shouldRefresh = true;
+              }
+            }
+          }
+
+          // 也监听重命名、移动等操作
+          if (event.oldPath != null && event.oldPath!.isNotEmpty) {
+            final lastSlash = event.oldPath!.lastIndexOf('/');
+            if (lastSlash > 0) {
+              final oldDir = event.oldPath!.substring(0, lastSlash);
+              if (oldDir == currentPath || currentPath.isEmpty) {
+                shouldRefresh = true;
+              }
+            }
+          }
+        }
+
+        if (shouldRefresh) {
+          // 立即刷新
+          if (_showDisks && currentPath.isEmpty) {
+            ref.invalidate(diskInfoProvider);
+          } else {
+            ref.invalidate(directoryListingProvider(currentPath));
+          }
+        }
+      }
+    });
   }
 
   void _onScroll() {
@@ -220,6 +292,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
   @override
   void dispose() {
+    _autoRefreshTimer?.cancel();
+    _fsEventSubscription?.cancel();
     _fabAnimationController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -1884,6 +1958,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
       _uploadProgress = 0;
     });
 
+    List<File>? uploadedFiles; // 声明在外层
+
     try {
       final api = ref.read(apiServiceProvider);
       final currentPath = ref.read(currentPathProvider);
@@ -1894,17 +1970,48 @@ class _FilesPageState extends ConsumerState<FilesPage>
             const SnackBar(content: Text('Web upload not yet implemented')),
           );
         }
-      } else {
-        final files = result.files
-            .where((f) => f.path != null)
-            .map((f) => File(f.path!))
-            .toList();
+        return; // 提前返回
+      }
 
-        await api.uploadToDirectory(
-          currentPath,
-          files,
-          onProgress: (sent, total) {
+      uploadedFiles = result.files
+          .where((f) => f.path != null)
+          .map((f) => File(f.path!))
+          .toList();
+
+      // 检查文件大小
+      int totalSize = 0;
+      for (final file in uploadedFiles) {
+        totalSize += file.lengthSync();
+      }
+
+      debugPrint(
+          '[Upload] Uploading ${uploadedFiles.length} files, total size: ${_formatBytes(totalSize)}');
+
+      await api.uploadToDirectory(
+        currentPath,
+        uploadedFiles,
+        onProgress: (sent, total) {
+          if (mounted) {
             setState(() => _uploadProgress = sent / total);
+          }
+          debugPrint(
+              '[Upload] Progress: ${(sent / total * 100).toStringAsFixed(1)}%');
+        },
+      );
+
+      debugPrint('[Upload] Upload completed successfully');
+
+      // 发送文件上传完成事件
+      final monitor = ref.read(fileSystemMonitorProvider);
+      for (final file in uploadedFiles) {
+        final fileName = file.path.split('/').last;
+        final uploadedPath =
+            currentPath.isEmpty ? '/$fileName' : '$currentPath/$fileName';
+        monitor.emitUploadCompleted(
+          uploadedPath,
+          metadata: {
+            'filename': fileName,
+            'size': file.lengthSync(),
           },
         );
       }
@@ -1929,12 +2036,44 @@ class _FilesPageState extends ConsumerState<FilesPage>
           ),
         );
       }
+    } on DioException catch (e) {
+      debugPrint('[Upload] DioException: ${e.type} - ${e.message}');
+      if (mounted) {
+        String errorMessage = 'Upload failed';
+        if (e.type == DioExceptionType.sendTimeout) {
+          errorMessage = 'Upload timeout - file too large or network too slow';
+        } else if (e.type == DioExceptionType.connectionTimeout) {
+          errorMessage = 'Connection timeout - check your network';
+        } else if (e.type == DioExceptionType.connectionError) {
+          errorMessage = 'Connection error - check server is running';
+        } else if (e.response != null) {
+          errorMessage =
+              'Upload failed: ${e.response?.statusMessage ?? e.message}';
+        } else {
+          errorMessage = 'Upload failed: ${e.message}';
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Retry',
+              textColor: Colors.white,
+              onPressed: () => _pickAndUploadFiles(),
+            ),
+          ),
+        );
+      }
     } catch (e) {
+      debugPrint('[Upload] Error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Upload failed: $e'),
             backgroundColor: Theme.of(context).colorScheme.error,
+            duration: const Duration(seconds: 5),
           ),
         );
       }
