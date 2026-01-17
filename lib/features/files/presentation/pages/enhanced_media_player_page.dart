@@ -1033,28 +1033,30 @@ class _EnhancedMediaPlayerPageState
                     _buildSettingSection(
                       icon: Icons.audiotrack,
                       title: '音轨 (${_mediaInfo!.audioTracks.length})',
-                      child: Column(
-                        children: _mediaInfo!.audioTracks
-                            .asMap()
-                            .entries
-                            .map((entry) {
-                          final index = entry.key;
-                          final track = entry.value;
-                          return RadioListTile<int>(
-                            value: index,
-                            groupValue: _selectedAudioTrack,
-                            title: Text(track.displayName),
-                            subtitle: Text(
-                                '${track.codec.toUpperCase()} ${track.sampleRate}Hz'),
-                            dense: true,
-                            onChanged: (value) {
-                              Navigator.pop(context);
-                              if (value != null) {
-                                _changeAudioTrack(value);
-                              }
-                            },
-                          );
-                        }).toList(),
+                      child: RadioGroup<int>(
+                        groupValue: _selectedAudioTrack,
+                        onChanged: (value) {
+                          Navigator.pop(context);
+                          if (value != null) {
+                            _changeAudioTrack(value);
+                          }
+                        },
+                        child: Column(
+                          children: _mediaInfo!.audioTracks
+                              .asMap()
+                              .entries
+                              .map((entry) {
+                            final index = entry.key;
+                            final track = entry.value;
+                            return RadioListTile<int>(
+                              value: index,
+                              title: Text(track.displayName),
+                              subtitle: Text(
+                                  '${track.codec.toUpperCase()} ${track.sampleRate}Hz'),
+                              dense: true,
+                            );
+                          }).toList(),
+                        ),
                       ),
                     ),
 
@@ -1063,38 +1065,33 @@ class _EnhancedMediaPlayerPageState
                     _buildSettingSection(
                       icon: Icons.subtitles,
                       title: '字幕 (${allSubtitles.length})',
-                      child: Column(
-                        children: [
-                          RadioListTile<int>(
-                            value: -1,
-                            groupValue: _selectedSubtitleTrack,
-                            title: const Text('关闭字幕'),
-                            dense: true,
-                            onChanged: (value) {
-                              Navigator.pop(context);
-                              if (value != null) {
-                                _changeSubtitleTrack(value);
-                              }
-                            },
-                          ),
-                          ...allSubtitles.asMap().entries.map((entry) {
-                            final index = entry.key;
-                            final track = entry.value;
-                            return RadioListTile<int>(
-                              value: index,
-                              groupValue: _selectedSubtitleTrack,
-                              title: Text(track.displayName),
-                              subtitle: Text(track.codec.toUpperCase()),
+                      child: RadioGroup<int>(
+                        groupValue: _selectedSubtitleTrack,
+                        onChanged: (value) {
+                          Navigator.pop(context);
+                          if (value != null) {
+                            _changeSubtitleTrack(value);
+                          }
+                        },
+                        child: Column(
+                          children: [
+                            RadioListTile<int>(
+                              value: -1,
+                              title: const Text('关闭字幕'),
                               dense: true,
-                              onChanged: (value) {
-                                Navigator.pop(context);
-                                if (value != null) {
-                                  _changeSubtitleTrack(value);
-                                }
-                              },
-                            );
-                          }),
-                        ],
+                            ),
+                            ...allSubtitles.asMap().entries.map((entry) {
+                              final index = entry.key;
+                              final track = entry.value;
+                              return RadioListTile<int>(
+                                value: index,
+                                title: Text(track.displayName),
+                                subtitle: Text(track.codec.toUpperCase()),
+                                dense: true,
+                              );
+                            }),
+                          ],
+                        ),
                       ),
                     ),
 

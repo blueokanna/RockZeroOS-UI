@@ -148,8 +148,9 @@ class _EnhancedAudioPlayerPageState
       _audioPlayer?.dispose();
       _audioPlayer = AudioPlayer();
       final headers = <String, String>{};
-      if (_authToken != null && _authToken!.isNotEmpty)
+      if (_authToken != null && _authToken!.isNotEmpty) {
         headers['Authorization'] = 'Bearer $_authToken';
+      }
       final streamUrl = _getStreamUrl();
       debugPrint('[AudioPlayer] Using stream URL: $streamUrl');
       final audioSource =
@@ -170,20 +171,27 @@ class _EnhancedAudioPlayerPageState
           _isBuffering = processing == ProcessingState.buffering ||
               processing == ProcessingState.loading;
         });
-        if (playing && !_isBuffering)
+        if (playing && !_isBuffering) {
           _rotationController.repeat();
-        else
+        } else {
           _rotationController.stop();
+        }
       });
 
       _audioPlayer!.positionStream.listen((position) {
-        if (mounted) setState(() => _position = position);
+        if (mounted) {
+          setState(() => _position = position);
+        }
       });
       _audioPlayer!.durationStream.listen((duration) {
-        if (mounted && duration != null) setState(() => _duration = duration);
+        if (mounted && duration != null) {
+          setState(() => _duration = duration);
+        }
       });
       _audioPlayer!.bufferedPositionStream.listen((buffered) {
-        if (mounted) setState(() => _bufferedPosition = buffered);
+        if (mounted) {
+          setState(() => _bufferedPosition = buffered);
+        }
       });
 
       _startVisualization();
@@ -229,10 +237,11 @@ class _EnhancedAudioPlayerPageState
 
   void _togglePlayPause() async {
     if (_audioPlayer == null) return;
-    if (_isPlaying)
+    if (_isPlaying) {
       await _audioPlayer!.pause();
-    else
+    } else {
       await _audioPlayer!.play();
+    }
   }
 
   void _seekTo(Duration position) {
@@ -268,8 +277,9 @@ class _EnhancedAudioPlayerPageState
     final h = d.inHours;
     final m = d.inMinutes.remainder(60);
     final s = d.inSeconds.remainder(60);
-    if (h > 0)
+    if (h > 0) {
       return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+    }
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 

@@ -47,7 +47,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
   static const int _pingTestCount = 10;
   static const int _downloadTestDurationSec = 10;
   static const int _uploadTestDurationSec = 10;
-  static const int _downloadChunkSizeMB = 25;
+  static const int _downloadChunkSizeMB = 65;
 
   @override
   void initState() {
@@ -204,7 +204,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
         debugPrint('[SpeedTest] Ping error: $e');
       }
 
-      await Future.delayed(const Duration(milliseconds: 200));
+      await Future.delayed(const Duration(milliseconds: 100));
     }
 
     if (pings.isNotEmpty) {
@@ -237,13 +237,49 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     }
 
     try {
+      // 使用定时器每50ms更新一次速度显示
+      Timer? updateTimer;
+      double currentInstantSpeed = 0;
+      int totalBytesReceived = 0;
       final overallStart = Stopwatch()..start();
 
+      updateTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+
+        final elapsed = overallStart.elapsedMilliseconds / 1000;
+        if (elapsed > 0 && totalBytesReceived > 0) {
+          // 计算平均速度
+          final avgSpeed = (totalBytesReceived * 8) / (elapsed * 1000000);
+
+          // 使用指数移动平均来平滑速度变化
+          if (_currentSpeed == 0) {
+            currentInstantSpeed = avgSpeed;
+          } else {
+            // EMA平滑因子，值越小越平滑
+            const smoothFactor = 0.3;
+            currentInstantSpeed = currentInstantSpeed * (1 - smoothFactor) +
+                avgSpeed * smoothFactor;
+          }
+
+          setState(() {
+            _currentSpeed = currentInstantSpeed;
+            _downloadSpeed = currentInstantSpeed;
+            final progress =
+                DateTime.now().difference(startTime).inMilliseconds /
+                    (testDuration.inMilliseconds);
+            _testProgress = progress.clamp(0.0, 1.0);
+          });
+        }
+      });
+
+      // 并发下载多个块以获得更准确的速度
       while (DateTime.now().difference(startTime) < testDuration) {
-        if (!mounted) return;
+        if (!mounted) break;
 
         final chunkStart = Stopwatch()..start();
-
         final uri = Uri.parse(
             '$_serverUrl/api/v1/speedtest/download?size=$_downloadChunkSizeMB');
 
@@ -258,66 +294,40 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
               .timeout(const Duration(seconds: 60));
 
           if (streamedResponse.statusCode == 200) {
-            int bytesReceived = 0;
+            int chunkBytes = 0;
 
             await for (final chunk in streamedResponse.stream) {
-              bytesReceived += chunk.length;
-
-              final elapsed = chunkStart.elapsedMilliseconds / 1000;
-              if (elapsed > 0.1 && mounted) {
-                final instantSpeed = (bytesReceived * 8) / (elapsed * 1000000);
-                setState(() {
-                  _currentSpeed = instantSpeed;
-                });
-              }
+              chunkBytes += chunk.length;
+              totalBytesReceived += chunk.length;
             }
 
             chunkStart.stop();
             final elapsed = chunkStart.elapsedMilliseconds / 1000;
 
-            if (elapsed > 0 && bytesReceived > 0) {
-              final speedMbps = (bytesReceived * 8) / (elapsed * 1000000);
+            if (elapsed > 0 && chunkBytes > 0) {
+              final speedMbps = (chunkBytes * 8) / (elapsed * 1000000);
               speeds.add(speedMbps);
-
-              if (mounted) {
-                final recentSpeeds = speeds.length > 3
-                    ? speeds.sublist(speeds.length - 3)
-                    : speeds;
-                final avgSpeed =
-                    recentSpeeds.reduce((a, b) => a + b) / recentSpeeds.length;
-
-                final progress =
-                    DateTime.now().difference(startTime).inMilliseconds /
-                        (testDuration.inMilliseconds);
-
-                setState(() {
-                  _currentSpeed = avgSpeed;
-                  _downloadSpeed = avgSpeed;
-                  _testProgress = progress.clamp(0.0, 1.0);
-                });
-              }
             }
           }
         } catch (e) {
           debugPrint('[SpeedTest] Download chunk error: $e');
         }
+
+        // 短暂延迟避免过度请求
+        await Future.delayed(const Duration(milliseconds: 100));
       }
 
+      updateTimer.cancel();
       overallStart.stop();
 
       if (speeds.isNotEmpty && mounted) {
+        // 使用中位数而不是平均值，更准确
         speeds.sort();
-        final trimCount = (speeds.length * 0.1).round();
-        final trimmedSpeeds = speeds.length > trimCount * 2
-            ? speeds.sublist(trimCount, speeds.length - trimCount)
-            : speeds;
-
-        final avgSpeed =
-            trimmedSpeeds.reduce((a, b) => a + b) / trimmedSpeeds.length;
+        final medianSpeed = speeds[speeds.length ~/ 2];
 
         setState(() {
-          _downloadSpeed = avgSpeed;
-          _currentSpeed = avgSpeed;
+          _downloadSpeed = medianSpeed;
+          _currentSpeed = medianSpeed;
         });
       }
     } catch (e) {
@@ -355,10 +365,47 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     }
 
     try {
+      // 使用定时器每50ms更新一次速度显示
+      Timer? updateTimer;
+      double currentInstantSpeed = 0;
+      int totalBytesUploaded = 0;
       final overallStart = Stopwatch()..start();
 
+      updateTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+
+        final elapsed = overallStart.elapsedMilliseconds / 1000;
+        if (elapsed > 0 && totalBytesUploaded > 0) {
+          // 计算平均速度
+          final avgSpeed = (totalBytesUploaded * 8) / (elapsed * 1000000);
+
+          // 使用指数移动平均来平滑速度变化
+          if (_currentSpeed == 0 || _currentSpeed < 1) {
+            currentInstantSpeed = avgSpeed;
+          } else {
+            // EMA平滑因子
+            const smoothFactor = 0.3;
+            currentInstantSpeed = currentInstantSpeed * (1 - smoothFactor) +
+                avgSpeed * smoothFactor;
+          }
+
+          setState(() {
+            _uploadSpeed = currentInstantSpeed;
+            _currentSpeed = currentInstantSpeed;
+            final progress =
+                DateTime.now().difference(startTime).inMilliseconds /
+                    (testDuration.inMilliseconds);
+            _testProgress = progress.clamp(0.0, 1.0);
+          });
+        }
+      });
+
+      // 并发上传
       while (DateTime.now().difference(startTime) < testDuration) {
-        if (!mounted) return;
+        if (!mounted) break;
 
         final uploadStart = Stopwatch()..start();
 
@@ -371,29 +418,12 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
           uploadStart.stop();
 
           if (response.statusCode == 200) {
-            final elapsed = uploadStart.elapsedMilliseconds / 1000;
+            totalBytesUploaded += testData.length;
 
+            final elapsed = uploadStart.elapsedMilliseconds / 1000;
             if (elapsed > 0) {
               final speedMbps = (testData.length * 8) / (elapsed * 1000000);
               speeds.add(speedMbps);
-
-              if (mounted) {
-                final recentSpeeds = speeds.length > 3
-                    ? speeds.sublist(speeds.length - 3)
-                    : speeds;
-                final avgSpeed =
-                    recentSpeeds.reduce((a, b) => a + b) / recentSpeeds.length;
-
-                final progress =
-                    DateTime.now().difference(startTime).inMilliseconds /
-                        (testDuration.inMilliseconds);
-
-                setState(() {
-                  _uploadSpeed = avgSpeed;
-                  _currentSpeed = avgSpeed;
-                  _testProgress = progress.clamp(0.0, 1.0);
-                });
-              }
             }
           }
         } catch (e) {
@@ -403,21 +433,16 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
         await Future.delayed(const Duration(milliseconds: 100));
       }
 
+      updateTimer.cancel();
       overallStart.stop();
 
       if (speeds.isNotEmpty && mounted) {
         speeds.sort();
-        final trimCount = (speeds.length * 0.1).round();
-        final trimmedSpeeds = speeds.length > trimCount * 2
-            ? speeds.sublist(trimCount, speeds.length - trimCount)
-            : speeds;
-
-        final avgSpeed =
-            trimmedSpeeds.reduce((a, b) => a + b) / trimmedSpeeds.length;
+        final medianSpeed = speeds[speeds.length ~/ 2];
 
         setState(() {
-          _uploadSpeed = avgSpeed;
-          _currentSpeed = avgSpeed;
+          _uploadSpeed = medianSpeed;
+          _currentSpeed = medianSpeed;
         });
       }
     } catch (e) {
@@ -545,20 +570,41 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
   Widget _buildProgressIndicator(ColorScheme colorScheme, TextTheme textTheme) {
     return Column(
       children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: _testProgress,
-            minHeight: 6,
-            backgroundColor: colorScheme.surfaceContainerHighest,
-            valueColor: AlwaysStoppedAnimation(colorScheme.primary),
+        Container(
+          height: 8,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            color: colorScheme.surfaceContainerHighest,
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: TweenAnimationBuilder<double>(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+              tween: Tween<double>(begin: 0, end: _testProgress),
+              builder: (context, value, child) {
+                return LinearProgressIndicator(
+                  value: value,
+                  minHeight: 8,
+                  backgroundColor: Colors.transparent,
+                  valueColor: AlwaysStoppedAnimation(
+                    colorScheme.primary,
+                  ),
+                );
+              },
+            ),
           ),
         ),
-        const SizedBox(height: 8),
-        Text(
-          _testPhase,
-          style: textTheme.bodySmall?.copyWith(
-            color: colorScheme.onSurfaceVariant,
+        const SizedBox(height: 12),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          child: Text(
+            _testPhase,
+            key: ValueKey(_testPhase),
+            style: textTheme.bodyMedium?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ),
       ],
@@ -576,74 +622,133 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
             ? 500.0
             : 200.0;
 
-    return SizedBox(
-      width: 260,
-      height: 260,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Container(
-            width: 240,
-            height: 240,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: colorScheme.surfaceContainerHighest,
-              boxShadow: [
-                BoxShadow(
-                  color: colorScheme.shadow.withValues(alpha: 0.1),
-                  blurRadius: 20,
-                  spreadRadius: 5,
-                ),
-              ],
-            ),
-          ),
-          CustomPaint(
-            size: const Size(220, 220),
-            painter: _SpeedGaugePainter(
-              progress: (_currentSpeed / maxSpeed).clamp(0, 1),
-              color: _getSpeedColor(_currentSpeed),
-              backgroundColor: colorScheme.surfaceContainerHigh,
-            ),
-          ),
-          if (isActive)
-            AnimatedBuilder(
-              animation: _pulseController,
-              builder: (context, child) {
-                return Container(
-                  width: 150 + _pulseController.value * 15,
-                  height: 150 + _pulseController.value * 15,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: colorScheme.primary.withValues(
-                        alpha: 0.3 - _pulseController.value * 0.2,
-                      ),
-                      width: 2,
-                    ),
-                  ),
-                );
-              },
-            ),
-          Column(
-            mainAxisSize: MainAxisSize.min,
+    return TweenAnimationBuilder<double>(
+      duration: const Duration(milliseconds: 800),
+      curve: Curves.easeOutCubic,
+      tween: Tween<double>(begin: 0, end: _currentSpeed),
+      builder: (context, animatedSpeed, child) {
+        return SizedBox(
+          width: 280,
+          height: 280,
+          child: Stack(
+            alignment: Alignment.center,
             children: [
-              Text(
-                _currentSpeed.toStringAsFixed(1),
-                style: textTheme.displaySmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: _getSpeedColor(_currentSpeed),
+              // 外层光晕效果
+              if (isActive)
+                AnimatedBuilder(
+                  animation: _pulseController,
+                  builder: (context, child) {
+                    return Container(
+                      width: 260 + _pulseController.value * 20,
+                      height: 260 + _pulseController.value * 20,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: RadialGradient(
+                          colors: [
+                            _getSpeedColor(animatedSpeed).withValues(
+                              alpha: 0.15 - _pulseController.value * 0.1,
+                            ),
+                            Colors.transparent,
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              // 主圆形背景
+              Container(
+                width: 240,
+                height: 240,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      colorScheme.surfaceContainerHighest,
+                      colorScheme.surfaceContainer,
+                    ],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: colorScheme.shadow.withValues(alpha: 0.08),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
+                    ),
+                    BoxShadow(
+                      color:
+                          _getSpeedColor(animatedSpeed).withValues(alpha: 0.1),
+                      blurRadius: 16,
+                      spreadRadius: -4,
+                    ),
+                  ],
                 ),
               ),
-              Text(
-                'Mbps',
-                style: textTheme.titleMedium?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
+              // 进度圆环
+              CustomPaint(
+                size: const Size(220, 220),
+                painter: _SpeedGaugePainter(
+                  progress: (animatedSpeed / maxSpeed).clamp(0, 1),
+                  color: _getSpeedColor(animatedSpeed),
+                  backgroundColor: colorScheme.surfaceContainerHigh,
+                  isActive: isActive,
                 ),
+              ),
+              // 中心脉冲效果
+              if (isActive)
+                AnimatedBuilder(
+                  animation: _pulseController,
+                  builder: (context, child) {
+                    return Container(
+                      width: 160 + _pulseController.value * 10,
+                      height: 160 + _pulseController.value * 10,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: _getSpeedColor(animatedSpeed).withValues(
+                            alpha: 0.2 - _pulseController.value * 0.15,
+                          ),
+                          width: 2,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              // 速度数值显示
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ShaderMask(
+                    shaderCallback: (bounds) => LinearGradient(
+                      colors: [
+                        _getSpeedColor(animatedSpeed),
+                        _getSpeedColor(animatedSpeed).withValues(alpha: 0.8),
+                      ],
+                    ).createShader(bounds),
+                    child: Text(
+                      animatedSpeed.toStringAsFixed(1),
+                      style: textTheme.displayLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                        letterSpacing: -2,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Mbps',
+                    style: textTheme.titleMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -771,24 +876,27 @@ class _SpeedGaugePainter extends CustomPainter {
   final double progress;
   final Color color;
   final Color backgroundColor;
+  final bool isActive;
 
   _SpeedGaugePainter({
     required this.progress,
     required this.color,
     required this.backgroundColor,
+    this.isActive = false,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2 - 10;
-    const startAngle = 135 * math.pi / 180;
-    const sweepAngle = 270 * math.pi / 180;
+    final radius = size.width / 2 - 12;
+    const startAngle = 140 * math.pi / 180;
+    const sweepAngle = 260 * math.pi / 180;
 
+    // 背景轨道 - 更细腻的设计
     final bgPaint = Paint()
-      ..color = backgroundColor
+      ..color = backgroundColor.withValues(alpha: 0.3)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 14
+      ..strokeWidth = 16
       ..strokeCap = StrokeCap.round;
 
     canvas.drawArc(
@@ -799,34 +907,72 @@ class _SpeedGaugePainter extends CustomPainter {
       bgPaint,
     );
 
-    final progressPaint = Paint()
-      ..shader = SweepGradient(
-        startAngle: startAngle,
-        endAngle: startAngle + sweepAngle,
-        colors: const [
-          Colors.red,
-          Colors.orange,
-          Colors.yellow,
-          Colors.lightGreen,
-          Colors.green,
-        ],
-      ).createShader(Rect.fromCircle(center: center, radius: radius))
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 14
-      ..strokeCap = StrokeCap.round;
+    // 进度条 - 渐变色彩
+    if (progress > 0) {
+      final progressPaint = Paint()
+        ..shader = SweepGradient(
+          startAngle: startAngle,
+          endAngle: startAngle + sweepAngle * progress,
+          colors: _getGradientColors(progress),
+          stops: _getGradientStops(progress),
+        ).createShader(Rect.fromCircle(center: center, radius: radius))
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 16
+        ..strokeCap = StrokeCap.round;
 
-    canvas.drawArc(
-      Rect.fromCircle(center: center, radius: radius),
-      startAngle,
-      sweepAngle * progress,
-      false,
-      progressPaint,
-    );
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius),
+        startAngle,
+        sweepAngle * progress,
+        false,
+        progressPaint,
+      );
+
+      // 进度端点光晕效果
+      if (isActive) {
+        final endAngle = startAngle + sweepAngle * progress;
+        final endX = center.dx + radius * math.cos(endAngle);
+        final endY = center.dy + radius * math.sin(endAngle);
+        final endPoint = Offset(endX, endY);
+
+        final glowPaint = Paint()
+          ..color = color.withValues(alpha: 0.4)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
+
+        canvas.drawCircle(endPoint, 12, glowPaint);
+
+        final dotPaint = Paint()
+          ..color = color
+          ..style = PaintingStyle.fill;
+
+        canvas.drawCircle(endPoint, 6, dotPaint);
+      }
+    }
+  }
+
+  List<Color> _getGradientColors(double progress) {
+    if (progress < 0.2) {
+      return [Colors.red.shade400, Colors.red.shade600];
+    } else if (progress < 0.4) {
+      return [Colors.orange.shade400, Colors.orange.shade600];
+    } else if (progress < 0.6) {
+      return [Colors.amber.shade400, Colors.amber.shade600];
+    } else if (progress < 0.8) {
+      return [Colors.lightGreen.shade400, Colors.lightGreen.shade600];
+    } else {
+      return [Colors.green.shade400, Colors.green.shade600];
+    }
+  }
+
+  List<double> _getGradientStops(double progress) {
+    return [0.0, 1.0];
   }
 
   @override
   bool shouldRepaint(covariant _SpeedGaugePainter oldDelegate) {
-    return oldDelegate.progress != progress || oldDelegate.color != color;
+    return oldDelegate.progress != progress ||
+        oldDelegate.color != color ||
+        oldDelegate.isActive != isActive;
   }
 }
 
@@ -846,43 +992,95 @@ class _ResultRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withValues(alpha: 0.2)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: color),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Text(
-              label,
-              style: textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w500,
+    return TweenAnimationBuilder<double>(
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeOutCubic,
+      tween: Tween<double>(begin: 0, end: 1),
+      builder: (context, animValue, child) {
+        return Transform.scale(
+          scale: 0.9 + (animValue * 0.1),
+          child: Opacity(
+            opacity: animValue,
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    color.withValues(alpha: 0.08),
+                    color.withValues(alpha: 0.12),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: color.withValues(alpha: 0.2),
+                  width: 1.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: color.withValues(alpha: 0.1),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          color.withValues(alpha: 0.2),
+                          color.withValues(alpha: 0.3),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: color.withValues(alpha: 0.2),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Icon(icon, color: color, size: 28),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                  ),
+                  ShaderMask(
+                    shaderCallback: (bounds) => LinearGradient(
+                      colors: [color, color.withValues(alpha: 0.8)],
+                    ).createShader(bounds),
+                    child: Text(
+                      value,
+                      style: textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        letterSpacing: -0.5,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
-          Text(
-            value,
-            style: textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

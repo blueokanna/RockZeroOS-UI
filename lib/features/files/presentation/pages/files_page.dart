@@ -13,6 +13,7 @@ import '../../../../core/network/api_service.dart';
 import '../../../../core/services/biometric_service.dart';
 import '../../../../core/services/device_discovery_service.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../storage/presentation/pages/disk_management_page.dart';
 import 'enhanced_media_player_page.dart';
 import 'enhanced_audio_player_page.dart';
 import 'image_viewer_page.dart';
@@ -301,28 +302,53 @@ class _FilesPageState extends ConsumerState<FilesPage>
     final colorScheme = Theme.of(context).colorScheme;
 
     return SliverAppBar.large(
-      title: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [colorScheme.primary, colorScheme.tertiary],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+      title: InkWell(
+        onTap: showDiskView
+            ? () {
+                // 点击 Storage 标题时，导航到存储管理页面
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => const DiskManagementPage(),
+                  ),
+                );
+              }
+            : null,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [colorScheme.primary, colorScheme.tertiary],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  showDiskView ? Icons.storage_rounded : Icons.folder_rounded,
+                  size: 22,
+                  color: Colors.white,
+                ),
               ),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(
-              showDiskView ? Icons.storage_rounded : Icons.folder_rounded,
-              size: 22,
-              color: Colors.white,
-            ),
+              const SizedBox(width: 12),
+              Text(showDiskView ? 'Storage' : 'Files'),
+              if (showDiskView) ...[
+                const SizedBox(width: 4),
+                Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 16,
+                  color: colorScheme.onSurface.withValues(alpha: 0.6),
+                ),
+              ],
+            ],
           ),
-          const SizedBox(width: 12),
-          Text(showDiskView ? 'Storage' : 'Files'),
-        ],
+        ),
       ),
       actions: [
         if (!showDiskView) ...[
@@ -1988,6 +2014,97 @@ class _FilesPageState extends ConsumerState<FilesPage>
   void _showMountDialog(DiskInfo disk) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+
+    // 检查磁盘是否需要初始化
+    final fs = disk.fileSystem.trim().toLowerCase();
+    final needsInitialization = fs.isEmpty || fs == 'unknown';
+
+    if (needsInitialization) {
+      // 显示未初始化警告
+      showDialog(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          icon: Icon(
+            Icons.warning_rounded,
+            color: colorScheme.error,
+            size: 48,
+          ),
+          title: const Text('磁盘未初始化'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '设备 ${disk.name} 没有分区和文件系统。',
+                style:
+                    textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: colorScheme.errorContainer.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: colorScheme.error.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.info_outline,
+                            size: 18, color: colorScheme.error),
+                        const SizedBox(width: 8),
+                        Text(
+                          '磁盘信息',
+                          style: textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.error,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text('大小: ${_formatBytes(disk.totalSpace)}',
+                        style: textTheme.bodySmall),
+                    Text('类型: ${disk.diskType}', style: textTheme.bodySmall),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '请前往"存储"页面初始化此磁盘，创建分区表和文件系统后才能挂载使用。',
+                style: textTheme.bodySmall,
+              ),
+            ],
+          ),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('知道了'),
+            ),
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                // 导入存储管理页面
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => const DiskManagementPage(),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.settings_rounded),
+              label: const Text('前往存储管理'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
 
     showDialog(
       context: context,

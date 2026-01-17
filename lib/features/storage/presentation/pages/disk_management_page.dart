@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/network/api_service.dart';
+import '../../../../core/services/biometric_service.dart';
 import '../../../../core/services/device_discovery_service.dart';
 
 /// Supported file systems for formatting
@@ -810,6 +811,24 @@ class _InitializeDiskSheetState extends ConsumerState<_InitializeDiskSheet> {
   }
 
   Future<void> _initializeDisk() async {
+    // 先进行生物识别认证
+    final biometricService = ref.read(biometricServiceProvider);
+    final authenticated = await biometricService.authenticate(
+      reason: '需要验证身份以初始化磁盘',
+    );
+
+    if (!authenticated) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('身份验证失败'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
     setState(() => _isInitializing = true);
     try {
       final api = ref.read(apiServiceProvider);
@@ -1598,7 +1617,7 @@ class _MountDiskDialogState extends ConsumerState<_MountDiskDialog> {
                     ?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             DropdownButtonFormField<String>(
-              value: _selectedFs,
+              initialValue: _selectedFs,
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
                 isDense: true,
