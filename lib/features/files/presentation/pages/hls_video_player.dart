@@ -60,15 +60,6 @@ class AudioTrackInfo {
   };
 }
 
-/// HLS 视频播放器 - 支持全平台统一播放体验
-///
-/// 特性:
-/// - 任意视频格式输入（mkv/mp4/ts/avi等）
-/// - 服务端实时转码为 HLS fMP4（兼容所有平台）
-/// - DTS/AC3/TrueHD 等音频自动转码为 AAC
-/// - 多音轨选择
-/// - 多清晰度切换
-/// - 快进快退、循环播放
 class HlsVideoPlayer extends ConsumerStatefulWidget {
   final String? filePath;
   final String? fileId;
@@ -97,7 +88,6 @@ class _HlsVideoPlayerState extends ConsumerState<HlsVideoPlayer> {
   String? _authToken;
   String? _hlsSessionId;
 
-  // 音轨和清晰度
   List<AudioTrackInfo> _audioTracks = [];
   int _currentAudioTrack = 0;
   String _currentQuality = 'auto';
@@ -109,14 +99,11 @@ class _HlsVideoPlayerState extends ConsumerState<HlsVideoPlayer> {
     '360p'
   ];
 
-  // 下载
   bool _isDownloading = false;
   double _downloadProgress = 0;
 
-  // 循环播放
   bool _isLooping = false;
 
-  // 缓存主题颜色，避免在 async 中使用 context
   late Color _primaryColor;
 
   @override
@@ -163,7 +150,6 @@ class _HlsVideoPlayerState extends ConsumerState<HlsVideoPlayer> {
         requestBody['file_id'] = widget.fileId;
       }
 
-      // 添加清晰度和音轨参数
       if (quality != null && quality != 'auto') {
         requestBody['quality'] = quality;
       }
@@ -181,8 +167,19 @@ class _HlsVideoPlayerState extends ConsumerState<HlsVideoPlayer> {
       );
 
       if (response.statusCode != 200) {
-        throw Exception(
-            '启动 HLS 流失败: ${response.statusCode} - ${response.body}');
+        String errorMessage = '启动 HLS 流失败';
+        try {
+          final errorData = jsonDecode(response.body);
+          if (errorData is Map) {
+            errorMessage = errorData['message']?.toString() ??
+                errorData['error']?.toString() ??
+                response.body;
+          }
+        } catch (_) {
+          errorMessage = response.body;
+        }
+        debugPrint('[HlsPlayer] Error: $errorMessage');
+        throw Exception(errorMessage);
       }
 
       final data = jsonDecode(response.body);
