@@ -186,7 +186,6 @@ class _HlsVideoPlayerState extends ConsumerState<HlsVideoPlayer> {
       _hlsSessionId = data['session_id'] as String;
       final playlistUrl = '${widget.baseUrl}${data['playlist_url']}';
 
-      // 解析音轨信息
       if (data['audio_tracks'] != null) {
         _audioTracks = (data['audio_tracks'] as List)
             .map((e) => AudioTrackInfo.fromJson(e as Map<String, dynamic>))
@@ -197,18 +196,12 @@ class _HlsVideoPlayerState extends ConsumerState<HlsVideoPlayer> {
       debugPrint('[HlsPlayer] Playlist URL: $playlistUrl');
       debugPrint('[HlsPlayer] Audio tracks: ${_audioTracks.length}');
 
-      // 等待服务器准备 HLS 流
       await Future.delayed(const Duration(seconds: 2));
 
-      // 清理旧的控制器
       _chewieController?.dispose();
       _videoController?.dispose();
-
       _videoController = VideoPlayerController.networkUrl(
         Uri.parse(playlistUrl),
-        httpHeaders: {
-          'Authorization': 'Bearer $_authToken!',
-        },
       );
 
       await _videoController!.initialize();
