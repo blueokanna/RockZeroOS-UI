@@ -531,6 +531,11 @@ class _EnhancedMediaPlayerPageState
         videoPlayerOptions: VideoPlayerOptions(
           mixWithOthers: false,
           allowBackgroundPlayback: false,
+          webOptions: const VideoPlayerWebOptions(
+            allowContextMenu: false,
+            allowRemotePlayback: true,
+            controls: VideoPlayerWebOptionsControls.disabled(),
+          ),
         ),
       );
 
@@ -647,6 +652,16 @@ class _EnhancedMediaPlayerPageState
   String _getErrorMessage(dynamic error) {
     final errorStr = error.toString().toLowerCase();
 
+    // 特殊处理 Source error
+    if (errorStr.contains('source error') || errorStr.contains('x0.i')) {
+      return '视频源加载失败\n'
+          '可能原因：\n'
+          '1. 视频文件损坏或格式不支持\n'
+          '2. 网络连接问题\n'
+          '3. 服务器未正确配置CORS\n'
+          '4. 认证令牌过期\n\n'
+          '建议：尝试重新登录或使用其他播放器';
+    }
     if (errorStr.contains('timeout')) {
       return '加载超时\n请检查网络连接后重试';
     }

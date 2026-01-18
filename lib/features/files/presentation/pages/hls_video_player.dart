@@ -200,11 +200,66 @@ class _HlsVideoPlayerState extends ConsumerState<HlsVideoPlayer> {
 
       _chewieController?.dispose();
       _videoController?.dispose();
-      _videoController = VideoPlayerController.networkUrl(
-        Uri.parse(playlistUrl),
-      );
 
-      await _videoController!.initialize();
+      debugPrint('[HlsPlayer] Creating video controller for: $playlistUrl');
+
+      // 创建简单可靠的HTTP头
+      final headers = <String, String>{
+        'Accept': '*/*',
+      };
+
+      if (_authToken != null && _authToken!.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $_authToken';
+      }
+
+      debugPrint('[HlsPlayer] Headers: ${headers.keys.join(", ")}');
+
+      // 添加更详细的错误处理和超时设置
+      try {
+        _videoController = VideoPlayerController.networkUrl(
+          Uri.parse(playlistUrl),
+          httpHeaders: headers,
+          videoPlayerOptions: VideoPlayerOptions(
+            mixWithOthers: false,
+            allowBackgroundPlayback: false,
+            webOptions: const VideoPlayerWebOptions(
+              allowContextMenu: false,
+              allowRemotePlayback: true,
+              controls: VideoPlayerWebOptionsControls.disabled(),
+            ),
+          ),
+        );
+
+        debugPrint('[HlsPlayer] Initializing video controller...');
+        await _videoController!.initialize().timeout(
+          const Duration(seconds: 30),
+          onTimeout: () {
+            debugPrint('[HlsPlayer] ❌ Initialization timeout');
+            throw TimeoutException('视频加载超时，请检查网络连接');
+          },
+        );
+
+        debugPrint('[HlsPlayer] ✅ Video controller initialized');
+        debugPrint(
+            '[HlsPlayer] Is initialized: ${_videoController!.value.isInitialized}');
+        debugPrint(
+            '[HlsPlayer] Has error: ${_videoController!.value.hasError}');
+        debugPrint('[HlsPlayer] Size: ${_videoController!.value.size}');
+        debugPrint('[HlsPlayer] Duration: ${_videoController!.value.duration}');
+
+        if (!_videoController!.value.isInitialized) {
+          throw Exception('Video failed to initialize');
+        }
+
+        if (_videoController!.value.hasError) {
+          throw Exception(
+              _videoController!.value.errorDescription ?? 'Unknown error');
+        }
+      } catch (e) {
+        debugPrint('[HlsPlayer] ❌ Initialize error: $e');
+        rethrow;
+      }
+
       _videoController!.setLooping(_isLooping);
 
       _chewieController = ChewieController(
@@ -282,8 +337,29 @@ class _HlsVideoPlayerState extends ConsumerState<HlsVideoPlayer> {
       debugPrint('[HlsPlayer] Error: $e');
       debugPrint('[HlsPlayer] Stack: $stack');
       if (mounted) {
+        String errorMessage = '播放失败: $e';
+        final errorStr = e.toString().toLowerCase();
+
+        // 提供更友好的错误消息
+        if (errorStr.contains('source error') || errorStr.contains('x0.i')) {
+          errorMessage = 'HLS视频源加载失败\n'
+              '可能原因：\n'
+              '1. 视频转码失败\n'
+              '2. 网络连接中断\n'
+              '3. 服务器FFmpeg配置问题\n'
+              '4. 视频格式不支持\n\n'
+              '建议：检查服务器日志或尝试其他视频';
+        } else if (errorStr.contains('timeout')) {
+          errorMessage = 'HLS流加载超时\n请检查网络连接和服务器状态';
+        } else if (errorStr.contains('network') ||
+            errorStr.contains('connection')) {
+          errorMessage = '网络连接失败\n无法连接到HLS流服务器';
+        } else if (errorStr.contains('404') || errorStr.contains('not found')) {
+          errorMessage = 'HLS流不存在\n可能会话已过期，请重试';
+        }
+
         setState(() {
-          _error = '播放失败: $e';
+          _error = errorMessage;
           _isLoading = false;
         });
       }

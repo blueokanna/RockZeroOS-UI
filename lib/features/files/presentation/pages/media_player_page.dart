@@ -215,14 +215,19 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
     try {
       final headers = <String, String>{
         'Accept': '*/*',
-        // Request range support for better streaming of large files
         'Accept-Ranges': 'bytes',
-        // Keep connection alive for continuous streaming
         'Connection': 'keep-alive',
       };
+
       if (_authToken != null && _authToken!.isNotEmpty) {
         headers['Authorization'] = 'Bearer $_authToken';
       }
+
+      debugPrint('[MediaPlayer] ========== Initialization Start ==========');
+      debugPrint('[MediaPlayer] URL: ${widget.mediaUrl}');
+      debugPrint('[MediaPlayer] File: ${widget.fileName}');
+      debugPrint(
+          '[MediaPlayer] Auth token present: ${_authToken != null && _authToken!.isNotEmpty}');
 
       // Check file type for special handling
       final fileName = widget.fileName.toLowerCase();
@@ -234,6 +239,9 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
           fileName.endsWith('.ts') ||
           fileName.endsWith('.webm');
 
+      debugPrint('[MediaPlayer] File type: ${fileName.split('.').last}');
+      debugPrint('[MediaPlayer] Is large format: $isLargeFileFormat');
+
       _videoController = VideoPlayerController.networkUrl(
         Uri.parse(widget.mediaUrl),
         httpHeaders: headers,
@@ -243,27 +251,70 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
           webOptions: const VideoPlayerWebOptions(
             allowContextMenu: false,
             allowRemotePlayback: true,
+            controls: VideoPlayerWebOptionsControls.disabled(),
           ),
         ),
         // For container formats that may have complex audio, use 'other' format hint
         formatHint: isLargeFileFormat ? VideoFormat.other : null,
       );
 
-      // Initialize with extended timeout for large files (20GB+)
-      await _videoController!.initialize().timeout(
-        const Duration(seconds: 60),
-        onTimeout: () {
-          throw Exception(
-              'Video initialization timed out. The file may be very large or the connection is slow. Please try again.');
-        },
-      );
+      debugPrint(
+          '[MediaPlayer] Controller created, starting initialization...');
 
+      // Initialize with extended timeout for large files (20GB+)
+      try {
+        await _videoController!.initialize().timeout(
+          const Duration(seconds: 60),
+          onTimeout: () {
+            debugPrint('[MediaPlayer] ❌ Initialization TIMEOUT');
+            throw TimeoutException(
+                'Video initialization timed out. The file may be very large or the connection is slow. Please try again.');
+          },
+        );
+
+        debugPrint('[MediaPlayer] Initialize() completed');
+        debugPrint(
+            '[MediaPlayer] Is initialized: ${_videoController!.value.isInitialized}');
+        debugPrint(
+            '[MediaPlayer] Has error: ${_videoController!.value.hasError}');
+        debugPrint('[MediaPlayer] Size: ${_videoController!.value.size}');
+        debugPrint(
+            '[MediaPlayer] Duration: ${_videoController!.value.duration}');
+        debugPrint(
+            '[MediaPlayer] Aspect ratio: ${_videoController!.value.aspectRatio}');
+
+        // 验证视频是否真正初始化成功
+        if (!_videoController!.value.isInitialized) {
+          debugPrint('[MediaPlayer] ❌ Video NOT initialized properly');
+          throw Exception('Video failed to initialize properly');
+        }
+
+        // 检查是否有错误
+        if (_videoController!.value.hasError) {
+          final errorDesc =
+              _videoController!.value.errorDescription ?? 'Unknown video error';
+          debugPrint('[MediaPlayer] ❌ Video has error: $errorDesc');
+          throw Exception(errorDesc);
+        }
+      } catch (e) {
+        debugPrint('[MediaPlayer] ❌ Initialization exception: $e');
+        debugPrint('[MediaPlayer] Exception type: ${e.runtimeType}');
+        rethrow;
+      }
+
+      debugPrint('[MediaPlayer] Adding listener...');
       _videoController!.addListener(_onVideoUpdate);
+
+      debugPrint('[MediaPlayer] Setting looping: ${_loopMode == LoopMode.one}');
       await _videoController!.setLooping(_loopMode == LoopMode.one);
+
+      debugPrint('[MediaPlayer] Setting volume: $_volume');
       await _videoController!.setVolume(_volume);
 
       // Start playback - the player will buffer as needed
+      debugPrint('[MediaPlayer] Starting playback...');
       await _videoController!.play();
+      debugPrint('[MediaPlayer] Play() called');
 
       if (mounted) {
         setState(() {
@@ -272,13 +323,70 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
           _duration = _videoController!.value.duration;
         });
       }
-    } catch (e) {
+
+      debugPrint('[MediaPlayer] ✅ Initialization SUCCESS');
+      debugPrint('[MediaPlayer] ========== Initialization End ==========');
+    } catch (e, stackTrace) {
+      debugPrint('[MediaPlayer] ❌❌❌ FATAL ERROR ❌❌❌');
+      debugPrint('[MediaPlayer] Error: $e');
+      debugPrint('[MediaPlayer] Error type: ${e.runtimeType}');
+      debugPrint('[MediaPlayer] Stack trace: $stackTrace');
+
       if (mounted) {
+        String errorMessage = 'Failed to load media: $e';
+        final errorStr = e.toString().toLowerCase();
+
+        // 提供更友好的错误消息
+        if (errorStr.contains('source error') || errorStr.contains('x0.i')) {
+          errorMessage = '❌ 视频源加载失败\n\n'
+              '📋 调试信息：\n'
+              'URL: ${widget.mediaUrl}\n'
+              'File: ${widget.fileName}\n'
+              'Error: $e\n\n'
+              '🔍 可能原因：\n'
+              '• 视频编码格式不被支持\n'
+              '• 网络连接中断或超时\n'
+              '• 服务器响应异常\n'
+              '• CORS配置问题（Web平台）\n'
+              '• 视频文件损坏\n\n'
+              '💡 建议：\n'
+              '1. 打开浏览器开发者工具（F12）\n'
+              '2. 查看Network标签页的请求\n'
+              '3. 确认视频URL返回200状态\n'
+              '4. 检查Content-Type是否正确\n'
+              '5. 尝试在浏览器直接打开视频URL';
+        } else if (errorStr.contains('timeout')) {
+          errorMessage = '⏱️ 视频加载超时\n\n'
+              '文件: ${widget.fileName}\n\n'
+              '请检查：\n'
+              '• 网络连接是否稳定\n'
+              '• 文件是否过大\n'
+              '• 服务器是否响应正常';
+        } else if (errorStr.contains('network') ||
+            errorStr.contains('connection')) {
+          errorMessage = '🌐 网络连接失败\n\n'
+              'URL: ${widget.mediaUrl}\n\n'
+              '请检查：\n'
+              '• 网络连接\n'
+              '• 服务器是否运行\n'
+              '• 防火墙设置';
+        } else if (errorStr.contains('format') || errorStr.contains('codec')) {
+          errorMessage = '🎬 视频格式不支持\n\n'
+              '文件: ${widget.fileName}\n\n'
+              'Web平台仅支持：\n'
+              '• 视频：H.264 (AVC)\n'
+              '• 音频：AAC\n'
+              '• 容器：MP4\n\n'
+              '建议：使用HLS播放器或转换格式';
+        }
+
         setState(() {
-          _error = 'Failed to load media: $e';
+          _error = errorMessage;
           _isLoading = false;
         });
       }
+
+      debugPrint('[MediaPlayer] ========== Error End ==========');
     }
   }
 
