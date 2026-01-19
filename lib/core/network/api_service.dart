@@ -100,7 +100,7 @@ class ApiService {
   }) async {
     final response = await _dio.post(
       '/api/v1/auth/login',
-      data: {'email': email, 'password': password},
+      data: {'username': email, 'password': password}, // 修复：使用 username 字段
     );
     return AuthResponse.fromJson(response.data);
   }

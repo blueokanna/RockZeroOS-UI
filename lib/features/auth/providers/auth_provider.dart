@@ -63,6 +63,19 @@ class AuthNotifier extends Notifier<AuthState> {
 
     try {
       final response = await _api.login(email: email, password: password);
+
+      // 检查响应是否成功
+      if (!response.success ||
+          response.user == null ||
+          response.tokens == null) {
+        state = state.copyWith(
+            isLoading: false,
+            error: response.message.isNotEmpty
+                ? response.message
+                : 'Login failed');
+        return false;
+      }
+
       await _saveAuthData(response);
 
       state = state.copyWith(
@@ -75,7 +88,8 @@ class AuthNotifier extends Notifier<AuthState> {
       state = state.copyWith(isLoading: false, error: e.message);
       return false;
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: 'Login failed');
+      state = state.copyWith(
+          isLoading: false, error: 'Login failed: ${e.toString()}');
       return false;
     }
   }
@@ -156,6 +170,18 @@ class AuthNotifier extends Notifier<AuthState> {
         inviteCode: inviteCode,
       );
 
+      // 检查响应是否成功
+      if (!response.success ||
+          response.user == null ||
+          response.tokens == null) {
+        state = state.copyWith(
+            isLoading: false,
+            error: response.message.isNotEmpty
+                ? response.message
+                : 'Registration failed');
+        return false;
+      }
+
       await _saveAuthData(response);
 
       state = state.copyWith(
@@ -168,23 +194,28 @@ class AuthNotifier extends Notifier<AuthState> {
       state = state.copyWith(isLoading: false, error: e.message);
       return false;
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: 'Registration failed');
+      state = state.copyWith(
+          isLoading: false, error: 'Registration failed: ${e.toString()}');
       return false;
     }
   }
 
   Future<void> _saveAuthData(AuthResponse response) async {
+    if (response.tokens == null || response.user == null) {
+      throw Exception('Invalid auth response: missing tokens or user data');
+    }
+
     await _storage.write(
       key: 'access_token',
-      value: response.tokens.accessToken,
+      value: response.tokens!.accessToken,
     );
     await _storage.write(
       key: 'refresh_token',
-      value: response.tokens.refreshToken,
+      value: response.tokens!.refreshToken,
     );
-    await _storage.write(key: 'user_id', value: response.user.id);
-    await _storage.write(key: 'user_email', value: response.user.email);
-    await _storage.write(key: 'user_role', value: response.user.role);
+    await _storage.write(key: 'user_id', value: response.user!.id);
+    await _storage.write(key: 'user_email', value: response.user!.email);
+    await _storage.write(key: 'user_role', value: response.user!.role);
   }
 
   Future<void> logout() async {

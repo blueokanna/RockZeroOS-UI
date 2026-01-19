@@ -39,12 +39,20 @@ Map<String, dynamic> _$TokenResponseToJson(TokenResponse instance) =>
     };
 
 AuthResponse _$AuthResponseFromJson(Map<String, dynamic> json) => AuthResponse(
-      user: User.fromJson(json['user'] as Map<String, dynamic>),
-      tokens: TokenResponse.fromJson(json['tokens'] as Map<String, dynamic>),
+      success: json['success'] as bool,
+      message: json['message'] as String,
+      user: json['user'] == null
+          ? null
+          : User.fromJson(json['user'] as Map<String, dynamic>),
+      tokens: json['tokens'] == null
+          ? null
+          : TokenResponse.fromJson(json['tokens'] as Map<String, dynamic>),
     );
 
 Map<String, dynamic> _$AuthResponseToJson(AuthResponse instance) =>
     <String, dynamic>{
+      'success': instance.success,
+      'message': instance.message,
       'user': instance.user,
       'tokens': instance.tokens,
     };
