@@ -401,7 +401,7 @@ class ApiService {
   }
 
   Future<HardwareInfo> getHardwareInfo() async {
-    final response = await _dio.get('/api/v1/system/hardware');
+    final response = await _dio.get('/api/v1/system/all');
     return HardwareInfo.fromJson(response.data);
   }
 
@@ -423,7 +423,7 @@ class ApiService {
     String? fileSystem,
   }) async {
     await _dio.post(
-      '/api/v1/disk/mount',
+      '/api/v1/storage/mount',
       data: {
         'device': device,
         'mount_point': mountPoint,
@@ -433,7 +433,7 @@ class ApiService {
   }
 
   Future<void> unmountDisk(String device) async {
-    await _dio.post('/api/v1/disk/unmount', data: {'device': device});
+    await _dio.post('/api/v1/storage/unmount/$device');
   }
 
   Future<void> formatDisk({
@@ -442,7 +442,7 @@ class ApiService {
     String? label,
   }) async {
     await _dio.post(
-      '/api/v1/disk/format',
+      '/api/v1/storage/format',
       data: {
         'device': device,
         'file_system': fileSystem,
@@ -520,11 +520,38 @@ class ApiService {
 
   // ============ App Store API ============
 
+  // CasaOS App Store
+  Future<List<AppStoreItem>> listCasaosApps() async {
+    final response = await _dio.get('/api/v1/appstore/casaos');
+    final data = response.data;
+    if (data is Map && data.containsKey('apps')) {
+      return (data['apps'] as List)
+          .map((e) => AppStoreItem.fromJson(e))
+          .toList();
+    }
+    return [];
+  }
+
+  // iStoreOS App Store
+  Future<List<AppStoreItem>> listIstoreosApps() async {
+    final response = await _dio.get('/api/v1/appstore/istoreos');
+    final data = response.data;
+    if (data is Map && data.containsKey('apps')) {
+      return (data['apps'] as List)
+          .map((e) => AppStoreItem.fromJson(e))
+          .toList();
+    }
+    return [];
+  }
+
+  // Legacy method for backward compatibility
   Future<List<AppStoreItem>> listStoreApps() async {
-    final response = await _dio.get('/api/v1/appstore/apps');
-    return (response.data as List)
-        .map((e) => AppStoreItem.fromJson(e))
-        .toList();
+    // Try CasaOS first, fallback to iStoreOS
+    try {
+      return await listCasaosApps();
+    } catch (_) {
+      return await listIstoreosApps();
+    }
   }
 
   Future<List<DockerApp>> listInstalledApps() async {

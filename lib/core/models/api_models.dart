@@ -6,34 +6,52 @@ part 'api_models.g.dart';
 
 @JsonSerializable()
 class User {
+  @JsonKey(defaultValue: '')
   final String id;
+  @JsonKey(defaultValue: '')
   final String username;
+  @JsonKey(defaultValue: '')
   final String email;
+  @JsonKey(defaultValue: 'user')
   final String role;
   @JsonKey(name: 'created_at')
-  final DateTime createdAt;
+  final DateTime? createdAt;
 
   User({
     required this.id,
     required this.username,
     required this.email,
     required this.role,
-    required this.createdAt,
+    this.createdAt,
   });
 
-  factory User.fromJson(Map<String, dynamic> json) => _$UserFromJson(json);
+  factory User.fromJson(Map<String, dynamic> json) {
+    try {
+      return _$UserFromJson(json);
+    } catch (e) {
+      // 如果解析失败，返回一个默认用户
+      return User(
+        id: json['id']?.toString() ?? '',
+        username: json['username']?.toString() ?? '',
+        email: json['email']?.toString() ?? '',
+        role: json['role']?.toString() ?? 'user',
+        createdAt: null,
+      );
+    }
+  }
+
   Map<String, dynamic> toJson() => _$UserToJson(this);
 }
 
 @JsonSerializable()
 class TokenResponse {
-  @JsonKey(name: 'access_token')
+  @JsonKey(name: 'access_token', defaultValue: '')
   final String accessToken;
-  @JsonKey(name: 'refresh_token')
+  @JsonKey(name: 'refresh_token', defaultValue: '')
   final String refreshToken;
-  @JsonKey(name: 'token_type')
+  @JsonKey(name: 'token_type', defaultValue: 'Bearer')
   final String tokenType;
-  @JsonKey(name: 'expires_in')
+  @JsonKey(name: 'expires_in', defaultValue: 0)
   final int expiresIn;
 
   TokenResponse({
@@ -43,14 +61,28 @@ class TokenResponse {
     required this.expiresIn,
   });
 
-  factory TokenResponse.fromJson(Map<String, dynamic> json) =>
-      _$TokenResponseFromJson(json);
+  factory TokenResponse.fromJson(Map<String, dynamic> json) {
+    try {
+      return _$TokenResponseFromJson(json);
+    } catch (e) {
+      // 如果解析失败，返回一个空的 token 响应
+      return TokenResponse(
+        accessToken: json['access_token']?.toString() ?? '',
+        refreshToken: json['refresh_token']?.toString() ?? '',
+        tokenType: json['token_type']?.toString() ?? 'Bearer',
+        expiresIn: json['expires_in'] as int? ?? 0,
+      );
+    }
+  }
+
   Map<String, dynamic> toJson() => _$TokenResponseToJson(this);
 }
 
 @JsonSerializable()
 class AuthResponse {
+  @JsonKey(defaultValue: false)
   final bool success;
+  @JsonKey(defaultValue: '')
   final String message;
   final User? user;
   final TokenResponse? tokens;
@@ -62,8 +94,20 @@ class AuthResponse {
     this.tokens,
   });
 
-  factory AuthResponse.fromJson(Map<String, dynamic> json) =>
-      _$AuthResponseFromJson(json);
+  factory AuthResponse.fromJson(Map<String, dynamic> json) {
+    try {
+      return _$AuthResponseFromJson(json);
+    } catch (e) {
+      // 如果解析失败，返回一个错误响应
+      return AuthResponse(
+        success: false,
+        message: 'Failed to parse response: $e',
+        user: null,
+        tokens: null,
+      );
+    }
+  }
+
   Map<String, dynamic> toJson() => _$AuthResponseToJson(this);
 }
 

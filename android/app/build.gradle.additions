@@ -1,0 +1,36 @@
+// 将以下内容添加到 android/app/build.gradle 文件中
+
+android {
+    // ... 现有配置
+
+    defaultConfig {
+        // ... 现有配置
+        
+        // 确保最小 SDK 版本支持生物识别
+        minSdkVersion 23  // 至少需要 Android 6.0
+        targetSdkVersion 33
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+}
+
+dependencies {
+    // ... 现有依赖
+
+    // 生物识别支持
+    implementation 'androidx.biometric:biometric:1.2.0-alpha05'
+    
+    // Kotlin 标准库
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
+    
+    // AndroidX 核心库
+    implementation 'androidx.core:core-ktx:1.10.1'
+    implementation 'androidx.fragment:fragment-ktx:1.6.0'
+}

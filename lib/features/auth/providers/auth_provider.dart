@@ -124,7 +124,7 @@ class AuthNotifier extends Notifier<AuthState> {
             username: userEmail.split('@').first,
             email: userEmail,
             role: userRole ?? 'user',
-            createdAt: DateTime.now(),
+            createdAt: null, // 修复：使用 null 而不是 DateTime.now()
           );
 
           state = state.copyWith(
@@ -205,6 +205,12 @@ class AuthNotifier extends Notifier<AuthState> {
       throw Exception('Invalid auth response: missing tokens or user data');
     }
 
+    print('💾 [Auth] 保存认证数据...');
+    print(
+        '   Access Token: ${response.tokens!.accessToken.substring(0, 20)}...');
+    print('   User ID: ${response.user!.id}');
+    print('   User Email: ${response.user!.email}');
+
     await _storage.write(
       key: 'access_token',
       value: response.tokens!.accessToken,
@@ -216,6 +222,8 @@ class AuthNotifier extends Notifier<AuthState> {
     await _storage.write(key: 'user_id', value: response.user!.id);
     await _storage.write(key: 'user_email', value: response.user!.email);
     await _storage.write(key: 'user_role', value: response.user!.role);
+
+    print('✅ [Auth] 认证数据保存完成');
   }
 
   Future<void> logout() async {

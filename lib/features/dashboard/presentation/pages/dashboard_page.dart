@@ -17,8 +17,12 @@ final hardwareInfoProvider = FutureProvider.autoDispose<HardwareInfo?>((
 ) async {
   try {
     final api = ref.read(apiServiceProvider);
-    return await api.getHardwareInfo();
-  } catch (_) {
+    final result = await api.getHardwareInfo();
+    return result;
+  } catch (e, stackTrace) {
+    debugPrint('❌ [Dashboard] Hardware info error: $e');
+    debugPrint('📚 [Dashboard] Stack trace: $stackTrace');
+    // 返回 null 而不是抛出异常，让 UI 显示错误状态
     return null;
   }
 });
@@ -52,7 +56,9 @@ final totalStorageInfoProvider = FutureProvider.autoDispose<TotalStorageInfo?>((
       diskCount: disks.length,
       disks: disks,
     );
-  } catch (_) {
+  } catch (e, stackTrace) {
+    debugPrint('❌ [Dashboard] Storage info error: $e');
+    debugPrint('📚 [Dashboard] Stack trace: $stackTrace');
     return null;
   }
 });
@@ -63,15 +69,33 @@ final networkInfoProvider = FutureProvider.autoDispose<NetworkInfo?>((
   try {
     final api = ref.read(apiServiceProvider);
     final hardware = await api.getHardwareInfo();
-    final interfaces = hardware.networkInterfaces ?? [];
+
+    if (hardware.networkInterfaces == null ||
+        hardware.networkInterfaces!.isEmpty) {
+      debugPrint('⚠️ [Dashboard] No network interfaces found');
+      return NetworkInfo(
+        interfaces: [],
+        totalRxBytes: 0,
+        totalTxBytes: 0,
+      );
+    }
+
+    final interfaces = hardware.networkInterfaces!;
 
     return NetworkInfo(
       interfaces: interfaces,
       totalRxBytes: interfaces.fold<int>(0, (sum, i) => sum + i.rxBytes),
       totalTxBytes: interfaces.fold<int>(0, (sum, i) => sum + i.txBytes),
     );
-  } catch (_) {
-    return null;
+  } catch (e, stackTrace) {
+    debugPrint('❌ [Dashboard] Network info error: $e');
+    debugPrint('📚 [Dashboard] Stack trace: $stackTrace');
+    // 返回空的网络信息而不是 null
+    return NetworkInfo(
+      interfaces: [],
+      totalRxBytes: 0,
+      totalTxBytes: 0,
+    );
   }
 });
 
