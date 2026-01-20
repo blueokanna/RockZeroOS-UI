@@ -275,11 +275,13 @@ class WallpaperColorNotifier extends Notifier<Color?> {
     }
   }
 
-  /// 从壁纸文件提取颜色
+  /// 从壁纸文件提取颜色并应用
   Future<void> extractFromWallpaper(String filePath) async {
     final color = await WallpaperService.extractColorFromFile(filePath);
     if (color != null) {
       await setColor(color);
+      // 立即刷新主题
+      ref.invalidate(blendedThemeColorProvider);
     }
   }
 }

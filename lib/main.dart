@@ -9,6 +9,7 @@ import 'package:window_manager/window_manager.dart';
 import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
 import 'core/services/device_discovery_service.dart';
+import 'core/services/wallpaper_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -75,11 +76,13 @@ class _RockZeroAppState extends ConsumerState<RockZeroApp> {
     final seedColor = ref.watch(seedColorProvider);
     final dynamicColorEnabled = ref.watch(dynamicColorEnabledProvider);
     final systemAccentColor = ref.watch(systemAccentColorProvider);
+    final blendedColor = ref.watch(blendedThemeColorProvider);
 
-    // Use system accent color if dynamic color is enabled and available
-    final effectiveColor = dynamicColorEnabled && systemAccentColor != null
-        ? systemAccentColor
-        : seedColor;
+    // 优先级: 混合颜色 > 系统颜色 > 种子颜色
+    final effectiveColor = blendedColor ??
+        (dynamicColorEnabled && systemAccentColor != null
+            ? systemAccentColor
+            : seedColor);
 
     return MaterialApp.router(
       title: 'RockZero',
