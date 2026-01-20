@@ -522,35 +522,78 @@ class ApiService {
 
   // CasaOS App Store
   Future<List<AppStoreItem>> listCasaosApps() async {
-    final response = await _dio.get('/api/v1/appstore/casaos');
-    final data = response.data;
-    if (data is Map && data.containsKey('apps')) {
-      return (data['apps'] as List)
-          .map((e) => AppStoreItem.fromJson(e))
-          .toList();
+    try {
+      final response = await _dio.get(
+        '/api/v1/appstore/casaos',
+        options: Options(
+          receiveTimeout: const Duration(seconds: 60), // 增加超时到60秒
+          sendTimeout: const Duration(seconds: 30),
+        ),
+      );
+      final data = response.data;
+      if (data is Map && data.containsKey('apps')) {
+        return (data['apps'] as List)
+            .map((e) => AppStoreItem.fromJson(e))
+            .toList();
+      }
+      return [];
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Failed to fetch CasaOS apps: $e');
+      }
+      // 返回空列表而不是抛出异常，这样 UI 可以显示空状态
+      return [];
     }
-    return [];
   }
 
   // iStoreOS App Store
   Future<List<AppStoreItem>> listIstoreosApps() async {
-    final response = await _dio.get('/api/v1/appstore/istoreos');
-    final data = response.data;
-    if (data is Map && data.containsKey('apps')) {
-      return (data['apps'] as List)
-          .map((e) => AppStoreItem.fromJson(e))
-          .toList();
+    try {
+      final response = await _dio.get(
+        '/api/v1/appstore/istoreos',
+        options: Options(
+          receiveTimeout: const Duration(seconds: 60),
+          sendTimeout: const Duration(seconds: 30),
+        ),
+      );
+      final data = response.data;
+      if (data is Map && data.containsKey('apps')) {
+        return (data['apps'] as List)
+            .map((e) => AppStoreItem.fromJson(e))
+            .toList();
+      }
+      return [];
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Failed to fetch iStoreOS apps: $e');
+      }
+      return [];
     }
-    return [];
   }
 
   // Legacy method for backward compatibility
   Future<List<AppStoreItem>> listStoreApps() async {
     // Try CasaOS first, fallback to iStoreOS
     try {
-      return await listCasaosApps();
-    } catch (_) {
+      final casaosApps = await listCasaosApps();
+      if (casaosApps.isNotEmpty) {
+        return casaosApps;
+      }
+      // 如果 CasaOS 返回空，尝试 iStoreOS
       return await listIstoreosApps();
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Failed to fetch store apps: $e');
+      }
+      // 最后尝试 iStoreOS
+      try {
+        return await listIstoreosApps();
+      } catch (e2) {
+        if (kDebugMode) {
+          print('❌ Failed to fetch iStoreOS apps: $e2');
+        }
+        return [];
+      }
     }
   }
 
