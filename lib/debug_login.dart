@@ -1,6 +1,3 @@
-// 登录调试工具
-// 在 main.dart 中导入并调用 debugLogin() 来测试
-
 import 'dart:convert';
 import 'dart:io';
 
