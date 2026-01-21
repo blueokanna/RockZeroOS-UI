@@ -1962,6 +1962,21 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 
   Future<void> _pickAndUploadFiles() async {
+    // 首先检查当前路径是否有效（必须在一个具体目录中，不能在磁盘列表视图）
+    final currentPath = ref.read(currentPathProvider);
+    if (currentPath.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+                'Please select a disk and navigate to a folder first'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+      return;
+    }
+
     final result = await FilePicker.platform.pickFiles(
       allowMultiple: true,
       type: FileType.any,
@@ -1978,7 +1993,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
     try {
       final api = ref.read(apiServiceProvider);
-      final currentPath = ref.read(currentPathProvider);
 
       if (kIsWeb) {
         if (mounted) {

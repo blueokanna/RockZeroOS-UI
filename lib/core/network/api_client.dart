@@ -240,6 +240,9 @@ class ApiException implements Exception {
       final data = err.response!.data as Map;
       message = data['message'] ?? message;
       errorCode = data['error'];
+    } else if (err.response?.data is String) {
+      // Surface plain-text error bodies directly so users see real server errors
+      message = err.response!.data as String;
     } else {
       switch (err.type) {
         case DioExceptionType.connectionTimeout:

@@ -680,6 +680,12 @@ class ApiService {
     List<File> files, {
     void Function(int, int)? onProgress,
   }) async {
+    // 验证路径不为空
+    if (path.isEmpty) {
+      throw Exception(
+          'Upload path cannot be empty. Please select a directory first.');
+    }
+
     final formData = FormData();
     int totalSize = 0;
 
@@ -687,12 +693,15 @@ class ApiService {
       final fileSize = file.lengthSync();
       totalSize += fileSize;
 
+      // 使用 path 包来正确提取文件名（跨平台兼容）
+      final filename = file.path.split(RegExp(r'[/\\]')).last;
+
       formData.files.add(
         MapEntry(
           'file',
           await MultipartFile.fromFile(
             file.path,
-            filename: file.path.split('/').last,
+            filename: filename,
           ),
         ),
       );
@@ -705,7 +714,7 @@ class ApiService {
         Duration(seconds: estimatedSeconds.clamp(60, 3600)); // 最少1分钟，最多1小时
 
     debugPrint(
-        '[Upload] Total size: ${totalSize / (1024 * 1024)} MB, timeout: ${sendTimeout.inSeconds}s');
+        '[Upload] Path: $path, Total size: ${totalSize / (1024 * 1024)} MB, timeout: ${sendTimeout.inSeconds}s');
 
     await _dio.post(
       '/api/v1/filemanager/upload',
