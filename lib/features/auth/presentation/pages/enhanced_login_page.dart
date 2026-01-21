@@ -74,7 +74,13 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
             await ref.read(authStateProvider.notifier).loginWithBiometric();
 
         if (success && mounted) {
-          Navigator.of(context).pushReplacementNamed('/dashboard');
+          // Use addPostFrameCallback to ensure state updates are complete
+          // before navigation, preventing login loop issues
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              Navigator.of(context).pushReplacementNamed('/dashboard');
+            }
+          });
         } else if (mounted) {
           _showError('Biometric login failed. Please try password login.');
         }

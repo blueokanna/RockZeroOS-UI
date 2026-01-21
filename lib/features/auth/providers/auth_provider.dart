@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -205,11 +206,11 @@ class AuthNotifier extends Notifier<AuthState> {
       throw Exception('Invalid auth response: missing tokens or user data');
     }
 
-    print('💾 [Auth] 保存认证数据...');
-    print(
+    debugPrint('💾 [Auth] 保存认证数据...');
+    debugPrint(
         '   Access Token: ${response.tokens!.accessToken.substring(0, 20)}...');
-    print('   User ID: ${response.user!.id}');
-    print('   User Email: ${response.user!.email}');
+    debugPrint('   User ID: ${response.user!.id}');
+    debugPrint('   User Email: ${response.user!.email}');
 
     await _storage.write(
       key: 'access_token',
@@ -223,7 +224,7 @@ class AuthNotifier extends Notifier<AuthState> {
     await _storage.write(key: 'user_email', value: response.user!.email);
     await _storage.write(key: 'user_role', value: response.user!.role);
 
-    print('✅ [Auth] 认证数据保存完成');
+    debugPrint('✅ [Auth] 认证数据保存完成');
   }
 
   Future<void> logout() async {

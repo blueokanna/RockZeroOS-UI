@@ -141,12 +141,15 @@ class DeviceDiscoveryService {
   final Ref _ref;
   final NetworkInfo _networkInfo = NetworkInfo();
   Timer? _scanTimer;
+  Timer? _ipMonitorTimer;
   RawDatagramSocket? _udpSocket;
+  String? _lastKnownIp;
 
   static const int _discoveryPort = 8444;
   static const int _defaultServicePort = 8080;
   static const Duration _scanInterval = Duration(seconds: 5);
   static const Duration _scanTimeout = Duration(seconds: 3);
+  static const Duration _ipCheckInterval = Duration(seconds: 10);
 
   DeviceDiscoveryService(this._ref);
 
@@ -173,12 +176,55 @@ class DeviceDiscoveryService {
 
   Future<void> startDiscovery() async {
     await _getLocalIp();
+    _lastKnownIp = _ref.read(deviceDiscoveryStateProvider).localIp;
     await _startUdpDiscovery();
     _startPeriodicScan();
+    _startIpMonitoring();
+  }
+
+  /// Periodically monitor IP changes and trigger rescan if IP changes
+  void _startIpMonitoring() {
+    _ipMonitorTimer?.cancel();
+    _ipMonitorTimer = Timer.periodic(_ipCheckInterval, (_) async {
+      await _checkIpChange();
+    });
+  }
+
+  Future<void> _checkIpChange() async {
+    try {
+      String? currentIp;
+      try {
+        currentIp = await _networkInfo.getWifiIP();
+      } catch (_) {
+        // Fallback to interface enumeration
+        final interfaces = await NetworkInterface.list(
+          type: InternetAddressType.IPv4,
+          includeLinkLocal: false,
+        );
+        for (var interface in interfaces) {
+          for (var addr in interface.addresses) {
+            if (!addr.isLoopback) {
+              currentIp = addr.address;
+              break;
+            }
+          }
+          if (currentIp != null) break;
+        }
+      }
+
+      if (currentIp != null && currentIp != _lastKnownIp) {
+        _lastKnownIp = currentIp;
+        _notifier.setLocalIp(currentIp);
+        // IP changed, clear old devices and rescan
+        _notifier.clearDevices();
+        await scanNetwork();
+      }
+    } catch (_) {}
   }
 
   void stopDiscovery() {
     _scanTimer?.cancel();
+    _ipMonitorTimer?.cancel();
     _udpSocket?.close();
   }
 

@@ -2047,21 +2047,33 @@ class _FilesPageState extends ConsumerState<FilesPage>
         } else if (e.type == DioExceptionType.connectionError) {
           errorMessage = 'Connection error - check server is running';
         } else if (e.response != null) {
-          errorMessage =
-              'Upload failed: ${e.response?.statusMessage ?? e.message}';
+          final statusMsg = e.response?.statusMessage;
+          final errMsg = e.message;
+          if (statusMsg != null && statusMsg.isNotEmpty) {
+            errorMessage = 'Upload failed: $statusMsg';
+          } else if (errMsg != null && errMsg.isNotEmpty) {
+            errorMessage = 'Upload failed: $errMsg';
+          } else {
+            errorMessage = 'Upload failed: Server error';
+          }
         } else {
-          errorMessage = 'Upload failed: ${e.message}';
+          final errMsg = e.message;
+          errorMessage = 'Upload failed: ${errMsg ?? 'Network error'}';
         }
 
+        // Clear any existing SnackBars before showing new one
+        ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(errorMessage),
             backgroundColor: Theme.of(context).colorScheme.error,
             duration: const Duration(seconds: 5),
             action: SnackBarAction(
-              label: 'Retry',
+              label: 'Dismiss',
               textColor: Colors.white,
-              onPressed: () => _pickAndUploadFiles(),
+              onPressed: () {
+                ScaffoldMessenger.of(context).hideCurrentSnackBar();
+              },
             ),
           ),
         );
@@ -2069,11 +2081,22 @@ class _FilesPageState extends ConsumerState<FilesPage>
     } catch (e) {
       debugPrint('[Upload] Error: $e');
       if (mounted) {
+        final errorStr = e.toString();
+        // Clear any existing SnackBars before showing new one
+        ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Upload failed: $e'),
+            content: Text(
+                'Upload failed: ${errorStr.isNotEmpty ? errorStr : 'Unknown error'}'),
             backgroundColor: Theme.of(context).colorScheme.error,
             duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Dismiss',
+              textColor: Colors.white,
+              onPressed: () {
+                ScaffoldMessenger.of(context).hideCurrentSnackBar();
+              },
+            ),
           ),
         );
       }

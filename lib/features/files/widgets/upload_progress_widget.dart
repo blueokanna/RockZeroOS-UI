@@ -129,10 +129,10 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withOpacity(0.8),
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.8),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: colorScheme.primary.withOpacity(0.3),
+          color: colorScheme.primary.withValues(alpha: 0.3),
           width: 1,
         ),
       ),

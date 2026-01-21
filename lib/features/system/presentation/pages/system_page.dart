@@ -393,13 +393,14 @@ class _CpuCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          _buildCoreGrid(context, info.perCoreUsage!),
+          _buildCoreGrid(context, info.perCoreUsage!, info.coreTypes),
         ],
       ],
     );
   }
 
-  Widget _buildCoreGrid(BuildContext context, List<CpuCoreInfo> cores) {
+  Widget _buildCoreGrid(BuildContext context, List<CpuCoreInfo> cores,
+      List<CpuCoreArchInfo>? coreTypes) {
     return LayoutBuilder(
       builder: (context, constraints) {
         // Calculate columns based on width
@@ -412,13 +413,27 @@ class _CpuCard extends StatelessWidget {
           physics: const NeverScrollableScrollPhysics(),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
-            childAspectRatio: 1.2,
+            childAspectRatio: 1.0,
             crossAxisSpacing: 10,
             mainAxisSpacing: 10,
           ),
           itemCount: cores.length,
           itemBuilder: (context, index) {
-            return _CoreUsageCard(core: cores[index]);
+            // Determine architecture for this core based on coreTypes
+            String? archName;
+            if (coreTypes != null && coreTypes.isNotEmpty) {
+              // Map core index to architecture type
+              // Typically big.LITTLE: first N cores are big (A73), rest are little (A53)
+              int cumulativeCount = 0;
+              for (final coreType in coreTypes) {
+                cumulativeCount += coreType.count;
+                if (index < cumulativeCount) {
+                  archName = coreType.coreName;
+                  break;
+                }
+              }
+            }
+            return _CoreUsageCard(core: cores[index], archName: archName);
           },
         );
       },
@@ -441,14 +456,26 @@ class _CpuCard extends StatelessWidget {
 
 class _CoreUsageCard extends StatelessWidget {
   final CpuCoreInfo core;
+  final String? archName;
 
-  const _CoreUsageCard({required this.core});
+  const _CoreUsageCard({required this.core, this.archName});
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final usageColor = _getUsageColor(core.usage);
+
+    // Extract short architecture name (e.g., "A73" from "Cortex-A73")
+    String? shortArch;
+    if (archName != null) {
+      final match = RegExp(r'[Aa](\d+)').firstMatch(archName!);
+      if (match != null) {
+        shortArch = 'A${match.group(1)}';
+      } else {
+        shortArch = archName;
+      }
+    }
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -463,12 +490,36 @@ class _CoreUsageCard extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(
-            'Core ${core.coreId}',
-            style: textTheme.labelSmall?.copyWith(
-              color: colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w500,
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                'Core ${core.coreId}',
+                style: textTheme.labelSmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              if (shortArch != null) ...[
+                const SizedBox(width: 4),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    shortArch,
+                    style: textTheme.labelSmall?.copyWith(
+                      color: colorScheme.onPrimaryContainer,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 10,
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
           const SizedBox(height: 6),
           TweenAnimationBuilder<double>(

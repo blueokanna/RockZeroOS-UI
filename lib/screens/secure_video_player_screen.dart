@@ -11,13 +11,13 @@ class SecureVideoPlayerScreen extends StatefulWidget {
   final String password;
 
   const SecureVideoPlayerScreen({
-    Key? key,
+    super.key,
     required this.fileId,
     required this.fileName,
     required this.jwtToken,
     required this.userId,
     required this.password,
-  }) : super(key: key);
+  });
 
   @override
   State<SecureVideoPlayerScreen> createState() =>
@@ -71,12 +71,14 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
         _error = e.toString();
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('播放失败: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('播放失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 

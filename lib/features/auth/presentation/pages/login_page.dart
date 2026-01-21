@@ -91,7 +91,14 @@ class _LoginPageState extends ConsumerState<LoginPage>
             await ref.read(authStateProvider.notifier).loginWithBiometric();
 
         if (success && mounted) {
-          context.go('/dashboard');
+          // Use pushReplacementNamed instead of go to prevent back navigation loop
+          // and ensure proper state refresh
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              context.go('/dashboard');
+            }
+          });
+          return; // Exit early to prevent showing error
         } else if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(

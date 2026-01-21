@@ -107,21 +107,21 @@ class _AuthInterceptor extends Interceptor {
     RequestOptions options,
     RequestInterceptorHandler handler,
   ) async {
-    print('🌐 [Auth] 请求: ${options.method} ${options.path}');
+    debugPrint('🌐 [Auth] 请求: ${options.method} ${options.path}');
 
     // Skip auth for public endpoints
     if (_publicPaths.any((path) => options.path.contains(path))) {
-      print('   ℹ️  [Auth] 公开端点，跳过认证');
+      debugPrint('   ℹ️  [Auth] 公开端点，跳过认证');
       return handler.next(options);
     }
 
     // Add access token
     final accessToken = await storage.read(key: 'access_token');
     if (accessToken != null) {
-      print('   🔑 [Auth] 添加 Access Token: ${accessToken.substring(0, 20)}...');
+      debugPrint('   🔑 [Auth] 添加 Access Token: ${accessToken.substring(0, 20)}...');
       options.headers['Authorization'] = 'Bearer $accessToken';
     } else {
-      print('   ⚠️  [Auth] 警告: 没有 Access Token');
+      debugPrint('   ⚠️  [Auth] 警告: 没有 Access Token');
     }
 
     handler.next(options);

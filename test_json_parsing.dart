@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 // JSON 解析测试脚本
 // 运行方法: dart run test_json_parsing.dart
 

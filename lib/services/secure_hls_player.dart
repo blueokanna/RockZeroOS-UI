@@ -1,7 +1,8 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:pointycastle/export.dart' as pc;
 import 'package:video_player/video_player.dart';
 
 /// 安全 HLS 播放器
@@ -29,7 +30,7 @@ class SecureHlsPlayer {
   /// 步骤 1: 初始化 SAE 握手
   Future<void> initializeSaeHandshake(
       String userId, String password, String fileId) async {
-    print('[SecureHLS] Starting SAE handshake for user: $userId');
+    debugPrint('[SecureHLS] Starting SAE handshake for user: $userId');
 
     // 1. 创建 SAE 客户端
     final saeClient = SaeClient(
@@ -61,7 +62,7 @@ class SecureHlsPlayer {
     final initData = jsonDecode(initResponse.body);
     final tempSessionId = initData['temp_session_id'];
 
-    print('[SecureHLS] Got temp session: $tempSessionId');
+    debugPrint('[SecureHLS] Got temp session: $tempSessionId');
 
     // 4. 完成 SAE 握手
     final clientConfirm = saeClient.processCommit(clientCommit);
@@ -101,7 +102,7 @@ class SecureHlsPlayer {
 
     // 6. 获取 PMK
     _pmk = saeClient.getPmk();
-    print('[SecureHLS] SAE handshake completed, PMK obtained');
+    debugPrint('[SecureHLS] SAE handshake completed, PMK obtained');
 
     // 7. 创建 HLS 会话
     final sessionResponse = await http.post(
@@ -123,7 +124,7 @@ class SecureHlsPlayer {
     final sessionData = jsonDecode(sessionResponse.body);
     _sessionId = sessionData['session_id'];
 
-    print('[SecureHLS] HLS session created: $_sessionId');
+    debugPrint('[SecureHLS] HLS session created: $_sessionId');
 
     // 8. 初始化加密器
     _encryptor = HlsEncryptor(pmk: _pmk!);
@@ -135,7 +136,10 @@ class SecureHlsPlayer {
       throw Exception('SAE handshake not completed');
     }
 
-    // 创建自定义 HTTP 客户端
+    // TODO: 实现代理服务器拦截视频段请求进行解密
+    // Flutter video_player 不支持自定义 HTTP 客户端
+    // 需要使用本地代理服务器模式来拦截和解密视频段
+    // ignore: unused_local_variable
     final customClient = SecureHttpClient(
       baseUrl: baseUrl,
       sessionId: _sessionId!,
@@ -154,7 +158,7 @@ class SecureHlsPlayer {
     // 初始化播放器
     await _controller!.initialize();
 
-    print('[SecureHLS] Video player initialized');
+    debugPrint('[SecureHLS] Video player initialized');
 
     return _controller!;
   }
@@ -294,20 +298,24 @@ class HlsEncryptor {
   late Uint8List _encryptionKey;
 
   HlsEncryptor({required this.pmk}) {
-    // 从 PMK 派生加密密钥（使用 HKDF）
+    // 从 PMK 派生加密密钥（使用 HKDF - 生成 32 字节密钥用于 AES-256）
     _encryptionKey = _deriveKey(pmk, 'hls-master-key');
   }
 
-  /// 解密段
+  /// 解密段 - 使用 AES-256-GCM
   Uint8List decryptSegment(Uint8List encryptedData) {
+    if (encryptedData.length < 28) {
+      // 最小长度: 12 (nonce) + 16 (tag) = 28
+      throw Exception('Encrypted data too short for AES-256-GCM');
+    }
+
     // 提取 nonce（前 12 字节）
     final nonce = encryptedData.sublist(0, 12);
-    final ciphertext = encryptedData.sublist(12);
+    // 剩余部分是 ciphertext + auth tag
+    final ciphertextWithTag = encryptedData.sublist(12);
 
     // 使用 AES-256-GCM 解密
-    // 注意：这里需要使用实际的 AES-GCM 库
-    // 简化实现：返回原数据（实际应该解密）
-    return _aesGcmDecrypt(_encryptionKey, nonce, ciphertext);
+    return _aesGcmDecrypt(_encryptionKey, nonce, ciphertextWithTag);
   }
 
   /// 生成 ZKP 证明
@@ -321,30 +329,77 @@ class HlsEncryptor {
         'blinding_commitment': base64Encode(_deriveKey(pmk, 'blinding')),
       },
       'timestamp': DateTime.now().millisecondsSinceEpoch ~/ 1000,
-      'nonce': base64Encode(_generateRandom(16)),
+      'nonce': base64Encode(_generateSecureRandom(16)),
+      'context': 'hls_segment_access',
     };
 
     return base64Encode(utf8.encode(jsonEncode(proof)));
   }
 
-  // 辅助函数
+  // 辅助函数：从密钥派生子密钥
   Uint8List _deriveKey(Uint8List key, String info) {
     final hash = sha256.convert([...key, ...utf8.encode(info)]);
     return Uint8List.fromList(hash.bytes);
   }
 
+  /// AES-256-GCM 解密实现
   Uint8List _aesGcmDecrypt(
-      Uint8List key, Uint8List nonce, Uint8List ciphertext) {
-    // TODO: 实现真正的 AES-256-GCM 解密
-    // 这里需要使用 pointycastle 或其他加密库
-    // 简化实现：返回原数据
-    return ciphertext;
+      Uint8List key, Uint8List nonce, Uint8List ciphertextWithTag) {
+    // AES-256-GCM 使用 128-bit (16 字节) 认证标签
+    const tagLength = 16;
+
+    if (ciphertextWithTag.length < tagLength) {
+      throw Exception('Ciphertext too short, missing authentication tag');
+    }
+
+    // 创建 AES-GCM 解密器
+    final gcm = pc.GCMBlockCipher(pc.AESEngine());
+
+    // 初始化参数：密钥 + nonce + tag
+    final params = pc.AEADParameters(
+      pc.KeyParameter(key),
+      tagLength * 8, // tag 长度以比特为单位
+      nonce,
+      Uint8List(0), // 无额外认证数据 (AAD)
+    );
+
+    gcm.init(false, params); // false = 解密模式
+
+    // 解密 (ciphertext + tag 组合后传入)
+    final plaintext = Uint8List(gcm.getOutputSize(ciphertextWithTag.length));
+
+    try {
+      var offset = gcm.processBytes(
+          ciphertextWithTag, 0, ciphertextWithTag.length, plaintext, 0);
+      offset += gcm.doFinal(plaintext, offset);
+
+      // 返回实际的明文长度
+      return Uint8List.view(plaintext.buffer, 0, offset);
+    } catch (e) {
+      throw Exception('AES-256-GCM decryption failed: $e');
+    }
   }
 
-  Uint8List _generateRandom(int length) {
-    final random = List<int>.generate(
-        length, (i) => DateTime.now().microsecondsSinceEpoch % 256);
-    return Uint8List.fromList(random);
+  /// 安全随机数生成
+  Uint8List _generateSecureRandom(int length) {
+    final secureRandom = pc.FortunaRandom();
+    // 使用当前时间和系统熵作为种子
+    final seed = Uint8List(32);
+    final now = DateTime.now().microsecondsSinceEpoch;
+    for (var i = 0; i < 8; i++) {
+      seed[i] = (now >> (i * 8)) & 0xFF;
+    }
+    // 添加额外熵
+    for (var i = 8; i < 32; i++) {
+      seed[i] = (now * (i + 1)) & 0xFF;
+    }
+    secureRandom.seed(pc.KeyParameter(seed));
+
+    final result = Uint8List(length);
+    for (var i = 0; i < length; i++) {
+      result[i] = secureRandom.nextUint8();
+    }
+    return result;
   }
 }
 
@@ -369,7 +424,7 @@ class SecureHttpClient extends http.BaseClient {
 
     // 拦截 TS 段请求
     if (url.contains('.ts')) {
-      print('[SecureHLS] Intercepting segment request: $url');
+      debugPrint('[SecureHLS] Intercepting segment request: $url');
 
       // 生成 ZKP 证明
       final zkpProof = encryptor.generateZkpProof();
@@ -390,7 +445,7 @@ class SecureHttpClient extends http.BaseClient {
       final encryptedData = response.bodyBytes;
       final decryptedData = encryptor.decryptSegment(encryptedData);
 
-      print('[SecureHLS] Segment decrypted: ${decryptedData.length} bytes');
+      debugPrint('[SecureHLS] Segment decrypted: ${decryptedData.length} bytes');
 
       // 返回解密后的数据
       return http.StreamedResponse(

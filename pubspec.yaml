@@ -24,6 +24,10 @@ dependencies:
   dio: ^5.8.0
   json_annotation: ^4.9.0
 
+  # Cryptography
+  pointycastle: ^3.9.1
+  crypto: ^3.0.6
+
   # Local Storage & Security
   flutter_secure_storage: ^10.0.0
   flutter_secure_storage_linux: ^3.0.0

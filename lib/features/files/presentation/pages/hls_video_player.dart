@@ -196,7 +196,26 @@ class _HlsVideoPlayerState extends ConsumerState<HlsVideoPlayer> {
       debugPrint('[HlsPlayer] Playlist URL: $playlistUrl');
       debugPrint('[HlsPlayer] Audio tracks: ${_audioTracks.length}');
 
-      await Future.delayed(const Duration(seconds: 2));
+      // Wait for FFmpeg to start transcoding and generate initial segments
+      // This delay is crucial for the HLS stream to be ready
+      debugPrint(
+          '[HlsPlayer] Waiting for FFmpeg to generate initial segments...');
+      await Future.delayed(const Duration(seconds: 4));
+
+      // Verify playlist is accessible before creating video controller
+      try {
+        final checkResponse = await http.get(
+          Uri.parse(playlistUrl),
+          headers: {'Authorization': 'Bearer $_authToken'},
+        );
+        if (checkResponse.statusCode != 200) {
+          debugPrint('[HlsPlayer] Playlist not ready yet, waiting more...');
+          await Future.delayed(const Duration(seconds: 3));
+        }
+      } catch (e) {
+        debugPrint('[HlsPlayer] Playlist check failed: $e, waiting more...');
+        await Future.delayed(const Duration(seconds: 3));
+      }
 
       _chewieController?.dispose();
       _videoController?.dispose();

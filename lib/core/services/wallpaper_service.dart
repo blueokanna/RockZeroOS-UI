@@ -287,31 +287,28 @@ class WallpaperColorNotifier extends Notifier<Color?> {
 }
 
 /// 混合后的主题色 Provider
-/// 默认模式: 70% 系统色 + 30% 壁纸色
-/// 自定义壁纸模式: 100% 壁纸色
+/// 自定义壁纸模式: 70% 手机壁纸色 + 30% 自定义壁纸色
+/// 默认模式: 使用系统/种子颜色
 final blendedThemeColorProvider = Provider<Color?>((ref) {
   final backgroundMode = ref.watch(backgroundModeProvider);
-  final wallpaperColor = ref.watch(wallpaperColorProvider);
-  final systemColor = ref.watch(systemAccentColorProvider);
+  final wallpaperColor = ref.watch(wallpaperColorProvider); // 自定义上传壁纸的颜色
+  final systemColor = ref.watch(systemAccentColorProvider); // 手机壁纸颜色
   final seedColor = ref.watch(seedColorProvider);
 
-  if (backgroundMode == BackgroundMode.customWallpaper &&
-      wallpaperColor != null) {
-    // 自定义壁纸模式 - 使用壁纸颜色
-    return wallpaperColor;
-  }
-
-  if (backgroundMode == BackgroundMode.defaultMode) {
-    // 默认模式 - 混合系统色和壁纸色
-    final baseColor = systemColor ?? seedColor;
-
-    if (wallpaperColor != null) {
-      // 70% 系统色 + 30% 壁纸色
-      return WallpaperService.blendColors(baseColor, wallpaperColor, 0.7);
+  if (backgroundMode == BackgroundMode.customWallpaper) {
+    // 自定义壁纸模式
+    if (wallpaperColor != null && systemColor != null) {
+      // 70% 手机壁纸色 + 30% 自定义上传壁纸色
+      return WallpaperService.blendColors(systemColor, wallpaperColor, 0.7);
+    } else if (wallpaperColor != null) {
+      // 没有系统颜色，使用100%自定义壁纸颜色
+      return wallpaperColor;
+    } else if (systemColor != null) {
+      // 没有自定义壁纸颜色，使用系统颜色
+      return systemColor;
     }
-
-    return baseColor;
   }
 
+  // 默认模式 - 使用系统颜色或种子颜色
   return systemColor ?? seedColor;
 });

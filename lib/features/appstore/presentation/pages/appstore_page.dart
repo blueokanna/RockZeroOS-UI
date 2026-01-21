@@ -13,8 +13,28 @@ final storeAppsProvider = FutureProvider.autoDispose<List<AppStoreItem>>((
   ref,
 ) async {
   final api = ref.read(apiServiceProvider);
-  return await api.listStoreApps();
+  try {
+    // Add timeout to prevent infinite loading
+    final apps = await api.listStoreApps().timeout(
+      const Duration(seconds: 60),
+      onTimeout: () {
+        throw TimeoutException('App store request timed out');
+      },
+    );
+    return apps;
+  } catch (e) {
+    // Log the error and rethrow for the UI to handle
+    debugPrint('Store apps fetch error: $e');
+    rethrow;
+  }
 });
+
+class TimeoutException implements Exception {
+  final String message;
+  TimeoutException(this.message);
+  @override
+  String toString() => message;
+}
 
 final installedAppsProvider = FutureProvider.autoDispose<List<DockerApp>>((
   ref,
