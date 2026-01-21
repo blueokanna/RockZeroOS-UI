@@ -118,7 +118,8 @@ class _AuthInterceptor extends Interceptor {
     // Add access token
     final accessToken = await storage.read(key: 'access_token');
     if (accessToken != null) {
-      debugPrint('   🔑 [Auth] 添加 Access Token: ${accessToken.substring(0, 20)}...');
+      debugPrint(
+          '   🔑 [Auth] 添加 Access Token: ${accessToken.substring(0, 20)}...');
       options.headers['Authorization'] = 'Bearer $accessToken';
     } else {
       debugPrint('   ⚠️  [Auth] 警告: 没有 Access Token');

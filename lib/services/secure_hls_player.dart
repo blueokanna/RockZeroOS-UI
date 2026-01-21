@@ -445,7 +445,8 @@ class SecureHttpClient extends http.BaseClient {
       final encryptedData = response.bodyBytes;
       final decryptedData = encryptor.decryptSegment(encryptedData);
 
-      debugPrint('[SecureHLS] Segment decrypted: ${decryptedData.length} bytes');
+      debugPrint(
+          '[SecureHLS] Segment decrypted: ${decryptedData.length} bytes');
 
       // 返回解密后的数据
       return http.StreamedResponse(
