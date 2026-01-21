@@ -1962,37 +1962,33 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 
   Future<void> _pickAndUploadFiles() async {
-    // 首先检查当前路径是否有效（必须在一个具体目录中，不能在磁盘列表视图）
+    // 获取当前路径
     final currentPath = ref.read(currentPathProvider);
+
+    // 如果路径为空，提示用户选择目录（但不阻止上传）
     if (currentPath.isEmpty) {
-      if (mounted) {
-        final scaffoldMessenger = ScaffoldMessenger.of(context);
-        scaffoldMessenger.showSnackBar(
-          SnackBar(
-            content: const Row(
-              children: [
-                Icon(Icons.warning_rounded, color: Colors.white),
-                SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Please select a disk and navigate to a folder first',
-                  ),
-                ),
-              ],
-            ),
-            backgroundColor: Theme.of(context).colorScheme.error,
-            duration: const Duration(seconds: 4),
-            action: SnackBarAction(
-              label: 'OK',
-              textColor: Colors.white,
-              onPressed: () {
-                scaffoldMessenger.hideCurrentSnackBar();
-              },
-            ),
+      final shouldContinue = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Upload Location'),
+          content: const Text(
+            'No directory selected. Files will be uploaded to the default storage location.\n\n'
+            'Do you want to continue?',
           ),
-        );
-      }
-      return;
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldContinue != true) return;
     }
 
     final result = await FilePicker.platform.pickFiles(

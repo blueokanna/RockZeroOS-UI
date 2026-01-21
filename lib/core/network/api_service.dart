@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/api_models.dart';
 import 'api_client.dart';
@@ -10,12 +11,16 @@ import 'api_client.dart';
 // API Service Provider
 final apiServiceProvider = Provider<ApiService>((ref) {
   final dio = ref.watch(dioProvider);
-  return ApiService(dio);
+  final storage = ref.watch(secureStorageProvider);
+  return ApiService(dio, storage);
 });
 
 class ApiService {
   final Dio _dio;
-  ApiService(this._dio);
+  final FlutterSecureStorage _storage;
+
+  ApiService(this._dio, this._storage);
+
   String get baseUrl => _dio.options.baseUrl;
 
   // ============ Generic HTTP Methods ============
@@ -680,25 +685,55 @@ class ApiService {
     List<File> files, {
     void Function(int, int)? onProgress,
   }) async {
-    // 验证路径不为空
-    if (path.isEmpty) {
-      throw Exception(
-          'Upload path cannot be empty. Please select a directory first.');
+    debugPrint('═══════════════════════════════════════');
+    debugPrint('[Upload] 开始上传流程');
+    debugPrint('[Upload] 目标路径: "$path"');
+    debugPrint('[Upload] 文件数量: ${files.length}');
+    debugPrint('═══════════════════════════════════════');
+
+    // 1. 验证文件列表
+    if (files.isEmpty) {
+      throw Exception('没有选择文件');
     }
 
+    // 2. 获取并验证 access token
+    final accessToken = await _storage.read(key: 'access_token');
+    debugPrint('[Upload] Token 检查: ${accessToken != null ? "✓ 存在" : "✗ 不存在"}');
+
+    if (accessToken == null || accessToken.isEmpty) {
+      debugPrint('[Upload] ❌ 错误: 没有认证 token');
+      throw Exception('需要登录。请先登录后再上传文件。');
+    }
+
+    debugPrint('[Upload] ✓ Token: ${accessToken.substring(0, 20)}...');
+
+    // 3. 准备上传数据
     final formData = FormData();
     int totalSize = 0;
 
-    for (final file in files) {
+    for (int i = 0; i < files.length; i++) {
+      final file = files[i];
+
+      // 检查文件是否存在
+      if (!file.existsSync()) {
+        debugPrint('[Upload] ⚠️ 文件不存在: ${file.path}');
+        continue;
+      }
+
       final fileSize = file.lengthSync();
       totalSize += fileSize;
 
-      // 使用 path 包来正确提取文件名（跨平台兼容）
+      // 提取文件名（跨平台兼容）
       final filename = file.path.split(RegExp(r'[/\\]')).last;
 
+      debugPrint('[Upload] 文件 ${i + 1}/${files.length}:');
+      debugPrint('  - 名称: $filename');
+      debugPrint('  - 大小: ${_formatFileSize(fileSize)}');
+
+      // 添加到 FormData
       formData.files.add(
         MapEntry(
-          'file',
+          'file', // 字段名必须是 'file'
           await MultipartFile.fromFile(
             file.path,
             filename: filename,
@@ -707,27 +742,132 @@ class ApiService {
       );
     }
 
-    // 根据文件大小动态计算超时时间
-    // 假设最低速度 100KB/s，加上30秒的缓冲时间
-    final estimatedSeconds = (totalSize / (100 * 1024)).ceil() + 30;
-    final sendTimeout =
-        Duration(seconds: estimatedSeconds.clamp(60, 3600)); // 最少1分钟，最多1小时
+    if (formData.files.isEmpty) {
+      throw Exception('没有有效的文件可以上传');
+    }
 
-    debugPrint(
-        '[Upload] Path: $path, Total size: ${totalSize / (1024 * 1024)} MB, timeout: ${sendTimeout.inSeconds}s');
+    debugPrint('[Upload] ═══════════════════════════════');
+    debugPrint('[Upload] 总文件数: ${formData.files.length}');
+    debugPrint('[Upload] 总大小: ${_formatFileSize(totalSize)}');
+    debugPrint('[Upload] ═══════════════════════════════');
 
-    await _dio.post(
-      '/api/v1/filemanager/upload',
-      data: formData,
-      queryParameters: {'path': path},
-      onSendProgress: onProgress,
-      options: Options(
-        sendTimeout: sendTimeout,
-        receiveTimeout: const Duration(minutes: 5),
-        // 完全不设置 headers，让 FormData 自动处理 Content-Type
-        contentType: Headers.multipartFormDataContentType,
-      ),
+    // 4. 计算超时时间（基于文件大小）
+    final estimatedSeconds = (totalSize / (50 * 1024)).ceil() + 60;
+    final sendTimeout = Duration(
+      seconds: estimatedSeconds.clamp(120, 7200), // 最少2分钟，最多2小时
     );
+
+    debugPrint('[Upload] 超时设置: ${sendTimeout.inSeconds}秒');
+
+    // 5. 准备请求参数
+    final queryParams = <String, dynamic>{};
+    if (path.isNotEmpty) {
+      queryParams['path'] = path;
+    }
+
+    debugPrint('[Upload] 开始发送请求...');
+
+    try {
+      // 6. 发送上传请求
+      final response = await _dio.post(
+        '/api/v1/filemanager/upload',
+        data: formData,
+        queryParameters: queryParams.isNotEmpty ? queryParams : null,
+        onSendProgress: (sent, total) {
+          final progress = (sent / total * 100).toStringAsFixed(1);
+          debugPrint('[Upload] 进度: $sent / $total ($progress%)');
+          onProgress?.call(sent, total);
+        },
+        options: Options(
+          sendTimeout: sendTimeout,
+          receiveTimeout: const Duration(minutes: 5),
+          contentType: Headers.multipartFormDataContentType,
+          headers: {
+            'Authorization': 'Bearer $accessToken',
+            'Accept': 'application/json',
+          },
+          validateStatus: (status) {
+            return status != null && status >= 200 && status < 300;
+          },
+        ),
+      );
+
+      debugPrint('[Upload] ═══════════════════════════════');
+      debugPrint('[Upload] ✅ 上传成功！');
+      debugPrint('[Upload] 状态码: ${response.statusCode}');
+      debugPrint('[Upload] ═══════════════════════════════');
+
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        throw Exception('服务器返回错误状态码: ${response.statusCode}');
+      }
+    } on DioException catch (e) {
+      debugPrint('[Upload] ═══════════════════════════════');
+      debugPrint('[Upload] ❌ DioException 错误');
+      debugPrint('[Upload] 类型: ${e.type}');
+      debugPrint('[Upload] 消息: ${e.message}');
+
+      if (e.response != null) {
+        debugPrint('[Upload] 响应状态码: ${e.response?.statusCode}');
+        debugPrint('[Upload] 响应数据: ${e.response?.data}');
+      }
+
+      debugPrint('[Upload] ═══════════════════════════════');
+
+      // 构建详细的错误消息
+      String errorMessage;
+
+      if (e.type == DioExceptionType.connectionTimeout) {
+        errorMessage = '连接超时。请检查网络连接和服务器状态。';
+      } else if (e.type == DioExceptionType.sendTimeout) {
+        errorMessage = '上传超时。文件可能太大或网络速度太慢。';
+      } else if (e.type == DioExceptionType.receiveTimeout) {
+        errorMessage = '接收响应超时。服务器可能正在处理请求。';
+      } else if (e.type == DioExceptionType.connectionError) {
+        errorMessage = '连接错误。请确认服务器正在运行并且可以访问。';
+      } else if (e.response != null) {
+        final statusCode = e.response!.statusCode;
+        final data = e.response!.data;
+
+        if (statusCode == 401) {
+          errorMessage = '认证失败。请重新登录。';
+        } else if (statusCode == 403) {
+          errorMessage = '权限不足。请检查目录权限。';
+        } else if (statusCode == 404) {
+          errorMessage = '目标路径不存在。';
+        } else if (statusCode == 413) {
+          errorMessage = '文件太大。请上传较小的文件。';
+        } else if (statusCode == 500) {
+          errorMessage = '服务器内部错误。请查看服务器日志。';
+        } else {
+          if (data is Map && data['message'] != null) {
+            errorMessage = '上传失败: ${data['message']}';
+          } else if (data is String && data.isNotEmpty) {
+            errorMessage = '上传失败: $data';
+          } else {
+            errorMessage = '上传失败: HTTP $statusCode';
+          }
+        }
+      } else {
+        errorMessage = '上传失败: ${e.message ?? "未知错误"}';
+      }
+
+      throw Exception(errorMessage);
+    } catch (e) {
+      debugPrint('[Upload] ═══════════════════════════════');
+      debugPrint('[Upload] ❌ 未知错误: $e');
+      debugPrint('[Upload] ═══════════════════════════════');
+      rethrow;
+    }
+  }
+
+  // 辅助方法：格式化文件大小
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(2)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 
   Future<void> renameFile({
