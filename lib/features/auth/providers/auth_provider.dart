@@ -62,12 +62,16 @@ class AuthNotifier extends Notifier<AuthState> {
     final accessToken = await _storage.read(key: 'access_token');
     final userJson = await _storage.read(key: 'user');
 
+    // 只有在有token和用户数据时才标记为已认证
+    // 但不自动登录，需要用户进行生物识别或密码认证
     if (accessToken != null && userJson != null) {
       try {
         final user = User.fromJson(jsonDecode(userJson));
-        state = state.copyWith(user: user, isAuthenticated: true);
+        // 不设置 isAuthenticated = true，让用户重新认证
+        state = state.copyWith(user: user, isAuthenticated: false);
       } catch (e) {
         debugPrint('[Auth] Failed to parse stored user: $e');
+        await _storage.deleteAll();
       }
     }
   }
@@ -115,38 +119,40 @@ class AuthNotifier extends Notifier<AuthState> {
       final refreshToken = await _storage.read(key: 'refresh_token');
       final userJson = await _storage.read(key: 'user');
 
-      if (accessToken != null && userJson != null) {
-        try {
-          if (refreshToken != null) {
-            final newTokens = await _api.refreshToken(refreshToken);
-            await _storage.write(
-                key: 'access_token', value: newTokens.accessToken);
-            await _storage.write(
-                key: 'refresh_token', value: newTokens.refreshToken);
-          }
-
-          final user = User.fromJson(jsonDecode(userJson));
-
-          state = state.copyWith(
-            user: user,
-            isLoading: false,
-            isAuthenticated: true,
-          );
-          return true;
-        } catch (_) {
-          state = state.copyWith(
-            isLoading: false,
-            error: 'Session expired. Please sign in with password.',
-          );
-          return false;
-        }
+      if (accessToken == null || refreshToken == null || userJson == null) {
+        state = state.copyWith(
+          isLoading: false,
+          error:
+              'No stored credentials found. Please sign in with password first.',
+        );
+        return false;
       }
 
-      state = state.copyWith(
-        isLoading: false,
-        error: 'No stored credentials found',
-      );
-      return false;
+      try {
+        // 尝试刷新token以验证会话是否有效
+        final newTokens = await _api.refreshToken(refreshToken);
+        await _storage.write(key: 'access_token', value: newTokens.accessToken);
+        await _storage.write(
+            key: 'refresh_token', value: newTokens.refreshToken);
+
+        final user = User.fromJson(jsonDecode(userJson));
+
+        state = state.copyWith(
+          user: user,
+          isLoading: false,
+          isAuthenticated: true,
+        );
+        return true;
+      } catch (e) {
+        debugPrint('[Auth] Token refresh failed: $e');
+        // Token过期或无效，清除存储的凭据
+        await _storage.deleteAll();
+        state = state.copyWith(
+          isLoading: false,
+          error: 'Session expired. Please sign in with password.',
+        );
+        return false;
+      }
     } catch (e) {
       state = state.copyWith(
         isLoading: false,

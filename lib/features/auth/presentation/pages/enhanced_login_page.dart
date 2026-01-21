@@ -65,29 +65,41 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
     setState(() => _isLoading = true);
 
     try {
+      // 先进行生物识别认证
       final authenticated = await biometricService.authenticate(
         reason: 'Authenticate to login to RockZeroOS',
+        biometricOnly: true, // 只使用生物识别，不允许PIN/密码回退
       );
 
-      if (authenticated) {
-        final success =
-            await ref.read(authStateProvider.notifier).loginWithBiometric();
-
-        if (success && mounted) {
-          // Use addPostFrameCallback to ensure state updates are complete
-          // before navigation, preventing login loop issues
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              Navigator.of(context).pushReplacementNamed('/dashboard');
-            }
-          });
-        } else if (mounted) {
-          _showError('Biometric login failed. Please try password login.');
+      if (!authenticated) {
+        if (mounted) {
+          _showError('Biometric authentication cancelled or failed.');
         }
+        return;
+      }
+
+      // 生物识别成功后，使用存储的token登录
+      final success =
+          await ref.read(authStateProvider.notifier).loginWithBiometric();
+
+      if (success && mounted) {
+        // Use addPostFrameCallback to ensure state updates are complete
+        // before navigation, preventing login loop issues
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            Navigator.of(context).pushReplacementNamed('/dashboard');
+          }
+        });
+      } else if (mounted) {
+        final authState = ref.read(authStateProvider);
+        _showError(authState.error ??
+            'Biometric login failed. Please try password login.');
       }
     } catch (e) {
       debugPrint('❌ Biometric login error: $e');
-      _showError('Biometric authentication failed: $e');
+      if (mounted) {
+        _showError('Biometric authentication failed: $e');
+      }
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);

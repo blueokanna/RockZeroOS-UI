@@ -20,7 +20,7 @@ import '../../../../core/services/download_manager.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../storage/presentation/pages/disk_management_page.dart';
 import '../widgets/transport_manager_page.dart';
-import 'hls_video_player.dart';
+import 'secure_hls_video_player.dart';
 import 'enhanced_audio_player_page.dart';
 import 'image_viewer_page.dart';
 import 'network_shares_page.dart';
@@ -2933,16 +2933,18 @@ class _FilesPageState extends ConsumerState<FilesPage>
       );
     } else if (mimeType.startsWith('video/')) {
       final api = ref.read(apiServiceProvider);
-      // Use HLS player - Rust backend converts to HLS, supports all formats
+
+      // 只使用安全HLS - SAE握手 + ZKP验证 + AES-256-GCM加密
+      final player = SecureHlsVideoPlayer(
+        filePath: entry.path,
+        fileName: entry.name,
+        baseUrl: api.baseUrl,
+      );
+
       Navigator.push(
         context,
         PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) =>
-              HlsVideoPlayer(
-            filePath: entry.path,
-            fileName: entry.name,
-            baseUrl: api.baseUrl,
-          ),
+          pageBuilder: (context, animation, secondaryAnimation) => player,
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return FadeTransition(
               opacity: animation,
