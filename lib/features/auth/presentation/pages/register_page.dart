@@ -36,10 +36,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
   Future<void> _handleRegister() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final success = await ref
-        .read(authStateProvider.notifier)
-        .register(
-          username: _usernameController.text.trim(),
+    final success = await ref.read(authStateProvider.notifier).register(
           email: _emailController.text.trim(),
           password: _passwordController.text,
           inviteCode: _inviteCodeController.text.isNotEmpty
@@ -245,9 +242,8 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
 
                         // Register Button
                         FilledButton(
-                          onPressed: authState.isLoading
-                              ? null
-                              : _handleRegister,
+                          onPressed:
+                              authState.isLoading ? null : _handleRegister,
                           child: authState.isLoading
                               ? const SizedBox(
                                   height: 20,

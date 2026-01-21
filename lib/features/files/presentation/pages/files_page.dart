@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -15,8 +16,10 @@ import '../../../../core/network/api_service.dart';
 import '../../../../core/services/biometric_service.dart';
 import '../../../../core/services/device_discovery_service.dart';
 import '../../../../core/services/filesystem_monitor_service.dart';
+import '../../../../core/services/download_manager.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../storage/presentation/pages/disk_management_page.dart';
+import '../widgets/upload_manager_page.dart';
 import 'hls_video_player.dart';
 import 'enhanced_audio_player_page.dart';
 import 'image_viewer_page.dart';
@@ -269,12 +272,13 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 
   void _onScroll() {
-    final isScrollingDown = _scrollController.position.userScrollDirection
-        .toString()
-        .contains('reverse');
-    if (isScrollingDown && _showFab) {
+    if (!_scrollController.hasClients) return;
+
+    final direction = _scrollController.position.userScrollDirection;
+    // 向下滚动时隐藏，向上滚动时显示
+    if (direction == ScrollDirection.reverse && _showFab) {
       setState(() => _showFab = false);
-    } else if (!isScrollingDown && !_showFab) {
+    } else if (direction == ScrollDirection.forward && !_showFab) {
       setState(() => _showFab = true);
     }
   }
@@ -1352,22 +1356,55 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
   Widget _buildFAB() {
     final colorScheme = Theme.of(context).colorScheme;
+    final downloadManager = ref.watch(downloadManagerProvider);
+    final hasActiveUploads = downloadManager.activeUploads > 0;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        FloatingActionButton.small(
-          heroTag: 'new_folder',
-          onPressed: _showCreateFolderDialog,
-          backgroundColor: colorScheme.secondaryContainer,
-          foregroundColor: colorScheme.onSecondaryContainer,
-          child: const Icon(Icons.create_new_folder_rounded),
+        // 上传管理器按钮（有活动上传时显示）
+        if (hasActiveUploads)
+          Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: FloatingActionButton.small(
+              heroTag: 'upload_manager',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const UploadManagerPage(),
+                  ),
+                );
+              },
+              backgroundColor: colorScheme.tertiaryContainer,
+              foregroundColor: colorScheme.onTertiaryContainer,
+              child: Badge(
+                label: Text(downloadManager.activeUploads.toString()),
+                child: const Icon(Icons.upload_file_rounded),
+              ),
+            ),
+          ),
+        // 创建文件夹按钮 - Material Design 3 风格
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          child: FloatingActionButton(
+            heroTag: 'new_folder',
+            onPressed: _showCreateFolderDialog,
+            backgroundColor: colorScheme.secondaryContainer,
+            foregroundColor: colorScheme.onSecondaryContainer,
+            elevation: 3,
+            child: const Icon(Icons.create_new_folder_rounded, size: 28),
+          ),
         ),
-        const SizedBox(height: 12),
+        // 上传按钮 - Material Design 3 风格
         FloatingActionButton.extended(
           heroTag: 'upload',
           onPressed: _pickAndUploadFiles,
-          icon: const Icon(Icons.upload_rounded),
+          backgroundColor: colorScheme.primaryContainer,
+          foregroundColor: colorScheme.onPrimaryContainer,
+          elevation: 3,
+          icon: const Icon(Icons.cloud_upload_rounded),
           label: const Text('Upload'),
         ),
       ],

@@ -1,11 +1,19 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/models/api_models.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_service.dart';
-import '../../../core/services/device_discovery_service.dart';
+
+// Secure storage provider
+final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
+  return const FlutterSecureStorage();
+});
 
 // Auth state
 class AuthState {
@@ -55,7 +63,12 @@ class AuthNotifier extends Notifier<AuthState> {
     final userJson = await _storage.read(key: 'user');
 
     if (accessToken != null && userJson != null) {
-      state = state.copyWith(isAuthenticated: true);
+      try {
+        final user = User.fromJson(jsonDecode(userJson));
+        state = state.copyWith(user: user, isAuthenticated: true);
+      } catch (e) {
+        debugPrint('[Auth] Failed to parse stored user: $e');
+      }
     }
   }
 
@@ -65,7 +78,6 @@ class AuthNotifier extends Notifier<AuthState> {
     try {
       final response = await _api.login(email: email, password: password);
 
-      // 检查响应是否成功
       if (!response.success ||
           response.user == null ||
           response.tokens == null) {
@@ -95,22 +107,16 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
-  /// Login with biometric - uses stored credentials
   Future<bool> loginWithBiometric() async {
     state = state.copyWith(isLoading: true, error: null);
 
     try {
-      // Check if we have stored credentials
       final accessToken = await _storage.read(key: 'access_token');
       final refreshToken = await _storage.read(key: 'refresh_token');
-      final userId = await _storage.read(key: 'user_id');
-      final userEmail = await _storage.read(key: 'user_email');
-      final userRole = await _storage.read(key: 'user_role');
+      final userJson = await _storage.read(key: 'user');
 
-      if (accessToken != null && userId != null && userEmail != null) {
-        // We have stored session, validate it
+      if (accessToken != null && userJson != null) {
         try {
-          // Try to refresh the token to ensure it's valid
           if (refreshToken != null) {
             final newTokens = await _api.refreshToken(refreshToken);
             await _storage.write(
@@ -119,14 +125,7 @@ class AuthNotifier extends Notifier<AuthState> {
                 key: 'refresh_token', value: newTokens.refreshToken);
           }
 
-          // Create user from stored data
-          final user = User(
-            id: userId,
-            username: userEmail.split('@').first,
-            email: userEmail,
-            role: userRole ?? 'user',
-            createdAt: null, // 修复：使用 null 而不是 DateTime.now()
-          );
+          final user = User.fromJson(jsonDecode(userJson));
 
           state = state.copyWith(
             user: user,
@@ -135,7 +134,6 @@ class AuthNotifier extends Notifier<AuthState> {
           );
           return true;
         } catch (_) {
-          // Token refresh failed, need to login again
           state = state.copyWith(
             isLoading: false,
             error: 'Session expired. Please sign in with password.',
@@ -146,17 +144,19 @@ class AuthNotifier extends Notifier<AuthState> {
 
       state = state.copyWith(
         isLoading: false,
-        error: 'No stored credentials. Please sign in first.',
+        error: 'No stored credentials found',
       );
       return false;
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: 'Biometric login failed');
+      state = state.copyWith(
+        isLoading: false,
+        error: 'Biometric login failed: ${e.toString()}',
+      );
       return false;
     }
   }
 
   Future<bool> register({
-    required String username,
     required String email,
     required String password,
     String? inviteCode,
@@ -164,6 +164,9 @@ class AuthNotifier extends Notifier<AuthState> {
     state = state.copyWith(isLoading: true, error: null);
 
     try {
+      // 从email生成username（使用@前面的部分）
+      final username = email.split('@').first;
+
       final response = await _api.register(
         username: username,
         email: email,
@@ -171,85 +174,183 @@ class AuthNotifier extends Notifier<AuthState> {
         inviteCode: inviteCode,
       );
 
-      // 检查响应是否成功
-      if (!response.success ||
-          response.user == null ||
-          response.tokens == null) {
+      if (!response.success) {
         state = state.copyWith(
-            isLoading: false,
-            error: response.message.isNotEmpty
-                ? response.message
-                : 'Registration failed');
+          isLoading: false,
+          error: response.message.isNotEmpty
+              ? response.message
+              : 'Registration failed',
+        );
         return false;
       }
 
-      await _saveAuthData(response);
-
-      state = state.copyWith(
-        user: response.user,
-        isLoading: false,
-        isAuthenticated: true,
-      );
-      return true;
+      // Auto-login after registration
+      return await login(email: email, password: password);
     } on ApiException catch (e) {
       state = state.copyWith(isLoading: false, error: e.message);
       return false;
     } catch (e) {
       state = state.copyWith(
-          isLoading: false, error: 'Registration failed: ${e.toString()}');
+        isLoading: false,
+        error: 'Registration failed: ${e.toString()}',
+      );
       return false;
     }
   }
 
-  Future<void> _saveAuthData(AuthResponse response) async {
-    if (response.tokens == null || response.user == null) {
-      throw Exception('Invalid auth response: missing tokens or user data');
-    }
-
-    debugPrint('💾 [Auth] 保存认证数据...');
-    debugPrint(
-        '   Access Token: ${response.tokens!.accessToken.substring(0, 20)}...');
-    debugPrint('   User ID: ${response.user!.id}');
-    debugPrint('   User Email: ${response.user!.email}');
-
-    await _storage.write(
-      key: 'access_token',
-      value: response.tokens!.accessToken,
-    );
-    await _storage.write(
-      key: 'refresh_token',
-      value: response.tokens!.refreshToken,
-    );
-    await _storage.write(key: 'user_id', value: response.user!.id);
-    await _storage.write(key: 'user_email', value: response.user!.email);
-    await _storage.write(key: 'user_role', value: response.user!.role);
-
-    debugPrint('✅ [Auth] 认证数据保存完成');
-  }
-
   Future<void> logout() async {
     await _storage.deleteAll();
-    ref.read(connectedDeviceProvider.notifier).setDevice(null);
     state = const AuthState();
   }
 
-  void clearError() {
-    state = state.copyWith(error: null);
+  Future<void> _saveAuthData(AuthResponse response) async {
+    if (response.tokens != null) {
+      await _storage.write(
+          key: 'access_token', value: response.tokens!.accessToken);
+      await _storage.write(
+          key: 'refresh_token', value: response.tokens!.refreshToken);
+    }
+
+    if (response.user != null) {
+      await _storage.write(
+          key: 'user', value: jsonEncode(response.user!.toJson()));
+      await _storage.write(key: 'user_id', value: response.user!.id);
+      await _storage.write(key: 'user_email', value: response.user!.email);
+      await _storage.write(key: 'user_role', value: response.user!.role);
+    }
   }
 }
 
-// Invite code provider
-final inviteCodeProvider =
-    FutureProvider.autoDispose<InviteCodeResponse?>((ref) async {
-  final authState = ref.watch(authStateProvider);
-  if (!authState.isAuthenticated || authState.user?.role != 'admin') {
-    return null;
+// Invite code provider with persistent state
+class InviteCodeState {
+  final InviteCodeResponse? code;
+  final DateTime? expiresAt;
+  final bool isLoading;
+  final String? error;
+
+  const InviteCodeState({
+    this.code,
+    this.expiresAt,
+    this.isLoading = false,
+    this.error,
+  });
+
+  bool get isExpired {
+    if (expiresAt == null) return true;
+    return DateTime.now().isAfter(expiresAt!);
   }
 
-  try {
-    final api = ref.read(apiServiceProvider);
-    return await api.generateInviteCode();
-  } catch (_) {
-    return null;
+  int get remainingSeconds {
+    if (expiresAt == null) return 0;
+    final diff = expiresAt!.difference(DateTime.now());
+    return diff.inSeconds.clamp(0, 3600);
   }
-});
+
+  InviteCodeState copyWith({
+    InviteCodeResponse? code,
+    DateTime? expiresAt,
+    bool? isLoading,
+    String? error,
+  }) {
+    return InviteCodeState(
+      code: code ?? this.code,
+      expiresAt: expiresAt ?? this.expiresAt,
+      isLoading: isLoading ?? this.isLoading,
+      error: error ?? this.error,
+    );
+  }
+}
+
+class InviteCodeNotifier extends Notifier<InviteCodeState> {
+  Timer? _refreshTimer;
+
+  @override
+  InviteCodeState build() {
+    _loadPersistedState();
+    return const InviteCodeState(isLoading: true);
+  }
+
+  Future<void> _loadPersistedState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final codeJson = prefs.getString('invite_code');
+      final expiresAtMs = prefs.getInt('invite_code_expires_at');
+
+      if (codeJson != null && expiresAtMs != null) {
+        final code = InviteCodeResponse.fromJson(jsonDecode(codeJson));
+        final expiresAt = DateTime.fromMillisecondsSinceEpoch(expiresAtMs);
+
+        if (DateTime.now().isBefore(expiresAt)) {
+          state = InviteCodeState(
+            code: code,
+            expiresAt: expiresAt,
+            isLoading: false,
+          );
+          _startRefreshTimer();
+          return;
+        }
+      }
+    } catch (e) {
+      debugPrint('[InviteCode] Failed to load persisted state: $e');
+    }
+
+    await refresh();
+  }
+
+  Future<void> refresh() async {
+    final authState = ref.read(authStateProvider);
+    final user = authState.user;
+    if (!authState.isAuthenticated || user == null || user.role != 'admin') {
+      state = const InviteCodeState(
+        error: 'Not authorized',
+        isLoading: false,
+      );
+      return;
+    }
+
+    state = state.copyWith(isLoading: true, error: null);
+
+    try {
+      final api = ref.read(apiServiceProvider);
+      final code = await api.generateInviteCode();
+
+      final expiresAt = DateTime.now().add(const Duration(hours: 1));
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('invite_code', jsonEncode(code.toJson()));
+      await prefs.setInt(
+          'invite_code_expires_at', expiresAt.millisecondsSinceEpoch);
+
+      state = InviteCodeState(
+        code: code,
+        expiresAt: expiresAt,
+        isLoading: false,
+      );
+
+      _startRefreshTimer();
+    } catch (e) {
+      state = InviteCodeState(
+        error: e.toString(),
+        isLoading: false,
+      );
+    }
+  }
+
+  void _startRefreshTimer() {
+    _refreshTimer?.cancel();
+
+    final remainingSeconds = state.remainingSeconds;
+    if (remainingSeconds > 0) {
+      _refreshTimer = Timer(Duration(seconds: remainingSeconds), refresh);
+    }
+  }
+
+  void cancelTimer() {
+    _refreshTimer?.cancel();
+  }
+}
+
+final inviteCodeProvider =
+    NotifierProvider<InviteCodeNotifier, InviteCodeState>(
+  InviteCodeNotifier.new,
+);

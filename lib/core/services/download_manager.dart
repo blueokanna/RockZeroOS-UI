@@ -110,6 +110,8 @@ class UploadTask {
   String? error;
   DateTime createdAt;
   DateTime? completedAt;
+  DateTime? lastUpdateTime;
+  int? lastUploadedBytes;
 
   UploadTask({
     required this.id,
@@ -122,6 +124,8 @@ class UploadTask {
     this.error,
     DateTime? createdAt,
     this.completedAt,
+    this.lastUpdateTime,
+    this.lastUploadedBytes,
   }) : createdAt = createdAt ?? DateTime.now();
 
   double get progress => totalBytes > 0 ? uploadedBytes / totalBytes : 0;
@@ -129,6 +133,26 @@ class UploadTask {
   String get progressText {
     if (totalBytes == 0) return '0%';
     return '${(progress * 100).toStringAsFixed(1)}%';
+  }
+
+  /// 计算上传速度（字节/秒）
+  int get uploadSpeed {
+    if (lastUpdateTime == null || lastUploadedBytes == null) return 0;
+
+    final now = DateTime.now();
+    final timeDiff = now.difference(lastUpdateTime!).inMilliseconds;
+
+    if (timeDiff <= 0) return 0;
+
+    final bytesDiff = uploadedBytes - lastUploadedBytes!;
+    return ((bytesDiff / timeDiff) * 1000).round();
+  }
+
+  /// 更新上传进度
+  void updateProgress(int newUploadedBytes) {
+    lastUpdateTime = DateTime.now();
+    lastUploadedBytes = uploadedBytes;
+    uploadedBytes = newUploadedBytes;
   }
 }
 
@@ -507,7 +531,8 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     final uploads = List<UploadTask>.from(state.uploads);
     final index = uploads.indexWhere((u) => u.id == taskId);
     if (index != -1) {
-      uploads[index].uploadedBytes = uploadedBytes;
+      uploads[index].updateProgress(uploadedBytes);
+      uploads[index].status = DownloadStatus.downloading;
       state = state.copyWith(uploads: uploads);
     }
   }

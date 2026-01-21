@@ -1370,8 +1370,13 @@ class _InviteCodeDialog extends ConsumerStatefulWidget {
 
 class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
   Timer? _countdownTimer;
-  int _remainingSeconds = 0;
-  bool _isExpired = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 启动倒计时
+    _startCountdown();
+  }
 
   @override
   void dispose() {
@@ -1379,22 +1384,20 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
     super.dispose();
   }
 
-  void _startCountdown(int seconds) {
+  void _startCountdown() {
     _countdownTimer?.cancel();
-    _remainingSeconds = seconds;
-    _isExpired = false;
 
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
-        setState(() {
-          _remainingSeconds--;
-          if (_remainingSeconds <= 0) {
-            _isExpired = true;
-            timer.cancel();
-            // Auto-refresh when expired
-            ref.invalidate(inviteCodeProvider);
-          }
-        });
+        final inviteState = ref.read(inviteCodeProvider);
+
+        // 如果过期，自动刷新
+        if (inviteState.isExpired && !inviteState.isLoading) {
+          ref.read(inviteCodeProvider.notifier).refresh();
+        }
+
+        // 强制重建UI以更新倒计时
+        setState(() {});
       } else {
         timer.cancel();
       }
@@ -1409,7 +1412,7 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final inviteCode = ref.watch(inviteCodeProvider);
+    final inviteState = ref.watch(inviteCodeProvider);
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
@@ -1439,8 +1442,54 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
             curve: M3Curves.emphasized,
           ),
       title: const Text('Invite Code'),
-      content: inviteCode.when(
-        data: (code) {
+      content: Builder(
+        builder: (context) {
+          if (inviteState.isLoading) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 56,
+                  height: 56,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 4,
+                    color: colorScheme.primary,
+                  ),
+                ).animate().scale(
+                    duration: M3Durations.medium2, curve: M3Curves.emphasized),
+                const SizedBox(height: 20),
+                Text(
+                  'Generating code...',
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                )
+                    .animate()
+                    .fadeIn(delay: 100.ms, duration: M3Durations.medium2),
+              ],
+            );
+          }
+
+          if (inviteState.error != null) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.error_outline_rounded,
+                    size: 48, color: colorScheme.error),
+                const SizedBox(height: 12),
+                Text('Error: ${inviteState.error}'),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: () =>
+                      ref.read(inviteCodeProvider.notifier).refresh(),
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Retry'),
+                ),
+              ],
+            );
+          }
+
+          final code = inviteState.code;
           if (code == null) {
             return Column(
               mainAxisSize: MainAxisSize.min,
@@ -1451,7 +1500,8 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
                 const Text('Failed to generate invite code'),
                 const SizedBox(height: 16),
                 FilledButton.icon(
-                  onPressed: () => ref.invalidate(inviteCodeProvider),
+                  onPressed: () =>
+                      ref.read(inviteCodeProvider.notifier).refresh(),
                   icon: const Icon(Icons.refresh_rounded),
                   label: const Text('Retry'),
                 ),
@@ -1459,14 +1509,7 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
             );
           }
 
-          // Start countdown if not already started or if code changed
-          if (_remainingSeconds == 0 || _isExpired) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) {
-                _startCountdown(code.expiresInSeconds);
-              }
-            });
-          }
+          final remainingSeconds = inviteState.remainingSeconds;
 
           return Column(
             mainAxisSize: MainAxisSize.min,
@@ -1533,11 +1576,11 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(
-                          _remainingSeconds <= 60
+                          remainingSeconds <= 60
                               ? Icons.timer_off_rounded
                               : Icons.timer_rounded,
                           size: 20,
-                          color: _remainingSeconds <= 60
+                          color: remainingSeconds <= 60
                               ? colorScheme.error
                               : colorScheme.primary,
                         ),
@@ -1549,52 +1592,33 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        TweenAnimationBuilder<double>(
-                          tween: Tween(begin: 0, end: 1),
-                          duration: M3Durations.medium2,
-                          builder: (context, value, child) {
-                            return Text(
-                              _formatCountdown(_remainingSeconds),
-                              style: textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                fontFamily: 'monospace',
-                                color: _remainingSeconds <= 60
-                                    ? colorScheme.error
-                                    : colorScheme.primary,
-                              ),
-                            );
-                          },
+                        Text(
+                          _formatCountdown(remainingSeconds),
+                          style: textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            fontFamily: 'monospace',
+                            color: remainingSeconds <= 60
+                                ? colorScheme.error
+                                : colorScheme.primary,
+                          ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 12),
-                    TweenAnimationBuilder<double>(
-                      tween: Tween(
-                        begin: 1.0,
-                        end: code.expiresInSeconds > 0
-                            ? _remainingSeconds / code.expiresInSeconds
-                            : 0.0,
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: remainingSeconds / 3600,
+                        minHeight: 6,
+                        backgroundColor: colorScheme.surfaceContainerHighest,
+                        valueColor: AlwaysStoppedAnimation(
+                          remainingSeconds <= 60
+                              ? colorScheme.error
+                              : colorScheme.primary,
+                        ),
                       ),
-                      duration: const Duration(seconds: 1),
-                      curve: Curves.linear,
-                      builder: (context, value, child) {
-                        return ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
-                          child: LinearProgressIndicator(
-                            value: value.clamp(0.0, 1.0),
-                            minHeight: 6,
-                            backgroundColor:
-                                colorScheme.surfaceContainerHighest,
-                            valueColor: AlwaysStoppedAnimation(
-                              _remainingSeconds <= 60
-                                  ? colorScheme.error
-                                  : colorScheme.primary,
-                            ),
-                          ),
-                        );
-                      },
                     ),
-                    if (_remainingSeconds <= 60 && _remainingSeconds > 0) ...[
+                    if (remainingSeconds <= 60 && remainingSeconds > 0) ...[
                       const SizedBox(height: 8),
                       Text(
                         'Code will refresh automatically',
@@ -1612,42 +1636,6 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
             ],
           );
         },
-        loading: () => Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 56,
-              height: 56,
-              child: CircularProgressIndicator(
-                strokeWidth: 4,
-                color: colorScheme.primary,
-              ),
-            ).animate().scale(
-                duration: M3Durations.medium2, curve: M3Curves.emphasized),
-            const SizedBox(height: 20),
-            Text(
-              'Generating code...',
-              style: textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ).animate().fadeIn(delay: 100.ms, duration: M3Durations.medium2),
-          ],
-        ),
-        error: (e, s) => Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.error_outline_rounded,
-                size: 48, color: colorScheme.error),
-            const SizedBox(height: 12),
-            const Text('Error generating invite code'),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: () => ref.invalidate(inviteCodeProvider),
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Retry'),
-            ),
-          ],
-        ),
       ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
       actions: [
