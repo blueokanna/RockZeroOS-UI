@@ -1656,6 +1656,7 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
           child: const Text('Close'),
         ),
       ],
+      actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
     );
   }
 }

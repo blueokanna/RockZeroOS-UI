@@ -248,32 +248,51 @@ class _StoreTab extends ConsumerWidget {
 
   Widget _buildErrorState(BuildContext context, WidgetRef ref) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              color: colorScheme.errorContainer,
-              shape: BoxShape.circle,
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: colorScheme.errorContainer,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.cloud_off_rounded,
+                size: 40,
+                color: colorScheme.onErrorContainer,
+              ),
             ),
-            child: Icon(
-              Icons.error_outline_rounded,
-              size: 40,
-              color: colorScheme.onErrorContainer,
+            const SizedBox(height: 24),
+            Text(
+              'Unable to connect to App Store',
+              style: textTheme.titleMedium?.copyWith(
+                color: colorScheme.onSurface,
+              ),
+              textAlign: TextAlign.center,
             ),
-          ),
-          const SizedBox(height: 24),
-          const Text('Failed to load apps'),
-          const SizedBox(height: 16),
-          FilledButton.icon(
-            onPressed: () => ref.invalidate(storeAppsProvider),
-            icon: const Icon(Icons.refresh_rounded),
-            label: const Text('Retry'),
-          ),
-        ],
+            const SizedBox(height: 8),
+            Text(
+              'Please check your internet connection and try again',
+              style: textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: () => ref.invalidate(storeAppsProvider),
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
       ),
     );
   }

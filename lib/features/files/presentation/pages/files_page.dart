@@ -1966,11 +1966,29 @@ class _FilesPageState extends ConsumerState<FilesPage>
     final currentPath = ref.read(currentPathProvider);
     if (currentPath.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        final scaffoldMessenger = ScaffoldMessenger.of(context);
+        scaffoldMessenger.showSnackBar(
           SnackBar(
-            content: const Text(
-                'Please select a disk and navigate to a folder first'),
+            content: const Row(
+              children: [
+                Icon(Icons.warning_rounded, color: Colors.white),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Please select a disk and navigate to a folder first',
+                  ),
+                ),
+              ],
+            ),
             backgroundColor: Theme.of(context).colorScheme.error,
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: 'OK',
+              textColor: Colors.white,
+              onPressed: () {
+                scaffoldMessenger.hideCurrentSnackBar();
+              },
+            ),
           ),
         );
       }
@@ -2008,6 +2026,18 @@ class _FilesPageState extends ConsumerState<FilesPage>
           .map((f) => File(f.path!))
           .toList();
 
+      if (uploadedFiles.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('No valid files selected'),
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+          );
+        }
+        return;
+      }
+
       // 检查文件大小
       int totalSize = 0;
       for (final file in uploadedFiles) {
@@ -2034,7 +2064,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
       // 发送文件上传完成事件
       final monitor = ref.read(fileSystemMonitorProvider);
       for (final file in uploadedFiles) {
-        final fileName = file.path.split('/').last;
+        final fileName = file.path.split(RegExp(r'[/\\]')).last;
         final uploadedPath =
             currentPath.isEmpty ? '/$fileName' : '$currentPath/$fileName';
         monitor.emitUploadCompleted(
@@ -2100,8 +2130,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
         }
 
         // Clear any existing SnackBars before showing new one
-        ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
+        final scaffoldMessenger = ScaffoldMessenger.of(context);
+        scaffoldMessenger.clearSnackBars();
+        scaffoldMessenger.showSnackBar(
           SnackBar(
             content: Text(errorMessage),
             backgroundColor: Theme.of(context).colorScheme.error,
@@ -2110,7 +2141,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
               label: 'Dismiss',
               textColor: Colors.white,
               onPressed: () {
-                ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                scaffoldMessenger.hideCurrentSnackBar();
               },
             ),
           ),
@@ -2121,8 +2152,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
       if (mounted) {
         final errorStr = e.toString();
         // Clear any existing SnackBars before showing new one
-        ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
+        final scaffoldMessenger = ScaffoldMessenger.of(context);
+        scaffoldMessenger.clearSnackBars();
+        scaffoldMessenger.showSnackBar(
           SnackBar(
             content: Text(
                 'Upload failed: ${errorStr.isNotEmpty ? errorStr : 'Unknown error'}'),
@@ -2132,7 +2164,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
               label: 'Dismiss',
               textColor: Colors.white,
               onPressed: () {
-                ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                scaffoldMessenger.hideCurrentSnackBar();
               },
             ),
           ),

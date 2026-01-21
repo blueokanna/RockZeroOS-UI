@@ -722,11 +722,10 @@ class ApiService {
       queryParameters: {'path': path},
       onSendProgress: onProgress,
       options: Options(
-        sendTimeout: sendTimeout, // 动态超时
+        sendTimeout: sendTimeout,
         receiveTimeout: const Duration(minutes: 5),
-        headers: {
-          'Connection': 'keep-alive',
-        },
+        // 完全不设置 headers，让 FormData 自动处理 Content-Type
+        contentType: Headers.multipartFormDataContentType,
       ),
     );
   }

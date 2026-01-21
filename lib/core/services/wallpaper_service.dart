@@ -285,15 +285,14 @@ class WallpaperColorNotifier extends Notifier<Color?> {
 
 /// 混合后的主题色 Provider
 /// 自定义壁纸模式: 70% 手机壁纸色 + 30% 自定义壁纸色
-/// 默认模式: 使用系统/种子颜色
+/// 默认模式: 不混合，返回null让系统使用种子颜色
 final blendedThemeColorProvider = Provider<Color?>((ref) {
   final backgroundMode = ref.watch(backgroundModeProvider);
   final wallpaperColor = ref.watch(wallpaperColorProvider); // 自定义上传壁纸的颜色
   final systemColor = ref.watch(systemAccentColorProvider); // 手机壁纸颜色
-  final seedColor = ref.watch(seedColorProvider);
 
+  // 只有在自定义壁纸模式下才混合颜色
   if (backgroundMode == BackgroundMode.customWallpaper) {
-    // 自定义壁纸模式
     if (wallpaperColor != null && systemColor != null) {
       // 70% 手机壁纸色 + 30% 自定义上传壁纸色
       return WallpaperService.blendColors(systemColor, wallpaperColor, 0.7);
@@ -306,6 +305,6 @@ final blendedThemeColorProvider = Provider<Color?>((ref) {
     }
   }
 
-  // 默认模式 - 使用系统颜色或种子颜色
-  return systemColor ?? seedColor;
+  // 默认模式 - 返回null，让main.dart使用种子颜色或动态颜色
+  return null;
 });
