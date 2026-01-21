@@ -207,11 +207,22 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
         // 判断事件是否影响当前视图
         bool shouldRefresh = false;
+        bool shouldResetPath = false;
 
-        if (_showDisks && currentPath.isEmpty) {
+        // 磁盘格式化事件：无论当前在哪个视图都需要刷新
+        if (event.type == FileSystemEventType.diskFormatted) {
+          shouldRefresh = true;
+          // 如果当前在被格式化的磁盘上，需要返回磁盘列表
+          if (currentPath.isNotEmpty && event.diskName != null) {
+            // 检查当前路径是否在被格式化的磁盘上
+            if (currentPath.contains(event.diskName!) ||
+                currentPath.contains('/mnt/')) {
+              shouldResetPath = true;
+            }
+          }
+        } else if (_showDisks && currentPath.isEmpty) {
           // 在磁盘视图，监听磁盘事件
-          if (event.type == FileSystemEventType.diskFormatted ||
-              event.type == FileSystemEventType.diskMounted ||
+          if (event.type == FileSystemEventType.diskMounted ||
               event.type == FileSystemEventType.diskUnmounted) {
             shouldRefresh = true;
           }
@@ -240,7 +251,12 @@ class _FilesPageState extends ConsumerState<FilesPage>
           }
         }
 
-        if (shouldRefresh) {
+        if (shouldResetPath) {
+          // 格式化后返回磁盘列表视图
+          ref.read(currentPathProvider.notifier).setPath('');
+          setState(() => _showDisks = true);
+          ref.invalidate(diskInfoProvider);
+        } else if (shouldRefresh) {
           // 立即刷新
           if (_showDisks && currentPath.isEmpty) {
             ref.invalidate(diskInfoProvider);
@@ -2037,7 +2053,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
         );
       }
     } on DioException catch (e) {
-      debugPrint('[Upload] DioException: ${e.type} - ${e.message}');
+      debugPrint(
+          '[Upload] DioException: ${e.type} - ${e.message} - ${e.error}');
       if (mounted) {
         String errorMessage = 'Upload failed';
         if (e.type == DioExceptionType.sendTimeout) {
@@ -2047,15 +2064,22 @@ class _FilesPageState extends ConsumerState<FilesPage>
         } else if (e.type == DioExceptionType.connectionError) {
           errorMessage = 'Connection error - check server is running';
         } else if (e.response != null) {
-          final statusMsg = e.response?.statusMessage;
-          final errMsg = e.message;
-          if (statusMsg != null && statusMsg.isNotEmpty) {
-            errorMessage = 'Upload failed: $statusMsg';
-          } else if (errMsg != null && errMsg.isNotEmpty) {
-            errorMessage = 'Upload failed: $errMsg';
+          // Try to extract message from response body first
+          final data = e.response?.data;
+          if (data is Map && data['message'] != null) {
+            errorMessage = 'Upload failed: ${data['message']}';
           } else {
-            errorMessage = 'Upload failed: Server error';
+            final statusMsg = e.response?.statusMessage;
+            if (statusMsg != null && statusMsg.isNotEmpty) {
+              errorMessage = 'Upload failed: $statusMsg';
+            } else {
+              errorMessage =
+                  'Upload failed: Server error (${e.response?.statusCode})';
+            }
           }
+        } else if (e.error != null) {
+          // Extract error from ApiException if wrapped
+          errorMessage = 'Upload failed: ${e.error}';
         } else {
           final errMsg = e.message;
           errorMessage = 'Upload failed: ${errMsg ?? 'Network error'}';

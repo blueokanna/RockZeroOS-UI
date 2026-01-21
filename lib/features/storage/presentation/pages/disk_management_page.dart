@@ -1978,6 +1978,16 @@ class _FormatDiskDialogState extends ConsumerState<_FormatDiskDialog> {
         if (_labelController.text.isNotEmpty) 'label': _labelController.text,
       });
       if (mounted) {
+        // 发出磁盘格式化事件，通知所有监听者（包括 FilesPage）
+        final monitor = ref.read(fileSystemMonitorProvider);
+        monitor.emitDiskFormatted(
+          widget.disk.name,
+          metadata: {
+            'devicePath': widget.disk.devicePath,
+            'fileSystem': _selectedFs,
+          },
+        );
+
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(

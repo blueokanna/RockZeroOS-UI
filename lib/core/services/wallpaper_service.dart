@@ -253,16 +253,13 @@ final wallpaperColorProvider = NotifierProvider<WallpaperColorNotifier, Color?>(
 class WallpaperColorNotifier extends Notifier<Color?> {
   @override
   Color? build() {
-    _loadColor();
-    return null;
-  }
-
-  Future<void> _loadColor() async {
+    // 同步加载颜色 - Hive 支持同步读取
     final box = Hive.box('settings');
     final colorValue = box.get('wallpaperColor');
     if (colorValue != null) {
-      state = Color(colorValue);
+      return Color(colorValue);
     }
+    return null;
   }
 
   Future<void> setColor(Color? color) async {

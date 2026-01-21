@@ -114,7 +114,7 @@ class ApiService {
   }
 
   Future<InviteCodeResponse> generateInviteCode() async {
-    final response = await _dio.post('/api/v1/auth/invite');
+    final response = await _dio.post('/api/v1/invite/create');
     return InviteCodeResponse.fromJson(response.data);
   }
 
