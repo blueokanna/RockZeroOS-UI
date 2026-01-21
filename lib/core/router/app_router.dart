@@ -25,11 +25,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           state.matchedLocation == '/register' ||
           state.matchedLocation == '/discover';
 
+      // 如果未登录且不在认证相关页面，重定向到登录页
       if (!isLoggedIn && !isAuthRoute) {
-        return '/discover';
+        return '/login'; // 改为登录页，而不是discover
       }
 
-      if (isLoggedIn && isAuthRoute && state.matchedLocation != '/discover') {
+      // 如果已登录且在登录/注册页面，重定向到dashboard
+      // 但允许访问discover页面（用于切换设备）
+      if (isLoggedIn &&
+          (state.matchedLocation == '/login' ||
+              state.matchedLocation == '/register')) {
         return '/dashboard';
       }
 

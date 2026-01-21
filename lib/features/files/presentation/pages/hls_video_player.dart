@@ -222,9 +222,10 @@ class _HlsVideoPlayerState extends ConsumerState<HlsVideoPlayer> {
 
       debugPrint('[HlsPlayer] Creating video controller for: $playlistUrl');
 
-      // 创建简单可靠的HTTP头
       final headers = <String, String>{
         'Accept': '*/*',
+        'Accept-Encoding': 'identity',
+        'Connection': 'keep-alive',
       };
 
       if (_authToken != null && _authToken!.isNotEmpty) {
@@ -241,11 +242,6 @@ class _HlsVideoPlayerState extends ConsumerState<HlsVideoPlayer> {
           videoPlayerOptions: VideoPlayerOptions(
             mixWithOthers: false,
             allowBackgroundPlayback: false,
-            webOptions: const VideoPlayerWebOptions(
-              allowContextMenu: false,
-              allowRemotePlayback: true,
-              controls: VideoPlayerWebOptionsControls.disabled(),
-            ),
           ),
         );
 
@@ -263,6 +259,10 @@ class _HlsVideoPlayerState extends ConsumerState<HlsVideoPlayer> {
             '[HlsPlayer] Is initialized: ${_videoController!.value.isInitialized}');
         debugPrint(
             '[HlsPlayer] Has error: ${_videoController!.value.hasError}');
+        if (_videoController!.value.hasError) {
+          debugPrint(
+              '[HlsPlayer] Error description: ${_videoController!.value.errorDescription}');
+        }
         debugPrint('[HlsPlayer] Size: ${_videoController!.value.size}');
         debugPrint('[HlsPlayer] Duration: ${_videoController!.value.duration}');
 

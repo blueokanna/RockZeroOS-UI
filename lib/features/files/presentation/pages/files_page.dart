@@ -19,7 +19,7 @@ import '../../../../core/services/filesystem_monitor_service.dart';
 import '../../../../core/services/download_manager.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../storage/presentation/pages/disk_management_page.dart';
-import '../widgets/upload_manager_page.dart';
+import '../widgets/transport_manager_page.dart';
 import 'hls_video_player.dart';
 import 'enhanced_audio_player_page.dart';
 import 'image_viewer_page.dart';
@@ -214,14 +214,28 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
         // 磁盘格式化事件：无论当前在哪个视图都需要刷新
         if (event.type == FileSystemEventType.diskFormatted) {
+          debugPrint(
+              '[FilesPage] Disk formatted event received: ${event.diskName}');
           shouldRefresh = true;
+
           // 如果当前在被格式化的磁盘上，需要返回磁盘列表
           if (currentPath.isNotEmpty && event.diskName != null) {
             // 检查当前路径是否在被格式化的磁盘上
-            if (currentPath.contains(event.diskName!) ||
-                currentPath.contains('/mnt/')) {
+            final diskName = event.diskName!.toLowerCase();
+            final pathLower = currentPath.toLowerCase();
+
+            // 检查路径是否包含磁盘名称或在/mnt/目录下
+            if (pathLower.contains(diskName) || pathLower.startsWith('/mnt/')) {
+              debugPrint(
+                  '[FilesPage] Current path is on formatted disk, resetting to disk list');
               shouldResetPath = true;
             }
+          }
+
+          // 无论如何都要刷新磁盘列表
+          if (_showDisks || shouldResetPath) {
+            debugPrint('[FilesPage] Invalidating disk info provider');
+            ref.invalidate(diskInfoProvider);
           }
         } else if (_showDisks && currentPath.isEmpty) {
           // 在磁盘视图，监听磁盘事件
@@ -1358,31 +1372,46 @@ class _FilesPageState extends ConsumerState<FilesPage>
     final colorScheme = Theme.of(context).colorScheme;
     final downloadManager = ref.watch(downloadManagerProvider);
     final hasActiveUploads = downloadManager.activeUploads > 0;
+    final hasAnyUploads = downloadManager.uploads.isNotEmpty;
+    final hasActiveDownloads = downloadManager.activeDownloads > 0;
+    final hasAnyDownloads = downloadManager.downloads.isNotEmpty;
+
+    // 合并判断：有任何传输记录时显示
+    final hasAnyTransports = hasAnyDownloads || hasAnyUploads;
+    final hasActiveTransports = hasActiveDownloads || hasActiveUploads;
+    final totalActiveTransports =
+        downloadManager.activeDownloads + downloadManager.activeUploads;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        // 上传管理器按钮（有活动上传时显示）
-        if (hasActiveUploads)
+        // 传输管理器按钮（合并上传和下载）
+        if (hasAnyTransports)
           Container(
             margin: const EdgeInsets.only(bottom: 12),
             child: FloatingActionButton.small(
-              heroTag: 'upload_manager',
+              heroTag: 'transport_manager',
               onPressed: () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => const UploadManagerPage(),
+                    builder: (context) => const TransportManagerPage(),
                   ),
                 );
               },
-              backgroundColor: colorScheme.tertiaryContainer,
-              foregroundColor: colorScheme.onTertiaryContainer,
-              child: Badge(
-                label: Text(downloadManager.activeUploads.toString()),
-                child: const Icon(Icons.upload_file_rounded),
-              ),
+              backgroundColor: hasActiveTransports
+                  ? colorScheme.tertiaryContainer
+                  : colorScheme.surfaceContainerHighest,
+              foregroundColor: hasActiveTransports
+                  ? colorScheme.onTertiaryContainer
+                  : colorScheme.onSurfaceVariant,
+              child: hasActiveTransports
+                  ? Badge(
+                      label: Text(totalActiveTransports.toString()),
+                      child: const Icon(Icons.sync_alt_rounded),
+                    )
+                  : const Icon(Icons.sync_alt_rounded),
             ),
           ),
         // 创建文件夹按钮 - Material Design 3 风格

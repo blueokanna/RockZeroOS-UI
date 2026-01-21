@@ -32,9 +32,13 @@ class _LoginPageState extends ConsumerState<LoginPage>
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
 
-    // Auto-trigger biometric if enabled
+    // 延迟触发生物识别，确保页面完全加载
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkAndTriggerBiometric();
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) {
+          _checkAndTriggerBiometric();
+        }
+      });
     });
   }
 
