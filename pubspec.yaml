@@ -27,6 +27,9 @@ dependencies:
   # Cryptography
   pointycastle: ^3.9.1
   crypto: ^3.0.6
+  edwards25519: ^1.0.5  # Edwards25519 曲线运算（与 Rust curve25519_dalek 兼容）
+  hashlib: ^2.3.0       # SHA3-256, Blake2b, HMAC 等
+  thirds: ^0.2.0-alpha.1  # Blake3 支持
 
   # Local Storage & Security
   flutter_secure_storage: ^10.0.0

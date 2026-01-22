@@ -113,6 +113,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       final (sessionId, pmk) = await handshakeService.performHandshake(
         filePath: filePath,
         password: _userPassword!,
+        userId: _userId!,
       );
 
       _hlsSessionId = sessionId;
