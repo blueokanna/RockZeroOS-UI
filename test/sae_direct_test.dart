@@ -22,8 +22,10 @@ void main() {
     final commit2 = client2.generateCommit();
 
     print('=== Commits ===');
-    print('Commit 1: scalar=${commit1['scalar']}, element=${commit1['element']}');
-    print('Commit 2: scalar=${commit2['scalar']}, element=${commit2['element']}');
+    print(
+        'Commit 1: scalar=${commit1['scalar']}, element=${commit1['element']}');
+    print(
+        'Commit 2: scalar=${commit2['scalar']}, element=${commit2['element']}');
 
     // 交换 commits
     client1.processCommit(commit2);

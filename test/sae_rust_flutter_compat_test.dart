@@ -14,11 +14,13 @@ void main() {
       // Rust 端使用 blake3::hash(b"rockzero-server-device-id")
       const serverIdString = 'rockzero-server-device-id';
       final serverIdBytes = utf8.encode(serverIdString);
-      final serverDeviceId = Uint8List.fromList(blake3.blake3(serverIdBytes, 32));
+      final serverDeviceId =
+          Uint8List.fromList(blake3.blake3(serverIdBytes, 32));
 
       // Rust 端使用 blake3::hash(user_id.as_bytes())
       const userId = 'test_user_123';
-      final clientDeviceId = Uint8List.fromList(blake3.blake3(utf8.encode(userId), 32));
+      final clientDeviceId =
+          Uint8List.fromList(blake3.blake3(utf8.encode(userId), 32));
 
       print('Server Device ID (Blake3): ${base64Encode(serverDeviceId)}');
       print('Client Device ID (Blake3): ${base64Encode(clientDeviceId)}');
@@ -86,7 +88,8 @@ void main() {
       print('Rust Server PMK: ${base64Encode(serverPmk)}');
       print('PMK Match: ${base64Encode(clientPmk) == base64Encode(serverPmk)}');
 
-      expect(clientPmk, equals(serverPmk), reason: 'PMK must match between client and server');
+      expect(clientPmk, equals(serverPmk),
+          reason: 'PMK must match between client and server');
 
       // 验证 confirm 流程
       final clientConfirm = flutterClient.generateConfirm();

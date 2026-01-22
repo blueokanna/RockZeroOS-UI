@@ -21,7 +21,7 @@ class SaeHandshakeService {
   /// 执行完整的 SAE 握手
   ///
   /// 返回：(sessionId, pmk)
-  /// 
+  ///
   /// 参数：
   /// - filePath: 视频文件路径
   /// - password: 共享密码（密码哈希）
@@ -41,8 +41,10 @@ class SaeHandshakeService {
       final deviceIdSelf = _generateClientDeviceId(userId);
       final deviceIdPeer = _generateServerDeviceId();
 
-      debugPrint('[SAE Handshake] Client device ID (Blake3): ${base64Encode(deviceIdSelf)}');
-      debugPrint('[SAE Handshake] Server device ID (Blake3): ${base64Encode(deviceIdPeer)}');
+      debugPrint(
+          '[SAE Handshake] Client device ID (Blake3): ${base64Encode(deviceIdSelf)}');
+      debugPrint(
+          '[SAE Handshake] Server device ID (Blake3): ${base64Encode(deviceIdPeer)}');
 
       final saeClient = SaeClientCurve25519(
         password: Uint8List.fromList(utf8.encode(password)),
@@ -219,7 +221,7 @@ class SaeHandshakeService {
   }
 
   /// 生成服务器设备ID（32字节）
-  /// 
+  ///
   /// 与 Rust 端保持一致：blake3::hash(b"rockzero-server-device-id")
   Uint8List _generateServerDeviceId() {
     const serverIdString = 'rockzero-server-device-id';
@@ -228,7 +230,7 @@ class SaeHandshakeService {
   }
 
   /// 生成客户端设备ID（32字节）
-  /// 
+  ///
   /// 与 Rust 端保持一致：blake3::hash(user_id.as_bytes())
   Uint8List _generateClientDeviceId(String userId) {
     final hash = blake3.blake3(utf8.encode(userId), 32);
