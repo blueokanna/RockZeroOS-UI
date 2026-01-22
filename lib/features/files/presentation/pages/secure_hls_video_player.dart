@@ -114,7 +114,10 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           'Accept': 'application/json',
         },
         body: jsonEncode({
-          'file_id': widget.fileId ?? widget.filePath,
+          // 优先使用 file_path，如果没有则使用 file_id
+          if (widget.filePath != null) 'file_path': widget.filePath,
+          if (widget.filePath == null && widget.fileId != null)
+            'file_id': widget.fileId,
         }),
       );
 
@@ -183,7 +186,10 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         },
         body: jsonEncode({
           'temp_session_id': tempSessionId,
-          'file_id': widget.fileId ?? widget.filePath,
+          // 优先使用 file_path，如果没有则使用 file_id
+          if (widget.filePath != null) 'file_path': widget.filePath,
+          if (widget.filePath == null && widget.fileId != null)
+            'file_id': widget.fileId,
         }),
       );
 

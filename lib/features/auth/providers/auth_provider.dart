@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -93,7 +94,8 @@ class AuthNotifier extends Notifier<AuthState> {
         return false;
       }
 
-      await _saveAuthData(response);
+      // 保存认证数据（包括密码哈希）
+      await _saveAuthData(response, password: password);
 
       state = state.copyWith(
         user: response.user,
@@ -209,7 +211,7 @@ class AuthNotifier extends Notifier<AuthState> {
     state = const AuthState();
   }
 
-  Future<void> _saveAuthData(AuthResponse response) async {
+  Future<void> _saveAuthData(AuthResponse response, {String? password}) async {
     if (response.tokens != null) {
       await _storage.write(
           key: 'access_token', value: response.tokens!.accessToken);
@@ -223,7 +225,26 @@ class AuthNotifier extends Notifier<AuthState> {
       await _storage.write(key: 'user_id', value: response.user!.id);
       await _storage.write(key: 'user_email', value: response.user!.email);
       await _storage.write(key: 'user_role', value: response.user!.role);
+
+      // 保存密码哈希（用于 SAE 握手）
+      // 注意：这里保存的是密码的 SHA-256 哈希，不是明文密码
+      if (password != null) {
+        final passwordHash = _hashPassword(password);
+        await _storage.write(key: 'user_password_hash', value: passwordHash);
+        debugPrint('[Auth] ✅ Saved password hash for SAE handshake');
+      }
     }
+  }
+
+  /// 计算密码的 SHA-256 哈希
+  ///
+  /// 这个哈希值用于 SAE 握手，不是用于认证
+  /// 认证使用的是 JWT token
+  String _hashPassword(String password) {
+    // 使用 crypto 包的 sha256
+    final bytes = utf8.encode(password);
+    final digest = sha256.convert(bytes);
+    return digest.toString();
   }
 }
 

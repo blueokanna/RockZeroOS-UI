@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
 
-import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:pointycastle/export.dart';
 
 /// 安全 HLS 代理服务器
 ///
@@ -14,7 +16,7 @@ import 'package:flutter/foundation.dart';
 /// 2. 拦截播放器的 .ts 段请求
 /// 3. 生成 ZKP 证明
 /// 4. 向后端发送 POST 请求（带 ZKP 证明）
-/// 5. 解密视频段
+/// 5. 解密视频段（使用完整的 AES-256-GCM）
 /// 6. 返回明文视频段给播放器
 class SecureHlsProxyServer {
   HttpServer? _server;
@@ -153,7 +155,7 @@ class SecureHlsProxyServer {
         final encryptedData = await backendResponse.fold<List<int>>(
             [], (previous, element) => previous..addAll(element));
 
-        // 4. 解密视频段
+        // 4. 解密视频段（使用完整的 AES-256-GCM）
         final decryptedData =
             _decryptSegment(Uint8List.fromList(encryptedData));
 
@@ -183,10 +185,12 @@ class SecureHlsProxyServer {
   }
 
   /// 生成 ZKP 证明
+  ///
+  /// 生产级实现：使用 PMK 派生各个组件
   String _generateZkpProof() {
     // 生成时间戳和 nonce
     final timestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    final nonce = _generateNonce(16);
+    final nonce = _generateSecureNonce(16);
 
     // 构建 Schnorr 证明（使用 PMK 派生各个组件）
     final commitment = _deriveKey(pmk, 'commitment');
@@ -211,9 +215,9 @@ class SecureHlsProxyServer {
     return base64Encode(utf8.encode(jsonEncode(proof)));
   }
 
-  /// 解密视频段（AES-256-GCM）
+  /// 解密视频段（完整的 AES-256-GCM 实现）
   ///
-  /// 生产级实现：使用 PMK 派生解密密钥和 nonce
+  /// 生产级实现：使用 pointycastle 的 AES-GCM
   ///
   /// 加密数据格式：
   /// - 前 12 字节：nonce
@@ -240,95 +244,142 @@ class SecureHlsProxyServer {
       // 从 PMK 派生解密密钥（AES-256 需要 32 字节）
       final decryptionKey = _deriveKey(pmk, 'aes-gcm-key');
 
-      // 使用 AES-256-GCM 解密
-      // 注意：Flutter 的 crypto 包不支持 GCM，这里使用简化的 XOR 解密
-      // 在生产环境中，应该使用 pointycastle 或 native 实现
-      final plaintext = _aesGcmDecrypt(ciphertext, decryptionKey, nonce, tag);
+      // 使用完整的 AES-256-GCM 解密
+      final plaintext = _aesGcmDecrypt(
+        ciphertext: ciphertext,
+        key: decryptionKey,
+        nonce: nonce,
+        tag: tag,
+      );
 
       debugPrint(
           '[SecureHLS Proxy] Decrypted segment: ${plaintext.length} bytes');
       return plaintext;
-    } catch (e) {
+    } catch (e, stack) {
       debugPrint('[SecureHLS Proxy] Decryption error: $e');
+      debugPrint('[SecureHLS Proxy] Stack trace: $stack');
       rethrow;
     }
   }
 
-  /// AES-256-GCM 解密（简化实现）
+  /// AES-256-GCM 解密（完整的生产级实现）
   ///
-  /// 注意：这是一个简化的实现，用于演示。
-  /// 在生产环境中，应该使用完整的 AES-GCM 实现（如 pointycastle）。
-  Uint8List _aesGcmDecrypt(
-    Uint8List ciphertext,
-    Uint8List key,
-    Uint8List nonce,
-    Uint8List tag,
-  ) {
-    // 验证 tag（简化版本：使用 HMAC-SHA256）
-    final expectedTag = Hmac(sha256, key).convert([...nonce, ...ciphertext]);
-    final computedTag = Uint8List.fromList(expectedTag.bytes.sublist(0, 16));
-
-    // 比较 tag（防止篡改）
-    bool tagValid = true;
-    for (int i = 0; i < 16; i++) {
-      if (tag[i] != computedTag[i]) {
-        tagValid = false;
-        break;
+  /// 使用 pointycastle 库实现标准的 AES-GCM 解密
+  ///
+  /// 参数：
+  /// - ciphertext: 加密的数据
+  /// - key: 32 字节的 AES-256 密钥
+  /// - nonce: 12 字节的 nonce（IV）
+  /// - tag: 16 字节的认证标签
+  ///
+  /// 返回：解密后的明文数据
+  ///
+  /// 抛出：如果认证失败或解密失败
+  Uint8List _aesGcmDecrypt({
+    required Uint8List ciphertext,
+    required Uint8List key,
+    required Uint8List nonce,
+    required Uint8List tag,
+  }) {
+    try {
+      // 验证参数长度
+      if (key.length != 32) {
+        throw ArgumentError(
+            'AES-256 requires a 32-byte key, got ${key.length}');
       }
-    }
+      if (nonce.length != 12) {
+        throw ArgumentError(
+            'GCM requires a 12-byte nonce, got ${nonce.length}');
+      }
+      if (tag.length != 16) {
+        throw ArgumentError('GCM tag must be 16 bytes, got ${tag.length}');
+      }
 
-    if (!tagValid) {
+      // 创建 AES-GCM 解密器
+      final cipher = GCMBlockCipher(AESEngine());
+
+      // 设置参数
+      final params = AEADParameters(
+        KeyParameter(key),
+        128, // tag 长度（位）
+        nonce,
+        Uint8List(0), // 附加认证数据（AAD）为空
+      );
+
+      // 初始化解密器
+      cipher.init(false, params); // false = 解密模式
+
+      // 合并密文和标签（GCM 需要）
+      final inputData = Uint8List(ciphertext.length + tag.length);
+      inputData.setRange(0, ciphertext.length, ciphertext);
+      inputData.setRange(ciphertext.length, inputData.length, tag);
+
+      // 执行解密
+      final plaintext = cipher.process(inputData);
+
+      debugPrint('[SecureHLS Proxy] AES-GCM decryption successful');
+      return plaintext;
+    } on ArgumentError catch (e) {
+      debugPrint('[SecureHLS Proxy] Invalid GCM parameters: $e');
+      throw Exception('GCM decryption failed: Invalid parameters - $e');
+    } catch (e) {
+      // 认证失败或其他错误
+      debugPrint('[SecureHLS Proxy] GCM decryption failed: $e');
       throw Exception(
-          'Authentication tag verification failed - data may be tampered');
+          'GCM decryption failed: Authentication tag verification failed or corrupted data');
     }
-
-    // 解密（简化版本：使用 XOR with key stream）
-    // 在生产环境中，应该使用标准的 AES-GCM 算法
-    final keyStream = _generateKeyStream(key, nonce, ciphertext.length);
-    final plaintext = Uint8List(ciphertext.length);
-
-    for (int i = 0; i < ciphertext.length; i++) {
-      plaintext[i] = ciphertext[i] ^ keyStream[i];
-    }
-
-    return plaintext;
   }
 
-  /// 生成密钥流（用于 XOR 解密）
-  Uint8List _generateKeyStream(Uint8List key, Uint8List nonce, int length) {
-    final keyStream = <int>[];
-    int counter = 0;
-
-    while (keyStream.length < length) {
-      // 使用 HMAC-SHA256 生成伪随机流
-      final block = Hmac(sha256, key).convert([
-        ...nonce,
-        ...[
-          (counter >> 24) & 0xFF,
-          (counter >> 16) & 0xFF,
-          (counter >> 8) & 0xFF,
-          counter & 0xFF
-        ],
-      ]);
-      keyStream.addAll(block.bytes);
-      counter++;
-    }
-
-    return Uint8List.fromList(keyStream.sublist(0, length));
-  }
-
-  /// 从密钥派生子密钥
+  /// 从密钥派生子密钥（使用 HKDF）
+  ///
+  /// 生产级实现：使用 HKDF-SHA256 进行密钥派生
+  ///
+  /// 参数：
+  /// - key: 主密钥（PMK）
+  /// - info: 上下文信息字符串
+  ///
+  /// 返回：32 字节的派生密钥
   Uint8List _deriveKey(Uint8List key, String info) {
-    final hash = sha256.convert([...key, ...utf8.encode(info)]);
-    return Uint8List.fromList(hash.bytes);
+    // 使用 HKDF-SHA256 派生密钥
+    final hkdf = HKDFKeyDerivator(SHA256Digest());
+
+    // HKDF 参数：
+    // - salt: 使用固定的 salt（在生产环境中应该使用随机 salt）
+    // - info: 上下文信息
+    final salt = Uint8List.fromList(utf8.encode('rockzero-hls-v1'));
+    final infoBytes = Uint8List.fromList(utf8.encode(info));
+
+    hkdf.init(HkdfParameters(key, 32, salt, infoBytes));
+
+    // 派生 32 字节的密钥
+    final derivedKey = Uint8List(32);
+    hkdf.deriveKey(null, 0, derivedKey, 0);
+
+    return derivedKey;
   }
 
-  /// 生成随机 nonce
-  Uint8List _generateNonce(int length) {
-    final random = List<int>.generate(
-      length,
-      (i) => (DateTime.now().microsecondsSinceEpoch * (i + 1)) % 256,
-    );
-    return Uint8List.fromList(random);
+  /// 生成安全的随机 nonce
+  ///
+  /// 生产级实现：使用密码学安全的随机数生成器
+  ///
+  /// 参数：
+  /// - length: nonce 长度（字节）
+  ///
+  /// 返回：随机 nonce
+  Uint8List _generateSecureNonce(int length) {
+    final secureRandom = FortunaRandom();
+
+    // 使用当前时间和系统熵作为种子
+    final seedSource = Uint8List(32);
+    final random = Random.secure();
+    for (int i = 0; i < 32; i++) {
+      seedSource[i] = random.nextInt(256);
+    }
+
+    secureRandom.seed(KeyParameter(seedSource));
+
+    // 生成随机 nonce
+    final nonce = secureRandom.nextBytes(length);
+    return nonce;
   }
 }
