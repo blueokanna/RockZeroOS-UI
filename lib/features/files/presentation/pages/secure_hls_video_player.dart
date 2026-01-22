@@ -15,6 +15,7 @@ import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../../core/widgets/shell_scaffold.dart';
+import '../../../../services/secure_hls_proxy.dart';
 
 /// 安全HLS视频播放器 - 使用SAE握手和ZKP验证
 class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
@@ -40,6 +41,7 @@ class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
 class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   VideoPlayerController? _videoController;
   ChewieController? _chewieController;
+  SecureHlsProxyServer? _proxyServer;
 
   bool _isLoading = true;
   String? _error;
@@ -47,6 +49,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   String? _hlsSessionId;
   String? _userId;
   String? _userPassword;
+  Uint8List? _pmk; // Pairwise Master Key
 
   bool _isDownloading = false;
   double _downloadProgress = 0;
@@ -107,7 +110,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         Uri.parse(initUrl),
         headers: {
           'Authorization': 'Bearer $_authToken',
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
+          'Accept': 'application/json',
         },
         body: jsonEncode({
           'file_id': widget.fileId ?? widget.filePath,
@@ -136,7 +140,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         Uri.parse(completeUrl),
         headers: {
           'Authorization': 'Bearer $_authToken',
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
+          'Accept': 'application/json',
         },
         body: jsonEncode({
           'temp_session_id': tempSessionId,
@@ -163,9 +168,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         'scalar': base64Decode(completeData['server_commit']['scalar']),
         'element': base64Decode(completeData['server_commit']['element']),
       };
-      final pmk = saeClient.computePmk(serverCommit);
+      _pmk = saeClient.computePmk(serverCommit);
 
-      debugPrint('[SecureHLS] PMK derived: ${pmk.length} bytes');
+      debugPrint('[SecureHLS] PMK derived: ${_pmk!.length} bytes');
 
       // 步骤5: 创建HLS会话
       final sessionUrl = '${widget.baseUrl}/api/v1/secure-hls/session/create';
@@ -173,7 +178,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         Uri.parse(sessionUrl),
         headers: {
           'Authorization': 'Bearer $_authToken',
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
+          'Accept': 'application/json',
         },
         body: jsonEncode({
           'temp_session_id': tempSessionId,
@@ -192,16 +198,31 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       debugPrint('[SecureHLS] HLS session created: $_hlsSessionId');
       debugPrint('[SecureHLS] Playlist URL: $playlistUrl');
 
-      // 步骤6: 等待播放列表准备好
+      // 步骤6: 启动本地代理服务器
+      debugPrint('[SecureHLS] Starting local proxy server...');
+      _proxyServer = SecureHlsProxyServer(
+        baseUrl: widget.baseUrl,
+        sessionId: _hlsSessionId!,
+        pmk: _pmk!,
+      );
+
+      final proxyPlaylistUrl = await _proxyServer!.start();
+      debugPrint('[SecureHLS] Proxy server started: $proxyPlaylistUrl');
+
+      // 步骤7: 等待播放列表准备好
       debugPrint('[SecureHLS] Waiting for playlist...');
       bool playlistReady = false;
       for (int i = 0; i < 30; i++) {
         await Future.delayed(const Duration(seconds: 1));
 
         try {
-          final checkResponse = await http
-              .get(Uri.parse(playlistUrl))
-              .timeout(const Duration(seconds: 2));
+          final checkResponse = await http.get(
+            Uri.parse(playlistUrl),
+            headers: {
+              'Accept': 'application/vnd.apple.mpegurl, */*',
+              'User-Agent': 'RockZeroOS/1.0',
+            },
+          ).timeout(const Duration(seconds: 2));
 
           if (checkResponse.statusCode == 200) {
             final content = checkResponse.body;
@@ -222,11 +243,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         throw Exception('播放列表生成超时');
       }
 
-      // 步骤7: 创建视频播放器
-      // 使用本地HTTP代理服务器来拦截和解密HLS视频段
-      // 由于Flutter video_player不支持自定义HTTP客户端，
-      // 我们需要启动一个本地代理服务器来处理加密的视频段
-
+      // 步骤8: 创建视频播放器（使用代理服务器URL）
       if (_chewieController != null) {
         _chewieController!.pause();
         _chewieController!.dispose();
@@ -237,15 +254,11 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         _videoController = null;
       }
 
-      debugPrint('[SecureHLS] Creating video controller');
+      debugPrint('[SecureHLS] Creating video controller with proxy URL');
 
-      // 创建视频播放器控制器
+      // 创建视频播放器控制器（使用代理服务器的URL）
       _videoController = VideoPlayerController.networkUrl(
-        Uri.parse(playlistUrl),
-        httpHeaders: {
-          'X-Session-Id': _hlsSessionId!,
-          'Authorization': 'Bearer $_authToken',
-        },
+        Uri.parse(proxyPlaylistUrl),
         videoPlayerOptions: VideoPlayerOptions(
           mixWithOthers: false,
           allowBackgroundPlayback: false,
@@ -350,6 +363,14 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   }
 
   Future<void> _cleanupHlsSession() async {
+    // 停止代理服务器
+    if (_proxyServer != null) {
+      await _proxyServer!.stop();
+      _proxyServer = null;
+      debugPrint('[SecureHLS] Proxy server stopped');
+    }
+
+    // 停止HLS会话
     if (_hlsSessionId != null && _authToken != null) {
       try {
         await http.post(
