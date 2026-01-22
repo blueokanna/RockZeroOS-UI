@@ -1,9 +1,7 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:chewie/chewie.dart';
-import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,6 +13,7 @@ import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../../core/widgets/shell_scaffold.dart';
+import '../../../../services/sae_handshake_service.dart';
 import '../../../../services/secure_hls_proxy.dart';
 
 /// 安全HLS视频播放器 - 使用SAE握手和ZKP验证
@@ -104,102 +103,23 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
       debugPrint('[SecureHLS] Starting SAE handshake...');
 
-      // 步骤1: 初始化SAE握手
-      final initUrl = '${widget.baseUrl}/api/v1/secure-hls/sae/init';
-      final initResponse = await http.post(
-        Uri.parse(initUrl),
-        headers: {
-          'Authorization': 'Bearer $_authToken',
-          'Content-Type': 'application/json; charset=utf-8',
-          'Accept': 'application/json',
-        },
-        body: jsonEncode({
-          // 优先使用 file_path，如果没有则使用 file_id
-          if (widget.filePath != null) 'file_path': widget.filePath,
-          if (widget.filePath == null && widget.fileId != null)
-            'file_id': widget.fileId,
-        }),
+      // 使用 SaeHandshakeService 执行完整的 SAE 握手
+      final handshakeService = SaeHandshakeService(
+        baseUrl: widget.baseUrl,
+        jwtToken: _authToken!,
       );
 
-      if (initResponse.statusCode != 200) {
-        throw Exception('SAE初始化失败: ${initResponse.body}');
-      }
-
-      final initData = jsonDecode(initResponse.body);
-      final tempSessionId = initData['temp_session_id'] as String;
-
-      debugPrint('[SecureHLS] Got temp session: $tempSessionId');
-
-      // 步骤2: 生成客户端SAE commit
-      final saeClient = SimpleSaeClient(
+      final filePath = widget.filePath ?? '';
+      final (sessionId, pmk) = await handshakeService.performHandshake(
+        filePath: filePath,
         password: _userPassword!,
-        userId: _userId!,
-      );
-      final clientCommit = saeClient.generateCommit();
-
-      // 步骤3: 完成SAE握手
-      final completeUrl = '${widget.baseUrl}/api/v1/secure-hls/sae/complete';
-      final completeResponse = await http.post(
-        Uri.parse(completeUrl),
-        headers: {
-          'Authorization': 'Bearer $_authToken',
-          'Content-Type': 'application/json; charset=utf-8',
-          'Accept': 'application/json',
-        },
-        body: jsonEncode({
-          'temp_session_id': tempSessionId,
-          'client_commit': {
-            'scalar': base64Encode(clientCommit['scalar']!),
-            'element': base64Encode(clientCommit['element']!),
-          },
-          'client_confirm': {
-            'send_confirm': 1,
-            'confirm': base64Encode(clientCommit['confirm']!),
-          },
-        }),
       );
 
-      if (completeResponse.statusCode != 200) {
-        throw Exception('SAE握手完成失败: ${completeResponse.body}');
-      }
+      _hlsSessionId = sessionId;
+      _pmk = pmk;
 
-      final completeData = jsonDecode(completeResponse.body);
-      debugPrint('[SecureHLS] SAE handshake completed');
-
-      // 步骤4: 验证服务器confirm并获取PMK
-      final serverCommit = {
-        'scalar': base64Decode(completeData['server_commit']['scalar']),
-        'element': base64Decode(completeData['server_commit']['element']),
-      };
-      _pmk = saeClient.computePmk(serverCommit);
-
-      debugPrint('[SecureHLS] PMK derived: ${_pmk!.length} bytes');
-
-      // 步骤5: 创建HLS会话
-      final sessionUrl = '${widget.baseUrl}/api/v1/secure-hls/session/create';
-      final sessionResponse = await http.post(
-        Uri.parse(sessionUrl),
-        headers: {
-          'Authorization': 'Bearer $_authToken',
-          'Content-Type': 'application/json; charset=utf-8',
-          'Accept': 'application/json',
-        },
-        body: jsonEncode({
-          'temp_session_id': tempSessionId,
-          // 优先使用 file_path，如果没有则使用 file_id
-          if (widget.filePath != null) 'file_path': widget.filePath,
-          if (widget.filePath == null && widget.fileId != null)
-            'file_id': widget.fileId,
-        }),
-      );
-
-      if (sessionResponse.statusCode != 200) {
-        throw Exception('创建HLS会话失败: ${sessionResponse.body}');
-      }
-
-      final sessionData = jsonDecode(sessionResponse.body);
-      _hlsSessionId = sessionData['session_id'] as String;
-      final playlistUrl = '${widget.baseUrl}${sessionData['playlist_url']}';
+      final playlistUrl =
+          '${widget.baseUrl}/api/v1/secure-hls/$_hlsSessionId/playlist.m3u8';
 
       debugPrint('[SecureHLS] HLS session created: $_hlsSessionId');
       debugPrint('[SecureHLS] Playlist URL: $playlistUrl');
@@ -677,83 +597,5 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         ),
       ),
     );
-  }
-}
-
-/// 简化的SAE客户端
-class SimpleSaeClient {
-  final String password;
-  final String userId;
-
-  Uint8List? _rand;
-  Uint8List? _mask;
-  Uint8List? _scalar;
-  Uint8List? _element;
-
-  SimpleSaeClient({
-    required this.password,
-    required this.userId,
-  });
-
-  /// 生成客户端commit
-  Map<String, Uint8List> generateCommit() {
-    // 生成随机数
-    _rand = _generateRandom(32);
-    _mask = _generateRandom(32);
-
-    // 计算scalar和element
-    _scalar = _computeScalar(_rand!, _mask!);
-    _element = _computeElement(_rand!, _mask!, password);
-
-    // 计算confirm
-    final confirm = _computeConfirm(_scalar!, _element!);
-
-    return {
-      'scalar': _scalar!,
-      'element': _element!,
-      'confirm': confirm,
-    };
-  }
-
-  /// 计算PMK
-  Uint8List computePmk(Map<String, Uint8List> serverCommit) {
-    final pmk = sha256.convert([
-      ..._scalar!,
-      ...serverCommit['scalar']!,
-      ..._element!,
-      ...serverCommit['element']!,
-      ...utf8.encode(password),
-      ...utf8.encode(userId),
-    ]);
-    return Uint8List.fromList(pmk.bytes);
-  }
-
-  Uint8List _generateRandom(int length) {
-    final random = List<int>.generate(
-        length, (i) => (DateTime.now().microsecondsSinceEpoch * (i + 1)) % 256);
-    return Uint8List.fromList(random);
-  }
-
-  Uint8List _computeScalar(Uint8List rand, Uint8List mask) {
-    final result = Uint8List(32);
-    for (int i = 0; i < 32; i++) {
-      result[i] = rand[i] ^ mask[i];
-    }
-    return result;
-  }
-
-  Uint8List _computeElement(Uint8List rand, Uint8List mask, String password) {
-    final hash = sha256.convert([
-      ...rand,
-      ...mask,
-      ...utf8.encode(password),
-    ]);
-    return Uint8List.fromList(hash.bytes);
-  }
-
-  Uint8List _computeConfirm(Uint8List scalar, Uint8List element) {
-    final hmac = Hmac(sha256, scalar);
-    final digest = hmac.convert([...element, ...utf8.encode(userId)]);
-    return Uint8List.fromList(digest.bytes);
   }
 }
