@@ -260,13 +260,29 @@ class SaeClient {
   }
 
   Uint8List _pointToBytes(ECPoint point) {
-    final encoded = point.getEncoded(true);
-    return Uint8List.fromList(encoded);
+    // 使用未压缩编码并提取 x 坐标（32 字节）
+    // 这样可以与 Curve25519 兼容
+    final encoded = point.getEncoded(false); // 未压缩：0x04 + x(32) + y(32) = 65 字节
+    // 提取 x 坐标（跳过第一个字节 0x04）
+    return Uint8List.fromList(encoded.sublist(1, 33));
   }
 
   ECPoint _bytesToPoint(Uint8List bytes) {
     final curve = ECCurve_secp256r1();
-    return curve.curve.decodePoint(bytes)!;
+
+    if (bytes.length == 32) {
+      // 32 字节：x 坐标，需要重建完整的点
+      // 使用压缩点格式：0x02 + x (假设 y 是偶数)
+      final compressed = Uint8List(33);
+      compressed[0] = 0x02; // 假设 y 是偶数
+      compressed.setRange(1, 33, bytes);
+      return curve.curve.decodePoint(compressed)!;
+    } else if (bytes.length == 33) {
+      // 33 字节：压缩点编码
+      return curve.curve.decodePoint(bytes)!;
+    } else {
+      throw ArgumentError('Invalid point bytes length: ${bytes.length}');
+    }
   }
 
   bool _constantTimeCompare(Uint8List a, Uint8List b) {
