@@ -346,7 +346,10 @@ class SaeClientCurve25519 {
   ///
   /// 与 Rust 端 `is_valid_pwe` 函数完全对齐：
   /// 1. 检查点不是单位元
-  /// 2. 检查点是 torsion-free（无小阶分量）
+  /// 2. 检查点是 torsion-free（在 prime-order subgroup 中）
+  ///
+  /// Rust 端使用 `point.is_torsion_free()` 检查点是否在 prime-order subgroup 中，
+  /// 其实现是 `(point * BASEPOINT_ORDER).is_identity()`
   bool _isValidPwe(ed25519.Point point) {
     // 检查点不是单位元
     if (point.equal(ed25519.Point.identity) == 1) {
@@ -358,19 +361,32 @@ class SaeClientCurve25519 {
       return false;
     }
 
-    // 检查点是否 torsion-free
-    // 与 Rust 端 is_torsion_free() 等效：
-    // 乘以余因子后如果得到单位元，说明原始点有小阶分量
-    // 但我们需要的是：乘以余因子后不是单位元的点
-    final cofactorResult = ed25519.Point.zero();
-    cofactorResult.multByCofactor(point);
+    // 检查点是否 torsion-free（与 Rust is_torsion_free() 完全一致）
+    //
+    // Rust 实现：(self * constants::BASEPOINT_ORDER_PRIVATE).is_identity()
+    //
+    // 我们需要计算 l * P == identity 来验证点在 prime-order subgroup 中
+    // 由于 l 本身不能作为标量使用（它超出范围），我们使用：
+    // l * P = (l-1) * P + P
+    //
+    // 注意：这与 `8 * P == identity` 的检查不同！
+    // - `8 * P == identity` 只检查是否是纯 torsion 点
+    // - `l * P == identity` 检查是否在 prime-order subgroup 中
 
-    // 如果乘以余因子后变成单位元，说明原始点有小阶分量，不是 torsion-free
-    if (cofactorResult.equal(ed25519.Point.identity) == 1) {
-      return false;
-    }
+    // 使用 Scalar.scalarMinusOneBytes (l-1)
+    final lMinus1Scalar = ed25519.Scalar();
+    lMinus1Scalar.setCanonicalBytes(ed25519.Scalar.scalarMinusOneBytes);
 
-    return true;
+    // 计算 (l-1) * P
+    final lMinus1TimesP = ed25519.Point.zero();
+    lMinus1TimesP.scalarMult(lMinus1Scalar, point);
+
+    // 计算 l * P = (l-1) * P + P
+    final lTimesP = ed25519.Point.zero();
+    lTimesP.add(lMinus1TimesP, point);
+
+    // 如果 l * P == identity，则点在 prime-order subgroup 中，是 torsion-free
+    return lTimesP.equal(ed25519.Point.identity) == 1;
   }
 
   /// 生成随机标量
