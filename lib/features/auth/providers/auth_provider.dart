@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:hashlib/hashlib.dart' as hashlib;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/models/api_models.dart';
@@ -227,7 +227,7 @@ class AuthNotifier extends Notifier<AuthState> {
       await _storage.write(key: 'user_role', value: response.user!.role);
 
       // 保存密码哈希（用于 SAE 握手）
-      // 注意：这里保存的是密码的 SHA-256 哈希，不是明文密码
+      // 注意：这里保存的是密码的 SHA3-256 哈希，不是明文密码
       if (password != null) {
         final passwordHash = _hashPassword(password);
         await _storage.write(key: 'user_password_hash', value: passwordHash);
@@ -236,14 +236,14 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
-  /// 计算密码的 SHA-256 哈希
+  /// 计算密码的 SHA3-256 哈希
   ///
   /// 这个哈希值用于 SAE 握手，不是用于认证
   /// 认证使用的是 JWT token
+  /// 与 Rust 端的 compute_sae_secret 函数保持一致
   String _hashPassword(String password) {
-    // 使用 crypto 包的 sha256
-    final bytes = utf8.encode(password);
-    final digest = sha256.convert(bytes);
+    // 使用 hashlib 包的 sha3_256（与 Rust sha3::Sha3_256 兼容）
+    final digest = hashlib.sha3_256.convert(utf8.encode(password));
     return digest.toString();
   }
 }

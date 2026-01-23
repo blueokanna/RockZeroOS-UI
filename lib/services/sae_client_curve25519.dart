@@ -322,24 +322,21 @@ class SaeClientCurve25519 {
 
   /// 尝试将种子转换为曲线点
   ///
-  /// 与 Rust 端保持一致：将哈希值作为 y 坐标压缩点
-  /// 然后乘以余因子以确保点在素阶子群中
+  /// 与 Rust 端 `try_seed_to_point` 函数完全对齐：
+  /// 直接将哈希值作为 y 坐标压缩点进行解压缩
+  /// 注意：不进行余因子乘法，这与 Rust 端行为一致
   ed25519.Point? _trySeedToPoint(Uint8List seed) {
     if (seed.length < 32) return null;
 
     try {
-      // 使用种子作为 y 坐标压缩点
+      // 使用种子作为 y 坐标压缩点（与 Rust CompressedEdwardsY 一致）
       final yBytes = Uint8List.fromList(seed.sublist(0, 32));
       final point = ed25519.Point.zero();
       point.setBytes(yBytes);
 
-      // 乘以余因子 (8) 以清除低阶分量，确保点在素阶子群中
-      // 这与 Rust 端的 is_torsion_free() 检查等效
-      // 乘以 8 后的点保证没有 torsion
-      final cofactorCleared = ed25519.Point.zero();
-      cofactorCleared.multByCofactor(point);
-
-      return cofactorCleared;
+      // 直接返回解压缩的点，不进行余因子乘法
+      // Rust 端的 try_seed_to_point 也是直接返回 decompress() 的结果
+      return point;
     } catch (_) {
       return null;
     }
@@ -347,16 +344,33 @@ class SaeClientCurve25519 {
 
   /// 验证 PWE 是否有效
   ///
-  /// 由于已经在 _trySeedToPoint 中乘以了余因子，
-  /// 这里只需检查点不是单位元且在曲线上
+  /// 与 Rust 端 `is_valid_pwe` 函数完全对齐：
+  /// 1. 检查点不是单位元
+  /// 2. 检查点是 torsion-free（无小阶分量）
   bool _isValidPwe(ed25519.Point point) {
-    // 检查点不是单位元（乘以余因子后可能变成单位元）
+    // 检查点不是单位元
     if (point.equal(ed25519.Point.identity) == 1) {
       return false;
     }
 
     // 验证点在曲线上
-    return ed25519.checkOnCurve([point]);
+    if (!ed25519.checkOnCurve([point])) {
+      return false;
+    }
+
+    // 检查点是否 torsion-free
+    // 与 Rust 端 is_torsion_free() 等效：
+    // 乘以余因子后如果得到单位元，说明原始点有小阶分量
+    // 但我们需要的是：乘以余因子后不是单位元的点
+    final cofactorResult = ed25519.Point.zero();
+    cofactorResult.multByCofactor(point);
+
+    // 如果乘以余因子后变成单位元，说明原始点有小阶分量，不是 torsion-free
+    if (cofactorResult.equal(ed25519.Point.identity) == 1) {
+      return false;
+    }
+
+    return true;
   }
 
   /// 生成随机标量
@@ -484,13 +498,17 @@ class SaeClientCurve25519 {
 
   /// HKDF-SHA3-256
   ///
-  /// 简化实现，不使用 salt（与 Rust 端 `Hkdf::new(None, ...)` 对齐）
+  /// 完整的 HKDF 实现，与 Rust 端 `Hkdf::new(None, ...)` 对齐
+  /// 包含 Extract 和 Expand 两个阶段
   Uint8List _hkdfSha3_256(Uint8List ikm, Uint8List info, int length) {
-    // HKDF-Expand
+    // HKDF-Extract: PRK = HMAC-Hash(salt, IKM)
+    // 当 salt = None 时，使用全零 salt（与 Rust hkdf crate 行为一致）
+    final salt = Uint8List(32); // 32 字节全零（SHA3-256 的块大小）
+    final prk = _hmacSha3_256(salt, ikm);
+
+    // HKDF-Expand: OKM = T(1) || T(2) || ... || T(N)
     // T(0) = empty
     // T(i) = HMAC-SHA3-256(PRK, T(i-1) || info || i)
-
-    final prk = ikm;
     final output = <int>[];
     var t = Uint8List(0);
     var counter = 1;

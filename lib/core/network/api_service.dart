@@ -1453,4 +1453,33 @@ extension SecureStorageApiExtension on ApiService {
     );
     return DatabaseStatsResponse.fromJson(response.data);
   }
+
+  // ============ App Storage Stats API ============
+
+  /// 获取 RockZeroOS 应用专用存储统计
+  /// 
+  /// 返回 HLS 缓存、临时文件、日志、视频、数据库等的实际占用空间，
+  /// 而不是整个分区的使用量。
+  Future<AppStorageStats> getAppStorageStats() async {
+    final response = await _dio.get('/api/v1/storage/stats');
+    return AppStorageStats.fromJson(response.data);
+  }
+
+  /// 触发手动清理（HLS 缓存、临时文件、旧日志）
+  Future<Map<String, dynamic>> triggerStorageCleanup() async {
+    final response = await _dio.post('/api/v1/cleanup');
+    return response.data;
+  }
+
+  /// 清理 HLS 缓存
+  Future<Map<String, dynamic>> cleanupHlsCache() async {
+    final response = await _dio.post('/api/v1/cleanup/hls');
+    return response.data;
+  }
+
+  /// 清理临时文件
+  Future<Map<String, dynamic>> cleanupTempFiles() async {
+    final response = await _dio.post('/api/v1/cleanup/temp');
+    return response.data;
+  }
 }

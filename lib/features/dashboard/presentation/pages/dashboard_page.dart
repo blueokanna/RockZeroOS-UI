@@ -10,6 +10,7 @@ import '../../../../core/theme/app_theme.dart';
 import '../widgets/system_status_card.dart';
 import '../widgets/storage_card.dart';
 import '../widgets/network_status_card.dart';
+import '../widgets/app_storage_stats_card.dart';
 
 // Auto-refresh providers with timers
 final hardwareInfoProvider = FutureProvider.autoDispose<HardwareInfo?>((
@@ -368,6 +369,14 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                       )
                       .slideX(begin: 0.03, curve: M3Curves.emphasized),
                   const SizedBox(height: 16),
+                  const AppStorageStatsCard()
+                      .animate()
+                      .fadeIn(
+                        delay: 180.ms,
+                        curve: M3Curves.emphasizedDecelerate,
+                      )
+                      .slideX(begin: 0.03, curve: M3Curves.emphasized),
+                  const SizedBox(height: 16),
                   NetworkStatusCard(networkInfo: networkInfo)
                       .animate()
                       .fadeIn(
@@ -415,6 +424,11 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
             ),
           ],
         ),
+        const SizedBox(height: 16),
+        const AppStorageStatsCard()
+            .animate()
+            .fadeIn(delay: 250.ms, curve: M3Curves.emphasizedDecelerate)
+            .slideY(begin: 0.03, curve: M3Curves.emphasized),
       ],
     );
   }
@@ -435,6 +449,11 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         TotalStorageCard(storageInfo: storageInfo)
             .animate()
             .fadeIn(delay: 150.ms, curve: M3Curves.emphasizedDecelerate)
+            .slideY(begin: 0.03, curve: M3Curves.emphasized),
+        const SizedBox(height: 16),
+        const AppStorageStatsCard()
+            .animate()
+            .fadeIn(delay: 180.ms, curve: M3Curves.emphasizedDecelerate)
             .slideY(begin: 0.03, curve: M3Curves.emphasized),
         const SizedBox(height: 16),
         NetworkStatusCard(networkInfo: networkInfo)
