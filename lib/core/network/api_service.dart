@@ -1457,7 +1457,7 @@ extension SecureStorageApiExtension on ApiService {
   // ============ App Storage Stats API ============
 
   /// 获取 RockZeroOS 应用专用存储统计
-  /// 
+  ///
   /// 返回 HLS 缓存、临时文件、日志、视频、数据库等的实际占用空间，
   /// 而不是整个分区的使用量。
   Future<AppStorageStats> getAppStorageStats() async {

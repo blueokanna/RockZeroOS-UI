@@ -20,7 +20,7 @@ final appStorageStatsProvider = FutureProvider.autoDispose<AppStorageStats?>((
 });
 
 /// RockZeroOS 应用专用存储统计卡片
-/// 
+///
 /// 显示应用实际占用的存储空间，包括：
 /// - 视频文件
 /// - HLS 缓存
@@ -119,7 +119,8 @@ class AppStorageStatsCard extends ConsumerWidget {
     );
   }
 
-  Widget _buildContent(BuildContext context, WidgetRef ref, AppStorageStats stats) {
+  Widget _buildContent(
+      BuildContext context, WidgetRef ref, AppStorageStats stats) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
@@ -164,7 +165,8 @@ class AppStorageStatsCard extends ConsumerWidget {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
                   color: Colors.green.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(20),
@@ -191,7 +193,7 @@ class AppStorageStatsCard extends ConsumerWidget {
             ],
           ),
         ).animate().fadeIn(delay: 100.ms).slideY(begin: 0.05),
-        
+
         const SizedBox(height: 16),
 
         // Storage breakdown
@@ -206,7 +208,10 @@ class AppStorageStatsCard extends ConsumerWidget {
                 _StorageBreakdownRow(
                   item: stats.breakdown[i],
                   totalSize: stats.totalAppUsage,
-                ).animate().fadeIn(delay: (150 + i * 50).ms).slideX(begin: -0.03),
+                )
+                    .animate()
+                    .fadeIn(delay: (150 + i * 50).ms)
+                    .slideX(begin: -0.03),
                 if (i < stats.breakdown.length - 1)
                   Divider(
                     height: 1,

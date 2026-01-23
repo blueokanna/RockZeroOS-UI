@@ -1315,31 +1315,31 @@ class ComposeApp {
 // ============ App Storage Stats ============
 
 /// RockZeroOS 应用专用存储统计
-/// 
+///
 /// 显示 HLS 缓存、临时文件、日志、视频、数据库等的实际占用空间，
 /// 而不是整个分区的使用量。
 class AppStorageStats {
   /// HLS 缓存大小（字节）
   final int hlsCacheSize;
-  
+
   /// 临时文件大小（字节）
   final int tempStorageSize;
-  
+
   /// 日志文件大小（字节）
   final int logSize;
-  
+
   /// 视频存储大小（字节）
   final int videoStorageSize;
-  
+
   /// 数据库文件大小（字节）
   final int databaseSize;
-  
+
   /// RockZeroOS 应用总占用（字节）
   final int totalAppUsage;
-  
+
   /// 可用空间（字节）
   final int availableSpace;
-  
+
   // 格式化值（MB/GB）
   final double hlsCacheSizeMb;
   final double tempStorageSizeMb;
@@ -1378,9 +1378,11 @@ class AppStorageStats {
       totalAppUsage: (json['total_app_usage'] as num?)?.toInt() ?? 0,
       availableSpace: (json['available_space'] as num?)?.toInt() ?? 0,
       hlsCacheSizeMb: (json['hls_cache_size_mb'] as num?)?.toDouble() ?? 0.0,
-      tempStorageSizeMb: (json['temp_storage_size_mb'] as num?)?.toDouble() ?? 0.0,
+      tempStorageSizeMb:
+          (json['temp_storage_size_mb'] as num?)?.toDouble() ?? 0.0,
       logSizeMb: (json['log_size_mb'] as num?)?.toDouble() ?? 0.0,
-      videoStorageSizeMb: (json['video_storage_size_mb'] as num?)?.toDouble() ?? 0.0,
+      videoStorageSizeMb:
+          (json['video_storage_size_mb'] as num?)?.toDouble() ?? 0.0,
       databaseSizeMb: (json['database_size_mb'] as num?)?.toDouble() ?? 0.0,
       totalAppUsageMb: (json['total_app_usage_mb'] as num?)?.toDouble() ?? 0.0,
       availableSpaceGb: (json['available_space_gb'] as num?)?.toDouble() ?? 0.0,
@@ -1389,56 +1391,56 @@ class AppStorageStats {
   }
 
   Map<String, dynamic> toJson() => {
-    'hls_cache_size': hlsCacheSize,
-    'temp_storage_size': tempStorageSize,
-    'log_size': logSize,
-    'video_storage_size': videoStorageSize,
-    'database_size': databaseSize,
-    'total_app_usage': totalAppUsage,
-    'available_space': availableSpace,
-    'hls_cache_size_mb': hlsCacheSizeMb,
-    'temp_storage_size_mb': tempStorageSizeMb,
-    'log_size_mb': logSizeMb,
-    'video_storage_size_mb': videoStorageSizeMb,
-    'database_size_mb': databaseSizeMb,
-    'total_app_usage_mb': totalAppUsageMb,
-    'available_space_gb': availableSpaceGb,
-    'total_used_mb': totalUsedMb,
-  };
-  
+        'hls_cache_size': hlsCacheSize,
+        'temp_storage_size': tempStorageSize,
+        'log_size': logSize,
+        'video_storage_size': videoStorageSize,
+        'database_size': databaseSize,
+        'total_app_usage': totalAppUsage,
+        'available_space': availableSpace,
+        'hls_cache_size_mb': hlsCacheSizeMb,
+        'temp_storage_size_mb': tempStorageSizeMb,
+        'log_size_mb': logSizeMb,
+        'video_storage_size_mb': videoStorageSizeMb,
+        'database_size_mb': databaseSizeMb,
+        'total_app_usage_mb': totalAppUsageMb,
+        'available_space_gb': availableSpaceGb,
+        'total_used_mb': totalUsedMb,
+      };
+
   /// 获取各项存储的详细信息列表
   List<StorageBreakdownItem> get breakdown => [
-    StorageBreakdownItem(
-      name: 'Video Files',
-      icon: 'video_library',
-      size: videoStorageSize,
-      color: 0xFF2196F3, // Blue
-    ),
-    StorageBreakdownItem(
-      name: 'HLS Cache',
-      icon: 'cached',
-      size: hlsCacheSize,
-      color: 0xFFFF9800, // Orange
-    ),
-    StorageBreakdownItem(
-      name: 'Database',
-      icon: 'storage',
-      size: databaseSize,
-      color: 0xFF4CAF50, // Green
-    ),
-    StorageBreakdownItem(
-      name: 'Logs',
-      icon: 'description',
-      size: logSize,
-      color: 0xFF9C27B0, // Purple
-    ),
-    StorageBreakdownItem(
-      name: 'Temp Files',
-      icon: 'folder_open',
-      size: tempStorageSize,
-      color: 0xFF607D8B, // Blue Grey
-    ),
-  ];
+        StorageBreakdownItem(
+          name: 'Video Files',
+          icon: 'video_library',
+          size: videoStorageSize,
+          color: 0xFF2196F3, // Blue
+        ),
+        StorageBreakdownItem(
+          name: 'HLS Cache',
+          icon: 'cached',
+          size: hlsCacheSize,
+          color: 0xFFFF9800, // Orange
+        ),
+        StorageBreakdownItem(
+          name: 'Database',
+          icon: 'storage',
+          size: databaseSize,
+          color: 0xFF4CAF50, // Green
+        ),
+        StorageBreakdownItem(
+          name: 'Logs',
+          icon: 'description',
+          size: logSize,
+          color: 0xFF9C27B0, // Purple
+        ),
+        StorageBreakdownItem(
+          name: 'Temp Files',
+          icon: 'folder_open',
+          size: tempStorageSize,
+          color: 0xFF607D8B, // Blue Grey
+        ),
+      ];
 }
 
 /// 存储明细项
@@ -1454,7 +1456,7 @@ class StorageBreakdownItem {
     required this.size,
     required this.color,
   });
-  
+
   /// 格式化大小显示
   String get formattedSize {
     if (size >= 1024 * 1024 * 1024) {
