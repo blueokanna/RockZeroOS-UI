@@ -1,21 +1,23 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:pointycastle/export.dart';
 
+import 'zkp/hls_bulletproof_auth.dart';
+
 /// 安全 HLS 代理服务器
 ///
-/// 用于拦截 HLS 播放器的视频段请求，自动添加 ZKP 证明
+/// 使用 Bulletproofs 零知识证明进行视频段访问认证
 ///
 /// 工作原理：
 /// 1. 启动本地 HTTP 服务器（127.0.0.1:随机端口）
 /// 2. 拦截播放器的 .ts 段请求
-/// 3. 生成 ZKP 证明
+/// 3. 生成 Bulletproofs ZKP 证明（证明密码知识）
 /// 4. 向后端发送 POST 请求（带 ZKP 证明）
-/// 5. 解密视频段（使用完整的 AES-256-GCM）
+/// 5. 解密视频段（使用 AES-256-GCM）
 /// 6. 返回明文视频段给播放器
 class SecureHlsProxyServer {
   HttpServer? _server;
@@ -23,12 +25,21 @@ class SecureHlsProxyServer {
   final String baseUrl;
   final String sessionId;
   final Uint8List pmk; // Pairwise Master Key
+  final String password; // User password for ZKP proof generation
+  final PasswordRegistration? zkpRegistration; // ZKP registration from server
+
+  // Bulletproofs auth context
+  late final HlsBulletproofAuth _bulletproofAuth;
 
   SecureHlsProxyServer({
     required this.baseUrl,
     required this.sessionId,
     required this.pmk,
-  });
+    required this.password,
+    this.zkpRegistration,
+  }) {
+    _bulletproofAuth = HlsBulletproofAuth();
+  }
 
   /// 启动代理服务器
   Future<String> start() async {
@@ -38,6 +49,7 @@ class SecureHlsProxyServer {
       _port = _server!.port;
 
       debugPrint('[SecureHLS Proxy] Started on http://127.0.0.1:$_port');
+      debugPrint('[SecureHLS Proxy] Using Bulletproofs ZKP authentication');
 
       // 处理请求
       _server!.listen(_handleRequest);
@@ -126,15 +138,15 @@ class SecureHlsProxyServer {
     );
   }
 
-  /// 处理视频段请求（添加 ZKP 证明）
+  /// 处理视频段请求（使用 Bulletproofs ZKP 证明）
   Future<void> _handleSegmentRequest(HttpRequest request, String path) async {
     try {
       final segmentName = path.substring(1); // 移除开头的 '/'
 
       debugPrint('[SecureHLS Proxy] Fetching segment: $segmentName');
 
-      // 1. 生成 ZKP 证明
-      final zkpProof = _generateZkpProof();
+      // 1. 生成 Bulletproofs ZKP 证明
+      final zkpProof = _generateBulletproofZkpProof();
 
       // 2. 向后端发送 POST 请求（带 ZKP 证明）
       final segmentUrl = '$baseUrl/api/v1/secure-hls/$sessionId/$segmentName';
@@ -154,7 +166,7 @@ class SecureHlsProxyServer {
         final encryptedData = await backendResponse.fold<List<int>>(
             [], (previous, element) => previous..addAll(element));
 
-        // 4. 解密视频段（使用完整的 AES-256-GCM）
+        // 4. 解密视频段（使用 AES-256-GCM）
         final decryptedData =
             _decryptSegment(Uint8List.fromList(encryptedData));
 
@@ -183,45 +195,59 @@ class SecureHlsProxyServer {
     }
   }
 
-  /// 生成 ZKP 证明
+  /// 生成完整的 Bulletproofs ZKP 证明
   ///
-  /// 生产级实现：使用 PMK 派生各个组件
-  String _generateZkpProof() {
-    // 生成时间戳和 nonce
-    final timestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    final nonce = _generateSecureNonce(16);
+  /// 使用 Rust FFI 调用完整的 Bulletproofs 实现，
+  /// 证明用户知道密码，而不泄露密码本身。
+  ///
+  /// 证明结构包含：
+  /// - Schnorr 证明：证明知道密码和 blinding factor
+  /// - Bulletproofs 范围证明：密码熵值 >= 28 bits（密码学证明）
+  /// - 时间戳和 nonce：防止重放攻击
+  /// - 上下文绑定：固定为 "hls_segment_access"
+  String _generateBulletproofZkpProof() {
+    if (zkpRegistration == null) {
+      throw StateError(
+        'ZKP registration data is required for authentication. '
+        'Please ensure the user has completed registration.',
+      );
+    }
 
-    // 构建 Schnorr 证明（使用 PMK 派生各个组件）
-    final commitment = _deriveKey(pmk, 'commitment');
-    final challenge = _deriveKey(pmk, 'challenge');
-    final response = _deriveKey(pmk, 'response');
-    final blinding = _deriveKey(pmk, 'blinding');
+    // 确保 FFI 已初始化
+    if (!_bulletproofAuth.isInitialized) {
+      if (!_bulletproofAuth.initializeAuto()) {
+        throw StateError(
+          'Failed to initialize Bulletproofs FFI. '
+          'Ensure the native library is available.',
+        );
+      }
+    }
 
-    // 构建增强密码证明
-    final proof = {
-      'schnorr_proof': {
-        'commitment': base64Encode(commitment),
-        'challenge': base64Encode(challenge),
-        'response': base64Encode(response),
-        'blinding_commitment': base64Encode(blinding),
-      },
-      'timestamp': timestamp,
-      'nonce': base64Encode(nonce),
-      'context': 'hls_segment_access',
-    };
+    try {
+      debugPrint('[SecureHLS Proxy] Generating full Bulletproofs ZKP proof...');
 
-    // 返回 Base64 编码的 JSON
-    return base64Encode(utf8.encode(jsonEncode(proof)));
+      // 生成完整的 Bulletproofs 证明（Schnorr + 范围证明）
+      final proofBase64 = _bulletproofAuth.generateProof(
+        password,
+        zkpRegistration!,
+        context: 'hls_segment_access',
+      );
+
+      debugPrint('[SecureHLS Proxy] ✅ Full Bulletproofs ZKP proof generated');
+      debugPrint('[SecureHLS Proxy]   - Proof size: ${proofBase64.length} chars (base64)');
+
+      return proofBase64;
+    } catch (e) {
+      debugPrint('[SecureHLS Proxy] Failed to generate Bulletproofs proof: $e');
+      rethrow;
+    }
   }
 
   /// 解密视频段（完整的 AES-256-GCM 实现）
   ///
-  /// 生产级实现：使用 pointycastle 的 AES-GCM
-  ///
-  /// 加密数据格式：
+  /// Rust端加密数据格式（使用 aes_gcm crate）：
   /// - 前 12 字节：nonce
-  /// - 后 16 字节：authentication tag
-  /// - 中间部分：加密的视频数据
+  /// - 剩余部分：ciphertext + tag（tag自动附加在ciphertext末尾）
   Uint8List _decryptSegment(Uint8List encryptedData) {
     if (encryptedData.length < 28) {
       // 至少需要 12 字节 nonce + 16 字节 tag
@@ -234,21 +260,19 @@ class SecureHlsProxyServer {
       // 提取 nonce（前 12 字节）
       final nonce = encryptedData.sublist(0, 12);
 
-      // 提取 tag（最后 16 字节）
-      final tag = encryptedData.sublist(encryptedData.length - 16);
-
-      // 提取密文（中间部分）
-      final ciphertext = encryptedData.sublist(12, encryptedData.length - 16);
+      // 剩余部分是 ciphertext + tag（tag 已经附加在 ciphertext 末尾）
+      final ciphertextWithTag = encryptedData.sublist(12);
 
       // 从 PMK 派生解密密钥（AES-256 需要 32 字节）
-      final decryptionKey = _deriveKey(pmk, 'aes-gcm-key');
+      // 使用与 Rust 端完全一致的 info 参数："hls-master-key"
+      final decryptionKey = _deriveKey(pmk, 'hls-master-key');
 
       // 使用完整的 AES-256-GCM 解密
+      // pointycastle 的 GCM 实现会自动处理附加在末尾的 tag
       final plaintext = _aesGcmDecrypt(
-        ciphertext: ciphertext,
+        ciphertextWithTag: ciphertextWithTag,
         key: decryptionKey,
         nonce: nonce,
-        tag: tag,
       );
 
       debugPrint(
@@ -266,19 +290,19 @@ class SecureHlsProxyServer {
   /// 使用 pointycastle 库实现标准的 AES-GCM 解密
   ///
   /// 参数：
-  /// - ciphertext: 加密的数据
+  /// - ciphertextWithTag: 加密的数据 + 认证标签（tag 附加在末尾）
   /// - key: 32 字节的 AES-256 密钥
   /// - nonce: 12 字节的 nonce（IV）
-  /// - tag: 16 字节的认证标签
   ///
   /// 返回：解密后的明文数据
   ///
   /// 抛出：如果认证失败或解密失败
+  ///
+  /// 注意：Rust 的 aes_gcm crate 会自动将 16 字节的 tag 附加到 ciphertext 末尾
   Uint8List _aesGcmDecrypt({
-    required Uint8List ciphertext,
+    required Uint8List ciphertextWithTag,
     required Uint8List key,
     required Uint8List nonce,
-    required Uint8List tag,
   }) {
     try {
       // 验证参数长度
@@ -290,14 +314,16 @@ class SecureHlsProxyServer {
         throw ArgumentError(
             'GCM requires a 12-byte nonce, got ${nonce.length}');
       }
-      if (tag.length != 16) {
-        throw ArgumentError('GCM tag must be 16 bytes, got ${tag.length}');
+      if (ciphertextWithTag.length < 16) {
+        throw ArgumentError(
+            'Ciphertext too short, must include 16-byte tag, got ${ciphertextWithTag.length}');
       }
 
       // 创建 AES-GCM 解密器
       final cipher = GCMBlockCipher(AESEngine());
 
       // 设置参数
+      // pointycastle 的 GCM 实现期望 ciphertext + tag 作为输入
       final params = AEADParameters(
         KeyParameter(key),
         128, // tag 长度（位）
@@ -308,13 +334,8 @@ class SecureHlsProxyServer {
       // 初始化解密器
       cipher.init(false, params); // false = 解密模式
 
-      // 合并密文和标签（GCM 需要）
-      final inputData = Uint8List(ciphertext.length + tag.length);
-      inputData.setRange(0, ciphertext.length, ciphertext);
-      inputData.setRange(ciphertext.length, inputData.length, tag);
-
-      // 执行解密
-      final plaintext = cipher.process(inputData);
+      // 执行解密（输入是 ciphertext + tag）
+      final plaintext = cipher.process(ciphertextWithTag);
 
       debugPrint('[SecureHLS Proxy] AES-GCM decryption successful');
       return plaintext;
@@ -329,9 +350,15 @@ class SecureHlsProxyServer {
     }
   }
 
-  /// 从密钥派生子密钥（使用 HKDF）
+  /// 从密钥派生子密钥（使用 HKDF-SHA3-256）
   ///
-  /// 生产级实现：使用 HKDF-SHA256 进行密钥派生
+  /// 生产级实现：使用 HKDF-SHA3-256 进行密钥派生，与 Rust 端完全一致
+  ///
+  /// Rust 端使用：
+  /// ```rust
+  /// let hk = Hkdf::<Sha3_256>::new(None, &pmk);
+  /// hk.expand(b"hls-master-key", &mut encryption_key)
+  /// ```
   ///
   /// 参数：
   /// - key: 主密钥（PMK）
@@ -339,46 +366,21 @@ class SecureHlsProxyServer {
   ///
   /// 返回：32 字节的派生密钥
   Uint8List _deriveKey(Uint8List key, String info) {
-    // 使用 HKDF-SHA256 派生密钥
-    final hkdf = HKDFKeyDerivator(SHA256Digest());
+    // 使用 HKDF-SHA3-256 派生密钥（与 Rust 端一致）
+    final hkdf = HKDFKeyDerivator(SHA3Digest(256));
 
     // HKDF 参数：
-    // - salt: 使用固定的 salt（在生产环境中应该使用随机 salt）
+    // - salt: None（与 Rust 端的 Hkdf::new(None, &pmk) 一致）
     // - info: 上下文信息
-    final salt = Uint8List.fromList(utf8.encode('rockzero-hls-v1'));
     final infoBytes = Uint8List.fromList(utf8.encode(info));
 
-    hkdf.init(HkdfParameters(key, 32, salt, infoBytes));
+    // 初始化 HKDF（salt 为 null 表示使用零值 salt）
+    hkdf.init(HkdfParameters(key, 32, null, infoBytes));
 
     // 派生 32 字节的密钥
     final derivedKey = Uint8List(32);
     hkdf.deriveKey(null, 0, derivedKey, 0);
 
     return derivedKey;
-  }
-
-  /// 生成安全的随机 nonce
-  ///
-  /// 生产级实现：使用密码学安全的随机数生成器
-  ///
-  /// 参数：
-  /// - length: nonce 长度（字节）
-  ///
-  /// 返回：随机 nonce
-  Uint8List _generateSecureNonce(int length) {
-    final secureRandom = FortunaRandom();
-
-    // 使用当前时间和系统熵作为种子
-    final seedSource = Uint8List(32);
-    final random = Random.secure();
-    for (int i = 0; i < 32; i++) {
-      seedSource[i] = random.nextInt(256);
-    }
-
-    secureRandom.seed(KeyParameter(seedSource));
-
-    // 生成随机 nonce
-    final nonce = secureRandom.nextBytes(length);
-    return nonce;
   }
 }

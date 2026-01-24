@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:edwards25519/edwards25519.dart' as ed25519;
-import 'package:hashlib/hashlib.dart' as hashlib;
 import 'package:thirds/blake3.dart' as blake3;
 
 /// 详细的 SAE 共享密钥计算测试

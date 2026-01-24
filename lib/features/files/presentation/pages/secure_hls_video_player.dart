@@ -131,6 +131,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         baseUrl: widget.baseUrl,
         sessionId: _hlsSessionId!,
         pmk: _pmk!,
+        password: _userPassword!,
       );
 
       final proxyPlaylistUrl = await _proxyServer!.start();

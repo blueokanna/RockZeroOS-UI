@@ -87,14 +87,12 @@ void main() {
       print('Input bytes: ${hex.encode(largeBytes)}');
 
       // 尝试 setCanonicalBytes
-      bool canonicalWorks = true;
       try {
         final scalar2 = ed25519.Scalar();
         scalar2.setCanonicalBytes(largeBytes);
         print('setCanonicalBytes result: ${hex.encode(scalar2.Bytes())}');
       } catch (e) {
         print('setCanonicalBytes failed: $e');
-        canonicalWorks = false;
       }
 
       // 使用 setUniformBytes（需要64字节）
