@@ -123,6 +123,17 @@ class ApiService {
     await _dio.post('/api/v1/auth/logout');
   }
 
+  /// 获取当前用户信息
+  Future<User?> getCurrentUser() async {
+    try {
+      final response = await _dio.get('/api/v1/auth/me');
+      return User.fromJson(response.data);
+    } catch (e) {
+      debugPrint('[API] Failed to get current user: $e');
+      return null;
+    }
+  }
+
   // ============ ZKP API (零知识证明) ============
 
   /// 生成 ZKP 密码证明

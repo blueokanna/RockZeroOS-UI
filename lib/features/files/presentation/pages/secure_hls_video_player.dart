@@ -16,7 +16,7 @@ import '../../../../core/widgets/shell_scaffold.dart';
 import '../../../../services/sae_handshake_service.dart';
 import '../../../../services/secure_hls_proxy.dart';
 
-/// 安全HLS视频播放器 - 使用SAE握手和ZKP验证
+/// 安全HLS视频播放器 - 使用SAE握手和AES-256-GCM加密
 class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
   final String? filePath;
   final String? fileId;
@@ -131,7 +131,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         baseUrl: widget.baseUrl,
         sessionId: _hlsSessionId!,
         pmk: _pmk!,
-        password: _userPassword!,
       );
 
       final proxyPlaylistUrl = await _proxyServer!.start();
@@ -528,7 +527,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           Text('正在建立安全连接...', style: TextStyle(color: Colors.white)),
           SizedBox(height: 8),
           Text(
-            'SAE握手 + ZKP验证 + AES-256-GCM加密',
+            'SAE握手 + AES-256-GCM加密',
             style: TextStyle(color: Colors.white54, fontSize: 12),
             textAlign: TextAlign.center,
           ),

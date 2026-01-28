@@ -283,13 +283,13 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
         debugPrint(
             '[MediaPlayer] Aspect ratio: ${_videoController!.value.aspectRatio}');
 
-        // 验证视频是否真正初始化成功
+        // Verify video is truly initialized
         if (!_videoController!.value.isInitialized) {
           debugPrint('[MediaPlayer] ❌ Video NOT initialized properly');
           throw Exception('Video failed to initialize properly');
         }
 
-        // 检查是否有错误
+        // Check for errors
         if (_videoController!.value.hasError) {
           final errorDesc =
               _videoController!.value.errorDescription ?? 'Unknown video error';
@@ -336,28 +336,28 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
         String errorMessage = 'Failed to load media: $e';
         final errorStr = e.toString().toLowerCase();
 
-        // 提供更友好的错误消息
+        // Provide more user-friendly error messages
         if (errorStr.contains('source error') || errorStr.contains('x0.i')) {
-          errorMessage = '❌ 视频源加载失败\n\n'
-              '📋 调试信息：\n'
+          errorMessage = '❌ Video source loading failed\n\n'
+              'Debug info:\n'
               'URL: ${widget.mediaUrl}\n'
               'File: ${widget.fileName}\n'
               'Error: $e\n\n'
-              '🔍 可能原因：\n'
-              '• 视频编码格式不被支持\n'
-              '• 网络连接中断或超时\n'
-              '• 服务器响应异常\n'
-              '• CORS配置问题（Web平台）\n'
-              '• 视频文件损坏\n\n'
-              '💡 建议：\n'
-              '1. 打开浏览器开发者工具（F12）\n'
-              '2. 查看Network标签页的请求\n'
-              '3. 确认视频URL返回200状态\n'
-              '4. 检查Content-Type是否正确\n'
-              '5. 尝试在浏览器直接打开视频URL';
+              'Possible causes:\n'
+              '• Video encoding format not supported\n'
+              '• Network connection interrupted or timed out\n'
+              '• Server response error\n'
+              '• CORS configuration issue (Web platform)\n'
+              '• Video file corrupted\n\n'
+              'Suggestions:\n'
+              '1. Open browser developer tools (F12)\n'
+              '2. Check Network tab requests\n'
+              '3. Confirm video URL returns 200 status\n'
+              '4. Check Content-Type is correct\n'
+              '5. Try opening video URL directly in browser';
         } else if (errorStr.contains('timeout')) {
-          errorMessage = '⏱️ 视频加载超时\n\n'
-              '文件: ${widget.fileName}\n\n'
+          errorMessage = '⏱️ Video loading timeout\n\n'
+              'File: ${widget.fileName}\n\n'
               '请检查：\n'
               '• 网络连接是否稳定\n'
               '• 文件是否过大\n'

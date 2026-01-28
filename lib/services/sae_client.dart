@@ -4,32 +4,32 @@ import 'dart:typed_data';
 
 import 'package:pointycastle/export.dart';
 
-/// SAE (Simultaneous Authentication of Equals) 客户端
+/// SAE (Simultaneous Authentication of Equals) client
 ///
-/// 完整的 WPA3-SAE 实现，用于安全的设备认证
+/// Complete WPA3-SAE implementation for secure device authentication
 class SaeClient {
   final Uint8List password;
   final Uint8List deviceIdSelf;
   final Uint8List deviceIdPeer;
 
-  // 密码元素（PWE）
+  // Password Element (PWE)
   ECPoint? _pwe;
 
-  // 本地 commit 数据
+  // Local commit data
   BigInt? _rand;
   BigInt? _mask;
   BigInt? _scalar;
   ECPoint? _element;
 
-  // 对方 commit 数据
+  // Peer commit data
   BigInt? _peerScalar;
   ECPoint? _peerElement;
 
-  // 派生的密钥
+  // Derived keys
   Uint8List? _kck; // Key Confirmation Key
   Uint8List? _pmk; // Pairwise Master Key
 
-  // 状态
+  // State
   bool _committed = false;
   bool _confirmed = false;
 
@@ -39,7 +39,7 @@ class SaeClient {
     required this.deviceIdPeer,
   });
 
-  /// 生成 Commit 消息（Base64 编码）
+  /// Generate Commit message (Base64 encoded)
   Map<String, dynamic> generateCommit() {
     if (_committed) {
       throw StateError('Already committed');
@@ -67,7 +67,7 @@ class SaeClient {
     };
   }
 
-  /// 处理对方的 Commit 消息（Base64 解码）
+  /// Process peer's Commit message (Base64 decoded)
   void processCommit(Map<String, dynamic> peerCommit) {
     if (!_committed) {
       throw StateError('Must generate own commit first');
@@ -96,7 +96,7 @@ class SaeClient {
     _deriveKeys(sharedSecret);
   }
 
-  /// 生成 Confirm 消息（Base64 编码）
+  /// Generate Confirm message (Base64 encoded)
   Map<String, dynamic> generateConfirm() {
     if (!_committed || _kck == null) {
       throw StateError('Must process peer commit first');
@@ -110,7 +110,7 @@ class SaeClient {
     };
   }
 
-  /// 验证对方的 Confirm 消息（Base64 解码）
+  /// Verify peer's Confirm message (Base64 decoded)
   void verifyConfirm(Map<String, dynamic> peerConfirm) {
     if (_kck == null) {
       throw StateError('Must process peer commit first');
@@ -128,7 +128,7 @@ class SaeClient {
     _confirmed = true;
   }
 
-  /// 获取 PMK
+  /// Get PMK
   Uint8List getPmk() {
     if (_pmk == null) {
       throw StateError('PMK not derived yet');
@@ -136,10 +136,10 @@ class SaeClient {
     return _pmk!;
   }
 
-  /// 检查是否已完成认证
+  /// Check if authentication is complete
   bool isAuthenticated() => _confirmed;
 
-  // ============ 私有方法 ============
+  // ============ Private methods ============
 
   ECPoint _derivePasswordElement() {
     final curve = ECCurve_secp256r1();
@@ -260,10 +260,11 @@ class SaeClient {
   }
 
   Uint8List _pointToBytes(ECPoint point) {
-    // 使用未压缩编码并提取 x 坐标（32 字节）
-    // 这样可以与 Curve25519 兼容
-    final encoded = point.getEncoded(false); // 未压缩：0x04 + x(32) + y(32) = 65 字节
-    // 提取 x 坐标（跳过第一个字节 0x04）
+    // Use uncompressed encoding and extract x coordinate (32 bytes)
+    // This is compatible with Curve25519
+    final encoded = point
+        .getEncoded(false); // Uncompressed: 0x04 + x(32) + y(32) = 65 bytes
+    // Extract x coordinate (skip first byte 0x04)
     return Uint8List.fromList(encoded.sublist(1, 33));
   }
 
@@ -271,14 +272,14 @@ class SaeClient {
     final curve = ECCurve_secp256r1();
 
     if (bytes.length == 32) {
-      // 32 字节：x 坐标，需要重建完整的点
-      // 使用压缩点格式：0x02 + x (假设 y 是偶数)
+      // 32 bytes: x coordinate, need to rebuild complete point
+      // Use compressed point format: 0x02 + x (assuming y is even)
       final compressed = Uint8List(33);
-      compressed[0] = 0x02; // 假设 y 是偶数
+      compressed[0] = 0x02; // Assume y is even
       compressed.setRange(1, 33, bytes);
       return curve.curve.decodePoint(compressed)!;
     } else if (bytes.length == 33) {
-      // 33 字节：压缩点编码
+      // 33 bytes: compressed point encoding
       return curve.curve.decodePoint(bytes)!;
     } else {
       throw ArgumentError('Invalid point bytes length: ${bytes.length}');

@@ -211,6 +211,34 @@ class AuthNotifier extends Notifier<AuthState> {
     state = const AuthState();
   }
 
+  /// 保存 tokens（用于 ZKP 认证后保存 tokens）
+  Future<void> saveTokens({
+    required String accessToken,
+    required String refreshToken,
+  }) async {
+    await _storage.write(key: 'access_token', value: accessToken);
+    await _storage.write(key: 'refresh_token', value: refreshToken);
+
+    // 尝试获取用户信息
+    try {
+      final userResponse = await _api.getCurrentUser();
+      if (userResponse != null) {
+        await _storage.write(
+            key: 'user', value: jsonEncode(userResponse.toJson()));
+        await _storage.write(key: 'user_id', value: userResponse.id);
+        await _storage.write(key: 'user_email', value: userResponse.email);
+        await _storage.write(key: 'user_role', value: userResponse.role);
+
+        state = state.copyWith(
+          user: userResponse,
+          isAuthenticated: true,
+        );
+      }
+    } catch (e) {
+      debugPrint('[Auth] Failed to get user info after ZKP login: $e');
+    }
+  }
+
   Future<void> _saveAuthData(AuthResponse response, {String? password}) async {
     if (response.tokens != null) {
       await _storage.write(

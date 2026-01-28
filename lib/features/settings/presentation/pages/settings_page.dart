@@ -1374,7 +1374,7 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
   @override
   void initState() {
     super.initState();
-    // 启动倒计时
+    // Start countdown
     _startCountdown();
   }
 
@@ -1391,12 +1391,12 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
       if (mounted) {
         final inviteState = ref.read(inviteCodeProvider);
 
-        // 如果过期，自动刷新
+        // If expired, auto refresh
         if (inviteState.isExpired && !inviteState.isLoading) {
           ref.read(inviteCodeProvider.notifier).refresh();
         }
 
-        // 强制重建UI以更新倒计时
+        // Force rebuild UI to update countdown
         setState(() {});
       } else {
         timer.cancel();

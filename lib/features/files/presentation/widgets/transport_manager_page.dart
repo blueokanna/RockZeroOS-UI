@@ -6,7 +6,7 @@ import 'package:open_file/open_file.dart';
 
 import '../../../../core/services/download_manager.dart';
 
-/// 传输管理页面 - 统一显示上传和下载任务
+/// Transport manager page - unified display of upload and download tasks
 class TransportManagerPage extends ConsumerStatefulWidget {
   const TransportManagerPage({super.key});
 
@@ -24,7 +24,7 @@ class _TransportManagerPageState extends ConsumerState<TransportManagerPage>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    // 每秒更新一次UI以显示实时进度
+    // Update UI every second to show real-time progress
     _updateTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (mounted) {
         setState(() {});

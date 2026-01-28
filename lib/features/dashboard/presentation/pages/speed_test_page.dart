@@ -19,8 +19,8 @@ enum SpeedTestState {
 }
 
 enum SpeedUnit {
-  mbps, // Megabits per second
-  mbs, // Megabytes per second (MB/s)
+  mbps,
+  mbs,
 }
 
 class SpeedTestPage extends ConsumerStatefulWidget {
@@ -49,8 +49,9 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
   late AnimationController _pulseController;
   late AnimationController _gaugeController;
+  late AnimationController _waveController;
+  late AnimationController _glowController;
 
-  // 用于取消测试的标志
   bool _isCancelled = false;
   Timer? _downloadUpdateTimer;
   Timer? _uploadUpdateTimer;
@@ -65,12 +66,24 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     super.initState();
     _pulseController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1000),
+      duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
+
     _gaugeController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 500),
+      duration: const Duration(milliseconds: 800),
     );
+
+    _waveController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    )..repeat();
+
+    _glowController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+
     _loadConfig();
   }
 
@@ -78,19 +91,12 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     try {
       const storage = FlutterSecureStorage();
       _authToken = await storage.read(key: 'access_token');
-      debugPrint(
-          '[SpeedTest] Token loaded: ${_authToken != null ? "yes" : "no"}');
-
       final device = ref.read(connectedDeviceProvider);
       if (device != null) {
         _serverUrl = device.baseUrl;
-        debugPrint('[SpeedTest] Server URL: $_serverUrl');
       }
-
       if (mounted) {
-        setState(() {
-          _configLoaded = true;
-        });
+        setState(() => _configLoaded = true);
       }
     } catch (e) {
       debugPrint('[SpeedTest] Config load error: $e');
@@ -99,35 +105,31 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
   @override
   void dispose() {
-    // 停止所有测试
     _isCancelled = true;
     _downloadUpdateTimer?.cancel();
     _uploadUpdateTimer?.cancel();
     _pulseController.dispose();
     _gaugeController.dispose();
+    _waveController.dispose();
+    _glowController.dispose();
     super.dispose();
   }
 
   Future<void> _startSpeedTest() async {
-    if (!_configLoaded) {
-      await _loadConfig();
-    }
+    if (!_configLoaded) await _loadConfig();
 
     final device = ref.read(connectedDeviceProvider);
     if (device == null) {
       setState(() {
         _state = SpeedTestState.error;
-        _error = '未连接到 NAS 设备';
+        _error = 'Not connected to NAS device';
       });
       return;
     }
 
     _serverUrl = device.baseUrl;
-
     const storage = FlutterSecureStorage();
     _authToken = await storage.read(key: 'access_token');
-
-    debugPrint('[SpeedTest] Starting test with server: $_serverUrl');
 
     setState(() {
       _state = SpeedTestState.testingPing;
@@ -138,13 +140,13 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       _jitter = 0;
       _error = null;
       _testProgress = 0;
-      _testPhase = '初始化...';
-      _isCancelled = false; // 重置取消标志
+      _testPhase = 'Initializing...';
+      _isCancelled = false;
     });
 
     try {
       setState(() {
-        _testPhase = '测试延迟...';
+        _testPhase = 'Testing latency...';
         _testProgress = 0;
       });
       await _testPing();
@@ -153,7 +155,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
       setState(() {
         _state = SpeedTestState.testingDownload;
-        _testPhase = '测试下载速度...';
+        _testPhase = 'Testing download speed...';
         _testProgress = 0;
       });
       await _testDownload();
@@ -162,7 +164,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
       setState(() {
         _state = SpeedTestState.testingUpload;
-        _testPhase = '测试上传速度...';
+        _testPhase = 'Testing upload speed...';
         _testProgress = 0;
       });
       await _testUpload();
@@ -171,11 +173,10 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
       setState(() {
         _state = SpeedTestState.completed;
-        _testPhase = '测试完成';
+        _testPhase = 'Test completed';
         _testProgress = 1.0;
       });
     } catch (e) {
-      debugPrint('[SpeedTest] Error: $e');
       if (mounted && !_isCancelled) {
         setState(() {
           _state = SpeedTestState.error;
@@ -207,7 +208,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
         if (response.statusCode == 200) {
           pings.add(stopwatch.elapsedMilliseconds);
-
           if (mounted && !_isCancelled) {
             final avgPing = pings.reduce((a, b) => a + b) ~/ pings.length;
             setState(() {
@@ -219,7 +219,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       } catch (e) {
         debugPrint('[SpeedTest] Ping error: $e');
       }
-
       await Future.delayed(const Duration(milliseconds: 100));
     }
 
@@ -253,7 +252,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     }
 
     try {
-      // 使用定时器每50ms更新一次速度显示
       double currentInstantSpeed = 0;
       int totalBytesReceived = 0;
       final overallStart = Stopwatch()..start();
@@ -267,14 +265,10 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
         final elapsed = overallStart.elapsedMilliseconds / 1000;
         if (elapsed > 0 && totalBytesReceived > 0) {
-          // 计算平均速度
           final avgSpeed = (totalBytesReceived * 8) / (elapsed * 1000000);
-
-          // 使用指数移动平均来平滑速度变化
           if (_currentSpeed == 0) {
             currentInstantSpeed = avgSpeed;
           } else {
-            // EMA平滑因子，值越小越平滑
             const smoothFactor = 0.3;
             currentInstantSpeed = currentInstantSpeed * (1 - smoothFactor) +
                 avgSpeed * smoothFactor;
@@ -291,7 +285,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
         }
       });
 
-      // 并发下载多个块以获得更准确的速度
       while (DateTime.now().difference(startTime) < testDuration) {
         if (!mounted || _isCancelled) break;
 
@@ -301,9 +294,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
         try {
           final request = http.Request('GET', uri);
-          headers.forEach((key, value) {
-            request.headers[key] = value;
-          });
+          headers.forEach((key, value) => request.headers[key] = value);
 
           final streamedResponse = await http.Client()
               .send(request)
@@ -311,7 +302,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
           if (streamedResponse.statusCode == 200) {
             int chunkBytes = 0;
-
             await for (final chunk in streamedResponse.stream) {
               if (_isCancelled) break;
               chunkBytes += chunk.length;
@@ -320,7 +310,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
             chunkStart.stop();
             final elapsed = chunkStart.elapsedMilliseconds / 1000;
-
             if (elapsed > 0 && chunkBytes > 0) {
               final speedMbps = (chunkBytes * 8) / (elapsed * 1000000);
               speeds.add(speedMbps);
@@ -330,7 +319,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
           debugPrint('[SpeedTest] Download chunk error: $e');
         }
 
-        // 短暂延迟避免过度请求
         await Future.delayed(const Duration(milliseconds: 100));
       }
 
@@ -338,10 +326,8 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       overallStart.stop();
 
       if (speeds.isNotEmpty && mounted && !_isCancelled) {
-        // 使用中位数而不是平均值，更准确
         speeds.sort();
         final medianSpeed = speeds[speeds.length ~/ 2];
-
         setState(() {
           _downloadSpeed = medianSpeed;
           _currentSpeed = medianSpeed;
@@ -349,13 +335,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       }
     } catch (e) {
       debugPrint('[SpeedTest] Download error: $e');
-      if (speeds.isNotEmpty && mounted && !_isCancelled) {
-        final avgSpeed = speeds.reduce((a, b) => a + b) / speeds.length;
-        setState(() {
-          _downloadSpeed = avgSpeed;
-          _currentSpeed = avgSpeed;
-        });
-      }
     } finally {
       _downloadUpdateTimer?.cancel();
     }
@@ -368,7 +347,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     final startTime = DateTime.now();
     final testDuration = Duration(seconds: _uploadTestDurationSec);
 
-    final testDataSize = 5 * 1024 * 1024; // 5MB
+    final testDataSize = 5 * 1024 * 1024;
     final testData = Uint8List(testDataSize);
     final rng = math.Random();
     for (int i = 0; i < testData.length; i++) {
@@ -384,7 +363,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     }
 
     try {
-      // 使用定时器每50ms更新一次速度显示
       double currentInstantSpeed = 0;
       int totalBytesUploaded = 0;
       final overallStart = Stopwatch()..start();
@@ -398,14 +376,10 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
         final elapsed = overallStart.elapsedMilliseconds / 1000;
         if (elapsed > 0 && totalBytesUploaded > 0) {
-          // 计算平均速度
           final avgSpeed = (totalBytesUploaded * 8) / (elapsed * 1000000);
-
-          // 使用指数移动平均来平滑速度变化
           if (_currentSpeed == 0 || _currentSpeed < 1) {
             currentInstantSpeed = avgSpeed;
           } else {
-            // EMA平滑因子
             const smoothFactor = 0.3;
             currentInstantSpeed = currentInstantSpeed * (1 - smoothFactor) +
                 avgSpeed * smoothFactor;
@@ -422,7 +396,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
         }
       });
 
-      // 并发上传
       while (DateTime.now().difference(startTime) < testDuration) {
         if (!mounted || _isCancelled) break;
 
@@ -438,7 +411,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
           if (response.statusCode == 200) {
             totalBytesUploaded += testData.length;
-
             final elapsed = uploadStart.elapsedMilliseconds / 1000;
             if (elapsed > 0) {
               final speedMbps = (testData.length * 8) / (elapsed * 1000000);
@@ -458,7 +430,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       if (speeds.isNotEmpty && mounted && !_isCancelled) {
         speeds.sort();
         final medianSpeed = speeds[speeds.length ~/ 2];
-
         setState(() {
           _uploadSpeed = medianSpeed;
           _currentSpeed = medianSpeed;
@@ -466,13 +437,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       }
     } catch (e) {
       debugPrint('[SpeedTest] Upload error: $e');
-      if (speeds.isNotEmpty && mounted && !_isCancelled) {
-        final avgSpeed = speeds.reduce((a, b) => a + b) / speeds.length;
-        setState(() {
-          _uploadSpeed = avgSpeed;
-          _currentSpeed = avgSpeed;
-        });
-      }
     } finally {
       _uploadUpdateTimer?.cancel();
     }
@@ -485,169 +449,164 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     final device = ref.watch(connectedDeviceProvider);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('网速测试'),
-        centerTitle: true,
-        actions: [
-          // 单位切换按钮
-          PopupMenuButton<SpeedUnit>(
-            icon: Icon(
-              _speedUnit == SpeedUnit.mbps
-                  ? Icons.speed_rounded
-                  : Icons.storage_rounded,
+      body: CustomScrollView(
+        slivers: [
+          // Material Design 3 Expressive App Bar
+          SliverAppBar.large(
+            expandedHeight: 120,
+            pinned: true,
+            flexibleSpace: FlexibleSpaceBar(
+              title: Text(
+                'Speed Test',
+                style: textTheme.headlineMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: colorScheme.onSurface,
+                ),
+              ),
+              centerTitle: true,
             ),
-            tooltip: '切换单位',
-            onSelected: (unit) {
-              setState(() => _speedUnit = unit);
-            },
-            itemBuilder: (context) => [
-              PopupMenuItem(
-                value: SpeedUnit.mbps,
-                child: Row(
+            actions: [
+              _buildUnitSwitcher(colorScheme),
+            ],
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.all(24),
+            sliver: SliverList(
+              delegate: SliverChildListDelegate([
+                // Device info card
+                _buildDeviceCard(context, device, colorScheme, textTheme),
+                const SizedBox(height: 32),
+                // Speed gauge
+                _buildSpeedGauge(colorScheme, textTheme),
+                const SizedBox(height: 24),
+                // Progress indicator
+                if (_state != SpeedTestState.idle &&
+                    _state != SpeedTestState.completed &&
+                    _state != SpeedTestState.error)
+                  _buildProgressIndicator(colorScheme, textTheme),
+                const SizedBox(height: 16),
+                // Status text
+                _buildStatusText(colorScheme, textTheme),
+                const SizedBox(height: 32),
+                // Results list
+                if (_state == SpeedTestState.completed ||
+                    _state == SpeedTestState.testingUpload ||
+                    _downloadSpeed > 0)
+                  _buildResultsGrid(colorScheme, textTheme),
+                const SizedBox(height: 32),
+                // Start button
+                _buildStartButton(colorScheme, device != null),
+                // Error info
+                if (_error != null) ...[
+                  const SizedBox(height: 16),
+                  _buildErrorCard(colorScheme, textTheme),
+                ],
+                const SizedBox(height: 24),
+              ]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUnitSwitcher(ColorScheme colorScheme) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: SegmentedButton<SpeedUnit>(
+        segments: const [
+          ButtonSegment(value: SpeedUnit.mbps, label: Text('Mbps')),
+          ButtonSegment(value: SpeedUnit.mbs, label: Text('MB/s')),
+        ],
+        selected: {_speedUnit},
+        onSelectionChanged: (Set<SpeedUnit> selection) {
+          setState(() => _speedUnit = selection.first);
+        },
+        style: ButtonStyle(
+          visualDensity: VisualDensity.compact,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDeviceCard(BuildContext context, dynamic device,
+      ColorScheme colorScheme, TextTheme textTheme) {
+    if (device != null) {
+      return Card(
+        elevation: 0,
+        color: colorScheme.primaryContainer.withOpacity(0.3),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: colorScheme.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(Icons.dns_rounded,
+                    color: colorScheme.primary, size: 28),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(
-                      Icons.speed_rounded,
-                      color: _speedUnit == SpeedUnit.mbps
-                          ? colorScheme.primary
-                          : null,
-                    ),
-                    const SizedBox(width: 12),
                     Text(
-                      'Mbps (兆比特/秒)',
-                      style: TextStyle(
-                        color: _speedUnit == SpeedUnit.mbps
-                            ? colorScheme.primary
-                            : null,
-                        fontWeight: _speedUnit == SpeedUnit.mbps
-                            ? FontWeight.bold
-                            : null,
-                      ),
+                      device.name,
+                      style: textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      device.baseUrl,
+                      style: textTheme.bodySmall
+                          ?.copyWith(color: colorScheme.onSurfaceVariant),
                     ),
                   ],
                 ),
               ),
-              PopupMenuItem(
-                value: SpeedUnit.mbs,
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: colorScheme.tertiary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
                 child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      Icons.storage_rounded,
-                      color: _speedUnit == SpeedUnit.mbs
-                          ? colorScheme.primary
-                          : null,
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      'MB/s (兆字节/秒)',
-                      style: TextStyle(
-                        color: _speedUnit == SpeedUnit.mbs
-                            ? colorScheme.primary
-                            : null,
-                        fontWeight: _speedUnit == SpeedUnit.mbs
-                            ? FontWeight.bold
-                            : null,
-                      ),
-                    ),
+                    Icon(Icons.check_circle,
+                        size: 16, color: colorScheme.tertiary),
+                    const SizedBox(width: 4),
+                    Text('Connected',
+                        style: textTheme.labelSmall
+                            ?.copyWith(color: colorScheme.tertiary)),
                   ],
                 ),
               ),
             ],
           ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
+        ),
+      );
+    }
+
+    return Card(
+      elevation: 0,
+      color: colorScheme.errorContainer.withOpacity(0.3),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Row(
           children: [
-            if (device != null)
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: colorScheme.primaryContainer.withValues(alpha: 0.3),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.dns_rounded, color: colorScheme.primary),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '测试目标: ${device.name}',
-                            style: textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          Text(
-                            device.baseUrl,
-                            style: textTheme.bodySmall?.copyWith(
-                              color: colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            else
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: colorScheme.errorContainer,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.warning_rounded, color: colorScheme.error),
-                    const SizedBox(width: 12),
-                    Text(
-                      '未连接 NAS',
-                      style: TextStyle(color: colorScheme.onErrorContainer),
-                    ),
-                  ],
-                ),
-              ),
-            const SizedBox(height: 32),
-            _buildSpeedGauge(colorScheme, textTheme),
-            const SizedBox(height: 16),
-            if (_state != SpeedTestState.idle &&
-                _state != SpeedTestState.completed &&
-                _state != SpeedTestState.error)
-              _buildProgressIndicator(colorScheme, textTheme),
-            const SizedBox(height: 8),
-            _buildStatusText(colorScheme, textTheme),
-            const SizedBox(height: 32),
-            if (_state == SpeedTestState.completed ||
-                _state == SpeedTestState.testingUpload ||
-                _downloadSpeed > 0)
-              _buildResultsList(colorScheme, textTheme),
-            const SizedBox(height: 32),
-            _buildStartButton(colorScheme, device != null),
-            if (_error != null) ...[
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: colorScheme.errorContainer,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.error_outline, color: colorScheme.error),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        _error!,
-                        style: TextStyle(color: colorScheme.onErrorContainer),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            Icon(Icons.warning_rounded, color: colorScheme.error, size: 28),
+            const SizedBox(width: 16),
+            Text('NAS Not Connected',
+                style:
+                    textTheme.titleMedium?.copyWith(color: colorScheme.error)),
           ],
         ),
       ),
@@ -658,37 +617,75 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     return Column(
       children: [
         Container(
-          height: 8,
+          height: 12,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(12),
             color: colorScheme.surfaceContainerHighest,
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(12),
             child: TweenAnimationBuilder<double>(
               duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut,
+              curve: Curves.easeOutCubic,
               tween: Tween<double>(begin: 0, end: _testProgress),
               builder: (context, value, child) {
-                return LinearProgressIndicator(
-                  value: value,
-                  minHeight: 8,
-                  backgroundColor: Colors.transparent,
-                  valueColor: AlwaysStoppedAnimation(
-                    colorScheme.primary,
-                  ),
+                return Stack(
+                  children: [
+                    FractionallySizedBox(
+                      widthFactor: value,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              colorScheme.primary,
+                              colorScheme.tertiary,
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                    // Shimmer effect
+                    if (value > 0)
+                      AnimatedBuilder(
+                        animation: _waveController,
+                        builder: (context, child) {
+                          return Positioned(
+                            left: value *
+                                    MediaQuery.of(context).size.width *
+                                    0.8 -
+                                40 +
+                                _waveController.value * 80,
+                            top: 0,
+                            bottom: 0,
+                            child: Container(
+                              width: 40,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Colors.white.withOpacity(0),
+                                    Colors.white.withOpacity(0.3),
+                                    Colors.white.withOpacity(0),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                  ],
                 );
               },
             ),
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 16),
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 300),
           child: Text(
             _testPhase,
             key: ValueKey(_testPhase),
-            style: textTheme.bodyMedium?.copyWith(
+            style: textTheme.titleSmall?.copyWith(
               color: colorScheme.onSurfaceVariant,
               fontWeight: FontWeight.w500,
             ),
@@ -703,7 +700,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
         _state != SpeedTestState.completed &&
         _state != SpeedTestState.error;
 
-    // 根据单位调整最大速度刻度
     final displaySpeed = _convertSpeed(_currentSpeed);
     final maxSpeed = _speedUnit == SpeedUnit.mbps
         ? (displaySpeed > 500
@@ -722,125 +718,133 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       curve: Curves.easeOutCubic,
       tween: Tween<double>(begin: 0, end: displaySpeed),
       builder: (context, animatedSpeed, child) {
-        return SizedBox(
-          width: 280,
-          height: 280,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              // 外层光晕效果
-              if (isActive)
-                AnimatedBuilder(
-                  animation: _pulseController,
-                  builder: (context, child) {
-                    return Container(
-                      width: 260 + _pulseController.value * 20,
-                      height: 260 + _pulseController.value * 20,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: RadialGradient(
-                          colors: [
-                            _getSpeedColor(animatedSpeed).withValues(
-                              alpha: 0.15 - _pulseController.value * 0.1,
-                            ),
-                            Colors.transparent,
-                          ],
+        return Center(
+          child: SizedBox(
+            width: 300,
+            height: 300,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // Outer dynamic glow
+                if (isActive)
+                  AnimatedBuilder(
+                    animation: _glowController,
+                    builder: (context, child) {
+                      return Container(
+                        width: 280 + _glowController.value * 30,
+                        height: 280 + _glowController.value * 30,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: [
+                              _getSpeedColor(animatedSpeed).withOpacity(
+                                  0.2 - _glowController.value * 0.15),
+                              Colors.transparent,
+                            ],
+                          ),
                         ),
+                      );
+                    },
+                  ),
+                // Main circular background
+                Container(
+                  width: 260,
+                  height: 260,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        colorScheme.surfaceContainerHighest,
+                        colorScheme.surfaceContainer,
+                      ],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: colorScheme.shadow.withOpacity(0.1),
+                        blurRadius: 30,
+                        offset: const Offset(0, 10),
                       ),
-                    );
-                  },
-                ),
-              // 主圆形背景
-              Container(
-                width: 240,
-                height: 240,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      colorScheme.surfaceContainerHighest,
-                      colorScheme.surfaceContainer,
+                      BoxShadow(
+                        color: _getSpeedColor(animatedSpeed).withOpacity(0.15),
+                        blurRadius: 20,
+                        spreadRadius: -5,
+                      ),
                     ],
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: colorScheme.shadow.withValues(alpha: 0.08),
-                      blurRadius: 24,
-                      offset: const Offset(0, 8),
+                ),
+                // Progress ring
+                CustomPaint(
+                  size: const Size(240, 240),
+                  painter: _SpeedGaugePainter(
+                    progress: (animatedSpeed / maxSpeed).clamp(0, 1),
+                    color: _getSpeedColor(animatedSpeed),
+                    backgroundColor: colorScheme.surfaceContainerHigh,
+                    isActive: isActive,
+                  ),
+                ),
+                // Inner pulse ring
+                if (isActive)
+                  AnimatedBuilder(
+                    animation: _pulseController,
+                    builder: (context, child) {
+                      return Container(
+                        width: 180 + _pulseController.value * 15,
+                        height: 180 + _pulseController.value * 15,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: _getSpeedColor(animatedSpeed).withOpacity(
+                                0.25 - _pulseController.value * 0.2),
+                            width: 2,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                // Speed value
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ShaderMask(
+                      shaderCallback: (bounds) => LinearGradient(
+                        colors: [
+                          _getSpeedColor(animatedSpeed),
+                          _getSpeedColor(animatedSpeed).withOpacity(0.7),
+                        ],
+                      ).createShader(bounds),
+                      child: Text(
+                        animatedSpeed.toStringAsFixed(1),
+                        style: textTheme.displayLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                          letterSpacing: -3,
+                          height: 1,
+                        ),
+                      ),
                     ),
-                    BoxShadow(
-                      color:
-                          _getSpeedColor(animatedSpeed).withValues(alpha: 0.1),
-                      blurRadius: 16,
-                      spreadRadius: -4,
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: _getSpeedColor(animatedSpeed).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        _getSpeedUnitString(),
+                        style: textTheme.titleMedium?.copyWith(
+                          color: _getSpeedColor(animatedSpeed),
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 1,
+                        ),
+                      ),
                     ),
                   ],
                 ),
-              ),
-              // 进度圆环
-              CustomPaint(
-                size: const Size(220, 220),
-                painter: _SpeedGaugePainter(
-                  progress: (animatedSpeed / maxSpeed).clamp(0, 1),
-                  color: _getSpeedColor(animatedSpeed),
-                  backgroundColor: colorScheme.surfaceContainerHigh,
-                  isActive: isActive,
-                ),
-              ),
-              // 中心脉冲效果
-              if (isActive)
-                AnimatedBuilder(
-                  animation: _pulseController,
-                  builder: (context, child) {
-                    return Container(
-                      width: 160 + _pulseController.value * 10,
-                      height: 160 + _pulseController.value * 10,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: _getSpeedColor(animatedSpeed).withValues(
-                            alpha: 0.2 - _pulseController.value * 0.15,
-                          ),
-                          width: 2,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              // 速度数值显示
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ShaderMask(
-                    shaderCallback: (bounds) => LinearGradient(
-                      colors: [
-                        _getSpeedColor(animatedSpeed),
-                        _getSpeedColor(animatedSpeed).withValues(alpha: 0.8),
-                      ],
-                    ).createShader(bounds),
-                    child: Text(
-                      animatedSpeed.toStringAsFixed(1),
-                      style: textTheme.displayLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                        letterSpacing: -2,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _getSpeedUnitString(),
-                    style: textTheme.titleMedium?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: 1,
-                    ),
-                  ),
-                ],
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },
@@ -850,90 +854,123 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
   Widget _buildStatusText(ColorScheme colorScheme, TextTheme textTheme) {
     String statusText;
     IconData statusIcon;
+    Color statusColor;
 
     switch (_state) {
       case SpeedTestState.idle:
-        statusText = '点击开始测试 NAS 连接速度';
+        statusText = 'Tap to test NAS connection speed';
         statusIcon = Icons.play_arrow_rounded;
+        statusColor = colorScheme.primary;
         break;
       case SpeedTestState.testingPing:
-        statusText = '正在测试延迟...';
+        statusText = 'Testing latency...';
         statusIcon = Icons.network_ping_rounded;
+        statusColor = colorScheme.tertiary;
         break;
       case SpeedTestState.testingDownload:
-        statusText = '正在测试下载速度...';
+        statusText = 'Testing download speed...';
         statusIcon = Icons.download_rounded;
+        statusColor = Colors.green;
         break;
       case SpeedTestState.testingUpload:
-        statusText = '正在测试上传速度...';
+        statusText = 'Testing upload speed...';
         statusIcon = Icons.upload_rounded;
+        statusColor = Colors.blue;
         break;
       case SpeedTestState.completed:
-        statusText = '测试完成';
+        statusText = 'Test completed';
         statusIcon = Icons.check_circle_rounded;
+        statusColor = colorScheme.tertiary;
         break;
       case SpeedTestState.error:
-        statusText = '测试失败';
+        statusText = 'Test failed';
         statusIcon = Icons.error_rounded;
+        statusColor = colorScheme.error;
         break;
     }
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(
-          statusIcon,
-          color: _state == SpeedTestState.error
-              ? colorScheme.error
-              : colorScheme.primary,
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 300),
+      child: Container(
+        key: ValueKey(_state),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        decoration: BoxDecoration(
+          color: statusColor.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(30),
         ),
-        const SizedBox(width: 8),
-        Text(
-          statusText,
-          style: textTheme.titleMedium?.copyWith(
-            color: _state == SpeedTestState.error
-                ? colorScheme.error
-                : colorScheme.onSurface,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(statusIcon, color: statusColor, size: 24),
+            const SizedBox(width: 12),
+            Text(
+              statusText,
+              style: textTheme.titleMedium?.copyWith(
+                color: statusColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 
-  Widget _buildResultsList(ColorScheme colorScheme, TextTheme textTheme) {
+  Widget _buildResultsGrid(ColorScheme colorScheme, TextTheme textTheme) {
     return Column(
       children: [
-        _ResultRow(
-          icon: Icons.download_rounded,
-          label: '下载',
-          value:
-              '${_convertSpeed(_downloadSpeed).toStringAsFixed(1)} ${_getSpeedUnitString()}',
-          color: Colors.green,
+        Row(
+          children: [
+            Expanded(
+              child: _ResultCard(
+                icon: Icons.download_rounded,
+                label: 'Download',
+                value: '${_convertSpeed(_downloadSpeed).toStringAsFixed(1)}',
+                unit: _getSpeedUnitString(),
+                color: Colors.green,
+                delay: 0,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: _ResultCard(
+                icon: Icons.upload_rounded,
+                label: 'Upload',
+                value: '${_convertSpeed(_uploadSpeed).toStringAsFixed(1)}',
+                unit: _getSpeedUnitString(),
+                color: Colors.blue,
+                delay: 100,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 12),
-        _ResultRow(
-          icon: Icons.upload_rounded,
-          label: '上传',
-          value:
-              '${_convertSpeed(_uploadSpeed).toStringAsFixed(1)} ${_getSpeedUnitString()}',
-          color: Colors.blue,
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              child: _ResultCard(
+                icon: Icons.network_ping_rounded,
+                label: 'Latency',
+                value: '$_ping',
+                unit: 'ms',
+                color: Colors.orange,
+                delay: 200,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: _ResultCard(
+                icon: Icons.swap_vert_rounded,
+                label: 'Jitter',
+                value: _jitter.toStringAsFixed(1),
+                unit: 'ms',
+                color: Colors.purple,
+                delay: 300,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 12),
-        _ResultRow(
-          icon: Icons.network_ping_rounded,
-          label: '延迟',
-          value: '$_ping ms',
-          color: Colors.orange,
-        ),
-        if (_jitter > 0) ...[
-          const SizedBox(height: 12),
-          _ResultRow(
-            icon: Icons.swap_vert_rounded,
-            label: '抖动',
-            value: '${_jitter.toStringAsFixed(1)} ms',
-            color: Colors.purple,
-          ),
-        ],
       ],
     );
   }
@@ -943,38 +980,64 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
         _state != SpeedTestState.completed &&
         _state != SpeedTestState.error;
 
-    return SizedBox(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
       width: double.infinity,
-      height: 56,
-      child: FilledButton.icon(
+      height: 64,
+      child: FilledButton(
         onPressed: (isRunning || !enabled) ? null : _startSpeedTest,
-        icon:
-            Icon(isRunning ? Icons.hourglass_top_rounded : Icons.speed_rounded),
-        label: Text(isRunning ? '测试中...' : '开始测试'),
         style: FilledButton.styleFrom(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(isRunning ? Icons.hourglass_top_rounded : Icons.speed_rounded,
+                size: 28),
+            const SizedBox(width: 12),
+            Text(
+              isRunning ? 'Testing...' : 'Start Test',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  // 转换速度单位
+  Widget _buildErrorCard(ColorScheme colorScheme, TextTheme textTheme) {
+    return Card(
+      elevation: 0,
+      color: colorScheme.errorContainer.withOpacity(0.3),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Icon(Icons.error_outline, color: colorScheme.error),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(_error!,
+                  style:
+                      textTheme.bodyMedium?.copyWith(color: colorScheme.error)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   double _convertSpeed(double speedMbps) {
-    if (_speedUnit == SpeedUnit.mbs) {
-      return speedMbps / 8; // Mbps to MB/s
-    }
+    if (_speedUnit == SpeedUnit.mbs) return speedMbps / 8;
     return speedMbps;
   }
 
-  // 获取单位字符串
-  String _getSpeedUnitString() {
-    return _speedUnit == SpeedUnit.mbps ? 'Mbps' : 'MB/s';
-  }
+  String _getSpeedUnitString() =>
+      _speedUnit == SpeedUnit.mbps ? 'Mbps' : 'MB/s';
 
   Color _getSpeedColor(double speed) {
-    // 根据单位调整阈值
     final threshold = _speedUnit == SpeedUnit.mbps ? 1.0 : 0.125;
     if (speed >= 100 * threshold) return Colors.green;
     if (speed >= 50 * threshold) return Colors.lightGreen;
@@ -1000,15 +1063,15 @@ class _SpeedGaugePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2 - 12;
-    const startAngle = 140 * math.pi / 180;
-    const sweepAngle = 260 * math.pi / 180;
+    final radius = size.width / 2 - 16;
+    const startAngle = 135 * math.pi / 180;
+    const sweepAngle = 270 * math.pi / 180;
 
-    // 背景轨道 - 更细腻的设计
+    // Background track
     final bgPaint = Paint()
-      ..color = backgroundColor.withValues(alpha: 0.3)
+      ..color = backgroundColor.withOpacity(0.4)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 16
+      ..strokeWidth = 20
       ..strokeCap = StrokeCap.round;
 
     canvas.drawArc(
@@ -1019,17 +1082,16 @@ class _SpeedGaugePainter extends CustomPainter {
       bgPaint,
     );
 
-    // 进度条 - 渐变色彩
+    // Progress bar
     if (progress > 0) {
       final progressPaint = Paint()
         ..shader = SweepGradient(
           startAngle: startAngle,
           endAngle: startAngle + sweepAngle * progress,
-          colors: _getGradientColors(progress),
-          stops: _getGradientStops(progress),
+          colors: _getGradientColors(),
         ).createShader(Rect.fromCircle(center: center, radius: radius))
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 16
+        ..strokeWidth = 20
         ..strokeCap = StrokeCap.round;
 
       canvas.drawArc(
@@ -1040,7 +1102,7 @@ class _SpeedGaugePainter extends CustomPainter {
         progressPaint,
       );
 
-      // 进度端点光晕效果
+      // Endpoint glow
       if (isActive) {
         final endAngle = startAngle + sweepAngle * progress;
         final endX = center.dx + radius * math.cos(endAngle);
@@ -1048,36 +1110,24 @@ class _SpeedGaugePainter extends CustomPainter {
         final endPoint = Offset(endX, endY);
 
         final glowPaint = Paint()
-          ..color = color.withValues(alpha: 0.4)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
-
-        canvas.drawCircle(endPoint, 12, glowPaint);
+          ..color = color.withOpacity(0.5)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12);
+        canvas.drawCircle(endPoint, 16, glowPaint);
 
         final dotPaint = Paint()
-          ..color = color
+          ..color = Colors.white
           ..style = PaintingStyle.fill;
-
-        canvas.drawCircle(endPoint, 6, dotPaint);
+        canvas.drawCircle(endPoint, 8, dotPaint);
       }
     }
   }
 
-  List<Color> _getGradientColors(double progress) {
-    if (progress < 0.2) {
-      return [Colors.red.shade400, Colors.red.shade600];
-    } else if (progress < 0.4) {
-      return [Colors.orange.shade400, Colors.orange.shade600];
-    } else if (progress < 0.6) {
-      return [Colors.amber.shade400, Colors.amber.shade600];
-    } else if (progress < 0.8) {
-      return [Colors.lightGreen.shade400, Colors.lightGreen.shade600];
-    } else {
-      return [Colors.green.shade400, Colors.green.shade600];
-    }
-  }
-
-  List<double> _getGradientStops(double progress) {
-    return [0.0, 1.0];
+  List<Color> _getGradientColors() {
+    if (progress < 0.25) return [Colors.red.shade400, Colors.orange.shade400];
+    if (progress < 0.5) return [Colors.orange.shade400, Colors.amber.shade400];
+    if (progress < 0.75)
+      return [Colors.amber.shade400, Colors.lightGreen.shade400];
+    return [Colors.lightGreen.shade400, Colors.green.shade400];
   }
 
   @override
@@ -1088,33 +1138,69 @@ class _SpeedGaugePainter extends CustomPainter {
   }
 }
 
-class _ResultRow extends StatelessWidget {
+class _ResultCard extends StatefulWidget {
   final IconData icon;
   final String label;
   final String value;
+  final String unit;
   final Color color;
+  final int delay;
 
-  const _ResultRow({
+  const _ResultCard({
     required this.icon,
     required this.label,
     required this.value,
+    required this.unit,
     required this.color,
+    this.delay = 0,
   });
+
+  @override
+  State<_ResultCard> createState() => _ResultCardState();
+}
+
+class _ResultCardState extends State<_ResultCard>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _scaleAnimation;
+  late Animation<double> _fadeAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+    _scaleAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutBack),
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
+    );
+
+    Future.delayed(Duration(milliseconds: widget.delay), () {
+      if (mounted) _controller.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-    final colorScheme = Theme.of(context).colorScheme;
 
-    return TweenAnimationBuilder<double>(
-      duration: const Duration(milliseconds: 400),
-      curve: Curves.easeOutCubic,
-      tween: Tween<double>(begin: 0, end: 1),
-      builder: (context, animValue, child) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
         return Transform.scale(
-          scale: 0.9 + (animValue * 0.1),
+          scale: _scaleAnimation.value,
           child: Opacity(
-            opacity: animValue,
+            opacity: _fadeAnimation.value,
             child: Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -1122,70 +1208,61 @@ class _ResultRow extends StatelessWidget {
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [
-                    color.withValues(alpha: 0.08),
-                    color.withValues(alpha: 0.12),
+                    widget.color.withOpacity(0.08),
+                    widget.color.withOpacity(0.15),
                   ],
                 ),
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(24),
                 border: Border.all(
-                  color: color.withValues(alpha: 0.2),
-                  width: 1.5,
-                ),
+                    color: widget.color.withOpacity(0.2), width: 1.5),
                 boxShadow: [
                   BoxShadow(
-                    color: color.withValues(alpha: 0.1),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
+                    color: widget.color.withOpacity(0.1),
+                    blurRadius: 16,
+                    offset: const Offset(0, 6),
                   ),
                 ],
               ),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
-                    width: 52,
-                    height: 52,
+                    padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          color.withValues(alpha: 0.2),
-                          color.withValues(alpha: 0.3),
-                        ],
-                      ),
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: color.withValues(alpha: 0.2),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
+                      color: widget.color.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(widget.icon, color: widget.color, size: 24),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    widget.label,
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: widget.color.withOpacity(0.8),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Text(
+                        widget.value,
+                        style: textTheme.headlineMedium?.copyWith(
+                          color: widget.color,
+                          fontWeight: FontWeight.w800,
                         ),
-                      ],
-                    ),
-                    child: Icon(icon, color: color, size: 28),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Text(
-                      label,
-                      style: textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: colorScheme.onSurface,
                       ),
-                    ),
-                  ),
-                  ShaderMask(
-                    shaderCallback: (bounds) => LinearGradient(
-                      colors: [color, color.withValues(alpha: 0.8)],
-                    ).createShader(bounds),
-                    child: Text(
-                      value,
-                      style: textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white,
-                        letterSpacing: -0.5,
+                      const SizedBox(width: 4),
+                      Text(
+                        widget.unit,
+                        style: textTheme.bodySmall?.copyWith(
+                          color: widget.color.withOpacity(0.7),
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
+                    ],
                   ),
                 ],
               ),

@@ -38,7 +38,7 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
       duration: const Duration(milliseconds: 300),
     );
 
-    // 如果文件名过长，启动滚动
+    // If filename is too long, start scrolling
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _startScrollingIfNeeded();
     });
@@ -53,7 +53,7 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
   }
 
   void _startScrollingIfNeeded() {
-    // 检查文本是否溢出
+    // Check if text overflows
     final textPainter = TextPainter(
       text: TextSpan(
         text: widget.filename,
@@ -63,7 +63,7 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
       textDirection: TextDirection.ltr,
     )..layout(maxWidth: double.infinity);
 
-    // 如果文本宽度超过容器宽度，启动滚动
+    // If text width exceeds container width, start scrolling
     if (textPainter.width > 200) {
       _isScrolling = true;
       _startAutoScroll();
@@ -82,14 +82,14 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
       final currentScroll = _scrollController.offset;
 
       if (currentScroll < maxScroll) {
-        // 向右滚动
+        // Scroll right
         _scrollController.animateTo(
           maxScroll,
           duration: const Duration(milliseconds: 2000),
           curve: Curves.easeInOut,
         );
       } else {
-        // 回到开始
+        // Return to start
         Future.delayed(const Duration(milliseconds: 1000), () {
           if (mounted) {
             _scrollController.animateTo(
@@ -140,7 +140,7 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 文件名（滚动显示）
+          // Filename (scrolling display)
           Row(
             children: [
               Icon(
@@ -179,7 +179,7 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
           ),
           const SizedBox(height: 12),
 
-          // 进度条
+          // Progress bar
           TweenAnimationBuilder<double>(
             tween: Tween(begin: 0, end: percentage / 100),
             duration: const Duration(milliseconds: 300),
@@ -198,11 +198,11 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
           ),
           const SizedBox(height: 12),
 
-          // 统计信息
+          // Statistics
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // 进度百分比
+              // Progress percentage
               Text(
                 '${percentage.toStringAsFixed(1)}%',
                 style: textTheme.titleMedium?.copyWith(
@@ -211,7 +211,7 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
                 ),
               ),
 
-              // 上传速度
+              // Upload speed
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
@@ -241,7 +241,7 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
                 ),
               ),
 
-              // 文件大小
+              // File size
               Text(
                 '${_formatBytes(widget.uploadedBytes)} / ${_formatBytes(widget.totalBytes)}',
                 style: textTheme.bodySmall?.copyWith(
@@ -256,7 +256,7 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
   }
 }
 
-/// 多文件上传进度列表
+/// Multi-file upload progress list
 class UploadProgressList extends StatelessWidget {
   final List<UploadProgressData> uploads;
   final Function(String)? onCancelUpload;
@@ -296,7 +296,7 @@ class UploadProgressList extends StatelessWidget {
   }
 }
 
-/// 上传进度数据模型
+/// Upload progress data model
 class UploadProgressData {
   final String id;
   final String filename;

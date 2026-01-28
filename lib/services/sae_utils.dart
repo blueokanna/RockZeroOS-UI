@@ -2,22 +2,22 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:hashlib/hashlib.dart' as hashlib;
 
-/// SAE 工具函数
+/// SAE utility functions
 class SaeUtils {
-  /// 将任意长度的设备ID哈希为32字节
+  /// Hash arbitrary length device ID to 32 bytes
   ///
-  /// 与 Rust 端保持一致，确保设备ID总是32字节
+  /// Consistent with Rust side, ensures device ID is always 32 bytes
   static Uint8List hashDeviceId(String deviceId) {
     final hash = hashlib.sha3_256.convert(utf8.encode(deviceId));
     return Uint8List.fromList(hash.bytes);
   }
 
-  /// 从字符串创建32字节设备ID
+  /// Create 32-byte device ID from string
   ///
-  /// 如果输入已经是32字节的十六进制字符串，直接解码
-  /// 否则使用 SHA3-256 哈希
+  /// If input is already a 32-byte hex string, decode directly
+  /// Otherwise use SHA3-256 hash
   static Uint8List deviceIdFromString(String input) {
-    // 尝试解析为十六进制
+    // Try to parse as hex
     if (input.length == 64) {
       try {
         final bytes = <int>[];
@@ -28,15 +28,15 @@ class SaeUtils {
           return Uint8List.fromList(bytes);
         }
       } catch (_) {
-        // 不是有效的十六进制，继续使用哈希
+        // Not valid hex, continue with hash
       }
     }
 
-    // 使用 SHA3-256 哈希
+    // Use SHA3-256 hash
     return hashDeviceId(input);
   }
 
-  /// 将32字节设备ID转换为十六进制字符串
+  /// Convert 32-byte device ID to hex string
   static String deviceIdToHex(Uint8List deviceId) {
     if (deviceId.length != 32) {
       throw ArgumentError('Device ID must be 32 bytes');
@@ -44,17 +44,17 @@ class SaeUtils {
     return deviceId.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
-  /// 验证设备ID是否有效（32字节）
+  /// Validate if device ID is valid (32 bytes)
   static bool isValidDeviceId(Uint8List deviceId) {
     return deviceId.length == 32;
   }
 
-  /// 比较两个设备ID的字典序
+  /// Compare two device IDs lexicographically
   ///
-  /// 返回：
-  /// - 负数：id1 < id2
-  /// - 0：id1 == id2
-  /// - 正数：id1 > id2
+  /// Returns:
+  /// - negative: id1 < id2
+  /// - 0: id1 == id2
+  /// - positive: id1 > id2
   static int compareDeviceIds(Uint8List id1, Uint8List id2) {
     final minLen = id1.length < id2.length ? id1.length : id2.length;
     for (int i = 0; i < minLen; i++) {
@@ -64,47 +64,47 @@ class SaeUtils {
     return id1.length.compareTo(id2.length);
   }
 
-  /// 生成随机设备ID（用于测试）
+  /// Generate random device ID (for testing)
   static Uint8List generateRandomDeviceId() {
     final random =
         List.generate(32, (_) => DateTime.now().microsecondsSinceEpoch % 256);
     return Uint8List.fromList(random);
   }
 
-  /// 验证密码强度
+  /// Check password strength
   ///
-  /// 返回：
-  /// - 0: 弱密码（< 8 字符）
-  /// - 1: 中等密码（8-15 字符）
-  /// - 2: 强密码（>= 16 字符）
+  /// Returns:
+  /// - 0: weak password (< 8 characters)
+  /// - 1: medium password (8-15 characters)
+  /// - 2: strong password (>= 16 characters)
   static int checkPasswordStrength(String password) {
     if (password.length < 8) return 0;
     if (password.length < 16) return 1;
     return 2;
   }
 
-  /// 安全地清除敏感数据
+  /// Securely clear sensitive data
   ///
-  /// 注意：Dart 的垃圾回收机制可能不会立即清除内存
-  /// 这只是尽力而为的清除
+  /// Note: Dart's garbage collection may not immediately clear memory
+  /// This is a best-effort clearing
   static void clearSensitiveData(Uint8List data) {
     for (int i = 0; i < data.length; i++) {
       data[i] = 0;
     }
   }
 
-  /// 将字节数组转换为 Base64（URL 安全）
+  /// Convert byte array to Base64 (URL safe)
   static String toBase64Url(Uint8List bytes) {
     return base64Url.encode(bytes);
   }
 
-  /// 从 Base64（URL 安全）解码字节数组
+  /// Decode byte array from Base64 (URL safe)
   static Uint8List fromBase64Url(String encoded) {
     return Uint8List.fromList(base64Url.decode(encoded));
   }
 }
 
-/// SAE 错误类型
+/// SAE error type
 class SaeException implements Exception {
   final String message;
   final SaeErrorType type;
@@ -115,7 +115,7 @@ class SaeException implements Exception {
   String toString() => 'SaeException: $message (type: $type)';
 }
 
-/// SAE 错误类型枚举
+/// SAE error type enum
 enum SaeErrorType {
   cryptoError,
   invalidState,
@@ -128,7 +128,7 @@ enum SaeErrorType {
   networkError,
 }
 
-/// SAE 状态枚举
+/// SAE state enum
 enum SaeState {
   nothing,
   committed,
@@ -136,18 +136,18 @@ enum SaeState {
   accepted,
 }
 
-/// SAE 配置
+/// SAE configuration
 class SaeConfig {
-  /// 最大 PWE 迭代次数
+  /// Maximum PWE iteration count
   final int maxPweLoop;
 
-  /// PWE 偏移量迭代次数
+  /// PWE offset iteration count
   final int pweOffsetIterations;
 
-  /// 最大同步重试次数
+  /// Maximum sync retry count
   final int maxSync;
 
-  /// 椭圆曲线组 ID
+  /// Elliptic curve group ID
   final int groupId;
 
   const SaeConfig({
@@ -157,10 +157,10 @@ class SaeConfig {
     this.groupId = 19, // Curve25519
   });
 
-  /// 默认配置
+  /// Default configuration
   static const SaeConfig defaultConfig = SaeConfig();
 
-  /// 快速配置（用于测试，减少迭代次数）
+  /// Fast configuration (for testing, reduced iterations)
   static const SaeConfig fastConfig = SaeConfig(
     maxPweLoop: 10,
     pweOffsetIterations: 4,

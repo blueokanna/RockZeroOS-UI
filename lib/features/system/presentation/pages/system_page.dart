@@ -907,7 +907,7 @@ class _DisksCard extends StatelessWidget {
                   children: [
                     ...disks.map((disk) => _DiskItem(disk: disk)),
                     const SizedBox(height: 16),
-                    // Storage Manager 按钮
+                    // Storage Manager button
                     FilledButton.tonalIcon(
                       onPressed: () {
                         Navigator.of(context).push(
@@ -948,7 +948,7 @@ class _DiskItem extends ConsumerWidget {
 
     return InkWell(
       onTap: () {
-        // 导航到存储管理页面
+        // Navigate to storage management page
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (context) => const DiskManagementPage(),

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/services/biometric_service.dart';
 import '../../../../core/services/fido2_service.dart';
+import '../../../../core/services/zkp_auth_service.dart';
 import '../../../../core/widgets/wallpaper_background.dart';
 import '../../providers/auth_provider.dart';
 import 'register_page.dart';
@@ -21,6 +22,7 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
   bool _isLoading = false;
+  bool _useZkpAuth = false; // 是否使用 ZKP 零知识证明认证
 
   @override
   void dispose() {
@@ -35,20 +37,63 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
     setState(() => _isLoading = true);
 
     try {
-      final success = await ref.read(authStateProvider.notifier).login(
-            email: _emailController.text.trim(),
-            password: _passwordController.text,
-          );
+      bool success;
+
+      if (_useZkpAuth) {
+        // 使用 ZKP 零知识证明认证
+        success = await _handleZkpLogin();
+      } else {
+        // 使用传统密码认证
+        success = await ref.read(authStateProvider.notifier).login(
+              email: _emailController.text.trim(),
+              password: _passwordController.text,
+            );
+      }
 
       if (success && mounted) {
         Navigator.of(context).pushReplacementNamed('/dashboard');
       } else if (mounted) {
-        _showError('Login failed. Please check your credentials.');
+        _showError(_useZkpAuth
+            ? 'ZKP authentication failed. Please check your credentials.'
+            : 'Login failed. Please check your credentials.');
       }
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  /// 使用 ZKP 零知识证明进行登录
+  ///
+  /// ZKP 认证的优势：
+  /// - 密码永远不会离开设备
+  /// - 服务器只验证证明，无法获取密码
+  /// - 防止中间人攻击和重放攻击
+  Future<bool> _handleZkpLogin() async {
+    final zkpService = ref.read(zkpAuthServiceProvider);
+
+    try {
+      final result = await zkpService.zkpLogin(
+        _emailController.text.trim(),
+        _passwordController.text,
+      );
+
+      if (result != null && result['success'] == true) {
+        // 保存 tokens
+        final tokens = result['tokens'];
+        if (tokens != null) {
+          await ref.read(authStateProvider.notifier).saveTokens(
+                accessToken: tokens['access_token'],
+                refreshToken: tokens['refresh_token'],
+              );
+        }
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('❌ ZKP login error: $e');
+      return false;
     }
   }
 
@@ -268,6 +313,71 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
                                 }
                                 return null;
                               },
+                            ),
+                            const SizedBox(height: 16),
+
+                            // ZKP Authentication Toggle
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _useZkpAuth
+                                    ? colorScheme.primaryContainer
+                                        .withValues(alpha: 0.5)
+                                    : colorScheme.surfaceContainerHighest
+                                        .withValues(alpha: 0.3),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: _useZkpAuth
+                                      ? colorScheme.primary
+                                          .withValues(alpha: 0.5)
+                                      : colorScheme.outline
+                                          .withValues(alpha: 0.3),
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.security_rounded,
+                                    size: 20,
+                                    color: _useZkpAuth
+                                        ? colorScheme.primary
+                                        : colorScheme.onSurfaceVariant,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Zero-Knowledge Proof',
+                                          style: textTheme.bodyMedium?.copyWith(
+                                            fontWeight: FontWeight.w600,
+                                            color: _useZkpAuth
+                                                ? colorScheme.primary
+                                                : colorScheme.onSurface,
+                                          ),
+                                        ),
+                                        Text(
+                                          'Password never leaves your device',
+                                          style: textTheme.bodySmall?.copyWith(
+                                            color: colorScheme.onSurfaceVariant,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Switch(
+                                    value: _useZkpAuth,
+                                    onChanged: (value) {
+                                      setState(() => _useZkpAuth = value);
+                                    },
+                                  ),
+                                ],
+                              ),
                             ),
                             const SizedBox(height: 24),
 

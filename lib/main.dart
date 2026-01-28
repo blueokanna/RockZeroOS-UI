@@ -78,7 +78,7 @@ class _RockZeroAppState extends ConsumerState<RockZeroApp> {
     final systemAccentColor = ref.watch(systemAccentColorProvider);
     final blendedColor = ref.watch(blendedThemeColorProvider);
 
-    // 优先级: 混合颜色 > 系统颜色 > 种子颜色
+    // Priority: blended color > system color > seed color
     final effectiveColor = blendedColor ??
         (dynamicColorEnabled && systemAccentColor != null
             ? systemAccentColor

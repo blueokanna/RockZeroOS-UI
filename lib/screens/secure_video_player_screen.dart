@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import '../services/secure_hls_player.dart';
 
-/// 安全视频播放器界面
+/// Secure video player screen
 ///
-/// 使用 WPA3-SAE 握手 + Bulletproofs ZKP 证明 + AES-256-GCM 加密
+/// Uses WPA3-SAE handshake + AES-256-GCM encryption
 class SecureVideoPlayerScreen extends StatefulWidget {
   final String fileId;
   final String fileName;
@@ -47,27 +47,27 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
         _error = null;
       });
 
-      // 1. 创建安全播放器
+      // 1. Create secure player
       _player = SecureHlsPlayer(
         baseUrl: widget.baseUrl,
         jwtToken: widget.jwtToken,
       );
 
-      // 2. 初始化 SAE 握手
+      // 2. Initialize SAE handshake
       await _player!.initializeSaeHandshake(
         widget.userId,
         widget.password,
         widget.fileId,
       );
 
-      // 3. 开始播放
+      // 3. Start playback
       _controller = await _player!.play();
 
       setState(() {
         _isLoading = false;
       });
 
-      // 4. 自动播放
+      // 4. Auto play
       _controller!.play();
     } catch (e, stack) {
       debugPrint('[SecureVideoPlayer] Error: $e');
@@ -81,7 +81,7 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('播放失败: $e'),
+            content: Text('Playback failed: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -122,10 +122,10 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
           children: [
             const CircularProgressIndicator(),
             const SizedBox(height: 16),
-            const Text('正在建立安全连接...'),
+            const Text('Establishing secure connection...'),
             const SizedBox(height: 8),
             const Text(
-              '使用 WPA3-SAE 握手 + ZKP 证明',
+              'Using WPA3-SAE handshake + AES-256-GCM encryption',
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
           ],
@@ -140,13 +140,14 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
           children: [
             const Icon(Icons.error_outline, size: 64, color: Colors.red),
             const SizedBox(height: 16),
-            Text('播放失败', style: Theme.of(context).textTheme.titleLarge),
+            Text('Playback failed',
+                style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
             Text(_error!, textAlign: TextAlign.center),
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: _initializePlayer,
-              child: const Text('重试'),
+              child: const Text('Retry'),
             ),
           ],
         ),
@@ -159,7 +160,7 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
 
     return Column(
       children: [
-        // 视频播放器
+        // Video player
         Expanded(
           child: Center(
             child: AspectRatio(
@@ -169,10 +170,10 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
           ),
         ),
 
-        // 控制栏
+        // Control bar
         _buildControls(),
 
-        // 安全指示器
+        // Security indicator
         _buildSecurityIndicator(),
       ],
     );
@@ -184,7 +185,7 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
       padding: const EdgeInsets.all(8),
       child: Row(
         children: [
-          // 播放/暂停按钮
+          // Play/pause button
           IconButton(
             icon: Icon(
               _controller!.value.isPlaying ? Icons.pause : Icons.play_arrow,
@@ -199,7 +200,7 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
             },
           ),
 
-          // 进度条
+          // Progress bar
           Expanded(
             child: VideoProgressIndicator(
               _controller!,
@@ -212,7 +213,7 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
             ),
           ),
 
-          // 时间显示
+          // Time display
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Text(
@@ -221,11 +222,11 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
             ),
           ),
 
-          // 全屏按钮
+          // Fullscreen button
           IconButton(
             icon: const Icon(Icons.fullscreen, color: Colors.white),
             onPressed: () {
-              // TODO: 实现全屏
+              // TODO: Implement fullscreen
             },
           ),
         ],
@@ -242,14 +243,14 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
           const Icon(Icons.lock, color: Colors.white, size: 16),
           const SizedBox(width: 8),
           const Text(
-            '安全连接',
+            'Secure Connection',
             style: TextStyle(color: Colors.white, fontSize: 12),
           ),
           const Spacer(),
           TextButton(
             onPressed: _showSecurityInfo,
             child: const Text(
-              '查看详情',
+              'View Details',
               style: TextStyle(color: Colors.white, fontSize: 12),
             ),
           ),
@@ -266,20 +267,20 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
           children: [
             Icon(Icons.security, color: Colors.green),
             SizedBox(width: 8),
-            Text('安全连接信息'),
+            Text('Security Connection Info'),
           ],
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildInfoRow('加密协议', 'AES-256-GCM'),
-            _buildInfoRow('密钥协商', 'WPA3-SAE (Dragonfly)'),
-            _buildInfoRow('身份验证', '零知识证明 (ZKP)'),
-            _buildInfoRow('传输安全', 'HTTPS + TLS 1.3'),
+            _buildInfoRow('Encryption', 'AES-256-GCM'),
+            _buildInfoRow('Key Exchange', 'WPA3-SAE (Dragonfly)'),
+            _buildInfoRow('Authentication', 'JWT Token'),
+            _buildInfoRow('Transport', 'HTTPS + TLS 1.3'),
             const SizedBox(height: 16),
             const Text(
-              '此视频使用端到端加密传输，无法通过标准工具下载。',
+              'This video uses end-to-end encryption and cannot be downloaded with standard tools.',
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
           ],
@@ -287,7 +288,7 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('关闭'),
+            child: const Text('Close'),
           ),
         ],
       ),
