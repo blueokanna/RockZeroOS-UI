@@ -1,11 +1,13 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:hashlib/hashlib.dart' as hashlib;
 import 'package:http/http.dart' as http;
 import 'package:pointycastle/export.dart' as pc;
 import 'package:video_player/video_player.dart';
+import 'package:thirds/blake3.dart' as blake3;
 
 import 'zkp/hls_bulletproof_auth.dart';
-import 'sae_client.dart';
+import 'sae_client_curve25519.dart';
 import 'secure_hls_proxy.dart';
 
 /// 安全 HLS 播放器
@@ -82,17 +84,30 @@ class SecureHlsPlayer {
     // 保存密码用于 ZKP 证明生成
     _password = password;
 
-    // 1. 创建 SAE 客户端
-    final saeClient = SaeClient(
+    // 1. 生成设备ID（与 Rust 端保持一致，使用 Blake3）
+    // server_id = blake3::hash(b"rockzero-server-device-id")
+    // client_id = blake3::hash(user_id.as_bytes())
+    final deviceIdSelf =
+        Uint8List.fromList(blake3.blake3(utf8.encode(userId), 32));
+    final deviceIdPeer = Uint8List.fromList(
+        blake3.blake3(utf8.encode('rockzero-server-device-id'), 32));
+
+    debugPrint(
+        '[SecureHLS] Client device ID (Blake3): ${base64Encode(deviceIdSelf)}');
+    debugPrint(
+        '[SecureHLS] Server device ID (Blake3): ${base64Encode(deviceIdPeer)}');
+
+    // 2. 创建 SAE 客户端（使用 Curve25519，与 Rust 端一致）
+    final saeClient = SaeClientCurve25519(
       password: Uint8List.fromList(utf8.encode(password)),
-      deviceIdSelf: Uint8List.fromList(utf8.encode(userId)),
-      deviceIdPeer: Uint8List.fromList(utf8.encode('rockzero-server')),
+      deviceIdSelf: deviceIdSelf,
+      deviceIdPeer: deviceIdPeer,
     );
 
-    // 2. 生成客户端 commit（返回 Map）
+    // 3. 生成客户端 commit（返回 Map）
     final clientCommit = saeClient.generateCommit();
 
-    // 3. 初始化服务器 SAE 握手
+    // 4. 初始化服务器 SAE 握手
     final initResponse = await http.post(
       Uri.parse('$baseUrl/api/v1/secure-hls/sae/init'),
       headers: {
@@ -114,7 +129,7 @@ class SecureHlsPlayer {
 
     debugPrint('[SecureHLS] Got temp session: $tempSessionId');
 
-    // 4. 发送客户端 commit（clientCommit 已经是 Base64 编码）
+    // 5. 发送客户端 commit（clientCommit 已经是 Base64 编码）
     final commitResponse = await http.post(
       Uri.parse('$baseUrl/api/v1/secure-hls/sae/commit'),
       headers: {
@@ -134,13 +149,13 @@ class SecureHlsPlayer {
     final commitData = jsonDecode(commitResponse.body);
     final serverCommit = commitData['server_commit'] as Map<String, dynamic>;
 
-    // 5. 处理服务器 commit
+    // 6. 处理服务器 commit
     saeClient.processCommit(serverCommit);
 
-    // 6. 生成客户端 confirm
+    // 7. 生成客户端 confirm
     final clientConfirm = saeClient.generateConfirm();
 
-    // 7. 发送客户端 confirm
+    // 8. 发送客户端 confirm
     final confirmResponse = await http.post(
       Uri.parse('$baseUrl/api/v1/secure-hls/sae/confirm'),
       headers: {
@@ -159,15 +174,21 @@ class SecureHlsPlayer {
 
     final confirmData = jsonDecode(confirmResponse.body);
 
-    // 8. 验证服务器 confirm
+    // 9. 验证服务器 confirm
     final serverConfirm = confirmData['server_confirm'] as Map<String, dynamic>;
     saeClient.verifyConfirm(serverConfirm);
 
-    // 9. 获取 PMK
+    // 10. 获取 PMK
     _pmk = saeClient.getPmk();
-    debugPrint('[SecureHLS] SAE handshake completed, PMK obtained');
+    debugPrint(
+        '[SecureHLS] SAE handshake completed, PMK obtained (${_pmk!.length} bytes)');
+    debugPrint(
+        '[SecureHLS] PMK (first 8 bytes): ${_pmk!.sublist(0, 8).map((b) => b.toRadixString(16).padLeft(2, '0')).join()}');
 
-    // 10. 创建 HLS 会话
+    // 11. 获取或生成 ZKP 注册数据（完整 Bulletproofs）
+    await _ensureZkpRegistration(userId);
+
+    // 12. 创建 HLS 会话（传递 ZKP 注册数据）
     final sessionResponse = await http.post(
       Uri.parse('$baseUrl/api/v1/secure-hls/session/create'),
       headers: {
@@ -177,6 +198,9 @@ class SecureHlsPlayer {
       body: jsonEncode({
         'temp_session_id': tempSessionId,
         'file_id': fileId,
+        'zkp_registration': _zkpRegistration != null
+            ? jsonEncode(_zkpRegistration!.toJson())
+            : null,
       }),
     );
 
@@ -188,12 +212,10 @@ class SecureHlsPlayer {
     _sessionId = sessionData['session_id'];
     final zkpEnabled = sessionData['zkp_enabled'] ?? false;
 
-    debugPrint('[SecureHLS] HLS session created: $_sessionId (ZKP enabled: $zkpEnabled)');
+    debugPrint(
+        '[SecureHLS] HLS session created: $_sessionId (ZKP enabled: $zkpEnabled)');
 
-    // 10. 获取或生成 ZKP 注册数据（完整 Bulletproofs）
-    await _ensureZkpRegistration(userId);
-
-    // 11. 初始化加密器
+    // 13. 初始化加密器
     _encryptor = HlsEncryptor(
       pmk: _pmk!,
       password: password,
@@ -376,14 +398,38 @@ class HlsEncryptor {
   }
 
   /// 从密钥派生子密钥（HKDF-SHA3-256）
+  ///
+  /// 与 Rust 端完全一致的 HKDF 实现
   Uint8List _deriveKey(Uint8List key, String info) {
-    final hkdf = pc.HKDFKeyDerivator(pc.SHA3Digest(256));
     final infoBytes = Uint8List.fromList(utf8.encode(info));
-    hkdf.init(pc.HkdfParameters(key, 32, null, infoBytes));
-    
-    final derivedKey = Uint8List(32);
-    hkdf.deriveKey(null, 0, derivedKey, 0);
-    return derivedKey;
+
+    // HKDF-Extract: PRK = HMAC-SHA3-256(salt, IKM)
+    // salt = 全零 32 字节（与 Rust Hkdf::new(None, ...) 一致）
+    final salt = Uint8List(32);
+    final prk = _hmacSha3_256(salt, key);
+
+    // HKDF-Expand: OKM = T(1) || T(2) || ...
+    // T(0) = empty
+    // T(i) = HMAC-SHA3-256(PRK, T(i-1) || info || i)
+    final output = <int>[];
+    var t = Uint8List(0);
+    var counter = 1;
+
+    while (output.length < 32) {
+      final hmacInput = Uint8List.fromList([...t, ...infoBytes, counter]);
+      t = _hmacSha3_256(prk, hmacInput);
+      output.addAll(t);
+      counter++;
+    }
+
+    return Uint8List.fromList(output.sublist(0, 32));
+  }
+
+  /// HMAC-SHA3-256
+  Uint8List _hmacSha3_256(Uint8List key, Uint8List message) {
+    final hmac = hashlib.HMAC(hashlib.sha3_256).by(key);
+    final digest = hmac.convert(message);
+    return Uint8List.fromList(digest.bytes);
   }
 
   /// AES-256-GCM 解密
@@ -466,7 +512,8 @@ class SecureHttpClient extends http.BaseClient {
       final encryptedData = response.bodyBytes;
       final decryptedData = encryptor.decryptSegment(encryptedData);
 
-      debugPrint('[SecureHLS] Segment decrypted: ${decryptedData.length} bytes');
+      debugPrint(
+          '[SecureHLS] Segment decrypted: ${decryptedData.length} bytes');
 
       return http.StreamedResponse(
         Stream.value(decryptedData),
@@ -479,4 +526,3 @@ class SecureHttpClient extends http.BaseClient {
     return _inner.send(request);
   }
 }
-

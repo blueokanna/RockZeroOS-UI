@@ -59,7 +59,7 @@ class SaeClientCurve25519 {
   bool _confirmed = false;
 
   // Confirm 计数器
-  int _sendConfirm = 1;
+  final int _sendConfirm = 1;
 
   /// 将任意长度的设备ID规范化为32字节
   ///

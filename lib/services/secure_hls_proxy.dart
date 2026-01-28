@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
+import 'package:hashlib/hashlib.dart' as hashlib;
 import 'package:pointycastle/export.dart';
 
 import 'zkp/hls_bulletproof_auth.dart';
@@ -234,7 +234,8 @@ class SecureHlsProxyServer {
       );
 
       debugPrint('[SecureHLS Proxy] ✅ Full Bulletproofs ZKP proof generated');
-      debugPrint('[SecureHLS Proxy]   - Proof size: ${proofBase64.length} chars (base64)');
+      debugPrint(
+          '[SecureHLS Proxy]   - Proof size: ${proofBase64.length} chars (base64)');
 
       return proofBase64;
     } catch (e) {
@@ -367,20 +368,40 @@ class SecureHlsProxyServer {
   /// 返回：32 字节的派生密钥
   Uint8List _deriveKey(Uint8List key, String info) {
     // 使用 HKDF-SHA3-256 派生密钥（与 Rust 端一致）
-    final hkdf = HKDFKeyDerivator(SHA3Digest(256));
+    //
+    // Rust hkdf crate 的 Hkdf::new(None, &pmk) 行为：
+    // - salt = None 时，使用全零 salt（长度等于哈希输出长度，即 32 字节）
+    // - Extract: PRK = HMAC-SHA3-256(salt, IKM)
+    // - Expand: OKM = HMAC-SHA3-256(PRK, info || counter)
 
-    // HKDF 参数：
-    // - salt: None（与 Rust 端的 Hkdf::new(None, &pmk) 一致）
-    // - info: 上下文信息
     final infoBytes = Uint8List.fromList(utf8.encode(info));
 
-    // 初始化 HKDF（salt 为 null 表示使用零值 salt）
-    hkdf.init(HkdfParameters(key, 32, null, infoBytes));
+    // HKDF-Extract: PRK = HMAC-SHA3-256(salt, IKM)
+    // salt = 全零 32 字节（与 Rust Hkdf::new(None, ...) 一致）
+    final salt = Uint8List(32);
+    final prk = _hmacSha3_256(salt, key);
 
-    // 派生 32 字节的密钥
-    final derivedKey = Uint8List(32);
-    hkdf.deriveKey(null, 0, derivedKey, 0);
+    // HKDF-Expand: OKM = T(1) || T(2) || ...
+    // T(0) = empty
+    // T(i) = HMAC-SHA3-256(PRK, T(i-1) || info || i)
+    final output = <int>[];
+    var t = Uint8List(0);
+    var counter = 1;
 
-    return derivedKey;
+    while (output.length < 32) {
+      final hmacInput = Uint8List.fromList([...t, ...infoBytes, counter]);
+      t = _hmacSha3_256(prk, hmacInput);
+      output.addAll(t);
+      counter++;
+    }
+
+    return Uint8List.fromList(output.sublist(0, 32));
+  }
+
+  /// HMAC-SHA3-256
+  Uint8List _hmacSha3_256(Uint8List key, Uint8List message) {
+    final hmac = hashlib.HMAC(hashlib.sha3_256).by(key);
+    final digest = hmac.convert(message);
+    return Uint8List.fromList(digest.bytes);
   }
 }

@@ -3,12 +3,15 @@ import 'package:video_player/video_player.dart';
 import '../services/secure_hls_player.dart';
 
 /// 安全视频播放器界面
+///
+/// 使用 WPA3-SAE 握手 + Bulletproofs ZKP 证明 + AES-256-GCM 加密
 class SecureVideoPlayerScreen extends StatefulWidget {
   final String fileId;
   final String fileName;
   final String jwtToken;
   final String userId;
   final String password;
+  final String baseUrl;
 
   const SecureVideoPlayerScreen({
     super.key,
@@ -17,6 +20,7 @@ class SecureVideoPlayerScreen extends StatefulWidget {
     required this.jwtToken,
     required this.userId,
     required this.password,
+    required this.baseUrl,
   });
 
   @override
@@ -45,7 +49,7 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
 
       // 1. 创建安全播放器
       _player = SecureHlsPlayer(
-        baseUrl: 'http://your-server.com', // 替换为实际服务器地址
+        baseUrl: widget.baseUrl,
         jwtToken: widget.jwtToken,
       );
 
@@ -65,7 +69,10 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
 
       // 4. 自动播放
       _controller!.play();
-    } catch (e) {
+    } catch (e, stack) {
+      debugPrint('[SecureVideoPlayer] Error: $e');
+      debugPrint('[SecureVideoPlayer] Stack: $stack');
+
       setState(() {
         _isLoading = false;
         _error = e.toString();
