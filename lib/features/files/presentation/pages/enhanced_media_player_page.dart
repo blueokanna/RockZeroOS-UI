@@ -1497,3 +1497,46 @@ class _EnhancedMediaPlayerPageState
     );
   }
 }
+
+/// RadioGroup widget for grouping RadioListTile widgets
+class RadioGroup<T> extends StatelessWidget {
+  final T? groupValue;
+  final ValueChanged<T?>? onChanged;
+  final Widget child;
+
+  const RadioGroup({
+    super.key,
+    required this.groupValue,
+    required this.onChanged,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _RadioGroupScope<T>(
+      groupValue: groupValue,
+      onChanged: onChanged,
+      child: child,
+    );
+  }
+}
+
+class _RadioGroupScope<T> extends InheritedWidget {
+  final T? groupValue;
+  final ValueChanged<T?>? onChanged;
+
+  const _RadioGroupScope({
+    required this.groupValue,
+    required this.onChanged,
+    required super.child,
+  });
+
+  static _RadioGroupScope<T>? of<T>(BuildContext context) {
+    return context.dependOnInheritedWidgetOfExactType<_RadioGroupScope<T>>();
+  }
+
+  @override
+  bool updateShouldNotify(_RadioGroupScope<T> oldWidget) {
+    return groupValue != oldWidget.groupValue;
+  }
+}

@@ -76,6 +76,10 @@ dependencies:
   equatable: ^2.0.7
   go_router: ^17.0.1
 
+  # Markdown rendering
+  flutter_markdown: ^0.7.6
+  markdown: ^7.2.2
+
   # System Info
   device_info_plus: ^12.3.0
   package_info_plus: ^9.0.0

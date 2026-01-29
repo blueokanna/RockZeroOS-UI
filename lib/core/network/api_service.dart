@@ -936,6 +936,12 @@ class ApiService {
         .toList();
   }
 
+  /// 获取外部存储统计信息（排除eMMC）
+  Future<ExternalStorageStats> getExternalStorageStats() async {
+    final response = await _dio.get('/api/v1/storage/stats');
+    return ExternalStorageStats.fromJson(response.data);
+  }
+
   Future<StorageDevice> getStorageDevice(String id) async {
     final response = await _dio.get('/api/v1/storage/devices/$id');
     return StorageDevice.fromJson(response.data);
@@ -1467,30 +1473,84 @@ extension SecureStorageApiExtension on ApiService {
 
   // ============ App Storage Stats API ============
 
-  /// 获取 RockZeroOS 应用专用存储统计
-  ///
-  /// 返回 HLS 缓存、临时文件、日志、视频、数据库等的实际占用空间，
-  /// 而不是整个分区的使用量。
   Future<AppStorageStats> getAppStorageStats() async {
-    final response = await _dio.get('/api/v1/storage/stats');
+    final response = await _dio.get('/api/v1/storage-management/stats');
     return AppStorageStats.fromJson(response.data);
   }
 
-  /// 触发手动清理（HLS 缓存、临时文件、旧日志）
   Future<Map<String, dynamic>> triggerStorageCleanup() async {
-    final response = await _dio.post('/api/v1/cleanup');
+    final response = await _dio.post('/api/v1/storage-management/cleanup');
     return response.data;
   }
 
-  /// 清理 HLS 缓存
   Future<Map<String, dynamic>> cleanupHlsCache() async {
-    final response = await _dio.post('/api/v1/cleanup/hls');
+    final response = await _dio.post('/api/v1/storage-management/cleanup/hls');
     return response.data;
   }
 
-  /// 清理临时文件
   Future<Map<String, dynamic>> cleanupTempFiles() async {
-    final response = await _dio.post('/api/v1/cleanup/temp');
+    final response = await _dio.post('/api/v1/storage-management/cleanup/temp');
     return response.data;
+  }
+
+  // ============ Assets API (Logo, README, About) ============
+
+  /// 获取Logo URL
+  String getLogoUrl() {
+    return '$baseUrl/api/v1/assets/logo';
+  }
+
+  /// 获取README内容
+  Future<String> getReadme() async {
+    final response = await _dio.get(
+      '/api/v1/assets/readme',
+      options: Options(responseType: ResponseType.plain),
+    );
+    return response.data.toString();
+  }
+
+  /// 获取关于信息
+  Future<AboutInfo> getAboutInfo() async {
+    final response = await _dio.get('/api/v1/assets/about');
+    return AboutInfo.fromJson(response.data);
+  }
+}
+
+/// 关于信息模型
+class AboutInfo {
+  final String name;
+  final String version;
+  final String description;
+  final String author;
+  final String email;
+  final String github;
+  final String license;
+  final String readmeUrl;
+  final String logoUrl;
+
+  AboutInfo({
+    required this.name,
+    required this.version,
+    required this.description,
+    required this.author,
+    required this.email,
+    required this.github,
+    required this.license,
+    required this.readmeUrl,
+    required this.logoUrl,
+  });
+
+  factory AboutInfo.fromJson(Map<String, dynamic> json) {
+    return AboutInfo(
+      name: json['name'] ?? '',
+      version: json['version'] ?? '',
+      description: json['description'] ?? '',
+      author: json['author'] ?? '',
+      email: json['email'] ?? '',
+      github: json['github'] ?? '',
+      license: json['license'] ?? '',
+      readmeUrl: json['readme_url'] ?? '',
+      logoUrl: json['logo_url'] ?? '',
+    );
   }
 }

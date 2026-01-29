@@ -1094,6 +1094,57 @@ class StorageDevice {
       totalSize > 0 ? (usedSize / totalSize) * 100 : 0;
 }
 
+/// 外部存储统计信息（排除eMMC）
+@JsonSerializable()
+class ExternalStorageStats {
+  @JsonKey(name: 'total_size')
+  final int totalSize;
+  @JsonKey(name: 'used_size')
+  final int usedSize;
+  @JsonKey(name: 'available_size')
+  final int availableSize;
+  @JsonKey(name: 'device_count')
+  final int deviceCount;
+  final List<StorageDevice> devices;
+  final StorageStatsFormatted formatted;
+
+  ExternalStorageStats({
+    required this.totalSize,
+    required this.usedSize,
+    required this.availableSize,
+    required this.deviceCount,
+    required this.devices,
+    required this.formatted,
+  });
+
+  factory ExternalStorageStats.fromJson(Map<String, dynamic> json) =>
+      _$ExternalStorageStatsFromJson(json);
+  Map<String, dynamic> toJson() => _$ExternalStorageStatsToJson(this);
+
+  double get usagePercentage =>
+      totalSize > 0 ? (usedSize / totalSize) * 100 : 0;
+}
+
+@JsonSerializable()
+class StorageStatsFormatted {
+  final String total;
+  final String used;
+  final String available;
+  @JsonKey(name: 'usage_percent')
+  final int usagePercent;
+
+  StorageStatsFormatted({
+    required this.total,
+    required this.used,
+    required this.available,
+    required this.usagePercent,
+  });
+
+  factory StorageStatsFormatted.fromJson(Map<String, dynamic> json) =>
+      _$StorageStatsFormattedFromJson(json);
+  Map<String, dynamic> toJson() => _$StorageStatsFormattedToJson(this);
+}
+
 // ============ Docker Models ============
 
 @JsonSerializable()

@@ -55,8 +55,8 @@ Map<String, dynamic> _$AuthResponseToJson(AuthResponse instance) =>
     <String, dynamic>{
       'success': instance.success,
       'message': instance.message,
-      'user': instance.user,
-      'tokens': instance.tokens,
+      'user': instance.user?.toJson(),
+      'tokens': instance.tokens?.toJson(),
     };
 
 InviteCodeResponse _$InviteCodeResponseFromJson(Map<String, dynamic> json) =>
@@ -98,7 +98,7 @@ EnhancedZkpProof _$EnhancedZkpProofFromJson(Map<String, dynamic> json) =>
 
 Map<String, dynamic> _$EnhancedZkpProofToJson(EnhancedZkpProof instance) =>
     <String, dynamic>{
-      'schnorr_proof': instance.schnorrProof,
+      'schnorr_proof': instance.schnorrProof.toJson(),
       'strength_proof': instance.strengthProof,
       'timestamp': instance.timestamp,
       'nonce': instance.nonce,
@@ -111,7 +111,7 @@ ZkpProofResponse _$ZkpProofResponseFromJson(Map<String, dynamic> json) =>
 
 Map<String, dynamic> _$ZkpProofResponseToJson(ZkpProofResponse instance) =>
     <String, dynamic>{
-      'proof': instance.proof,
+      'proof': instance.proof.toJson(),
     };
 
 EnhancedZkpProofResponse _$EnhancedZkpProofResponseFromJson(
@@ -123,7 +123,7 @@ EnhancedZkpProofResponse _$EnhancedZkpProofResponseFromJson(
 Map<String, dynamic> _$EnhancedZkpProofResponseToJson(
         EnhancedZkpProofResponse instance) =>
     <String, dynamic>{
-      'proof': instance.proof,
+      'proof': instance.proof.toJson(),
     };
 
 PasswordStrengthResponse _$PasswordStrengthResponseFromJson(
@@ -167,7 +167,7 @@ RangeProofResponse _$RangeProofResponseFromJson(Map<String, dynamic> json) =>
 
 Map<String, dynamic> _$RangeProofResponseToJson(RangeProofResponse instance) =>
     <String, dynamic>{
-      'proof': instance.proof,
+      'proof': instance.proof.toJson(),
     };
 
 FileResponse _$FileResponseFromJson(Map<String, dynamic> json) => FileResponse(
@@ -201,7 +201,7 @@ FileListResponse _$FileListResponseFromJson(Map<String, dynamic> json) =>
 
 Map<String, dynamic> _$FileListResponseToJson(FileListResponse instance) =>
     <String, dynamic>{
-      'files': instance.files,
+      'files': instance.files.map((e) => e.toJson()).toList(),
       'total': instance.total,
     };
 
@@ -351,8 +351,8 @@ Map<String, dynamic> _$CpuInfoToJson(CpuInfo instance) => <String, dynamic>{
       'cores': instance.cores,
       'usage': instance.usage,
       'temperature': instance.temperature,
-      'per_core_usage': instance.perCoreUsage,
-      'core_types': instance.coreTypes,
+      'per_core_usage': instance.perCoreUsage?.map((e) => e.toJson()).toList(),
+      'core_types': instance.coreTypes?.map((e) => e.toJson()).toList(),
     };
 
 MemoryInfo _$MemoryInfoFromJson(Map<String, dynamic> json) => MemoryInfo(
@@ -446,12 +446,13 @@ HardwareInfo _$HardwareInfoFromJson(Map<String, dynamic> json) => HardwareInfo(
 
 Map<String, dynamic> _$HardwareInfoToJson(HardwareInfo instance) =>
     <String, dynamic>{
-      'system': instance.system,
-      'cpu': instance.cpu,
-      'memory': instance.memory,
-      'disks': instance.disks,
-      'usb_devices': instance.usbDevices,
-      'network_interfaces': instance.networkInterfaces,
+      'system': instance.system.toJson(),
+      'cpu': instance.cpu.toJson(),
+      'memory': instance.memory.toJson(),
+      'disks': instance.disks.map((e) => e.toJson()).toList(),
+      'usb_devices': instance.usbDevices.map((e) => e.toJson()).toList(),
+      'network_interfaces':
+          instance.networkInterfaces?.map((e) => e.toJson()).toList(),
     };
 
 NetworkInterfaceInfo _$NetworkInterfaceInfoFromJson(
@@ -528,8 +529,9 @@ Map<String, dynamic> _$AppStoreItemToJson(AppStoreItem instance) =>
       'category': instance.category,
       'docker_image': instance.dockerImage,
       'recommended_tag': instance.recommendedTag,
-      'default_ports': instance.defaultPorts,
-      'default_volumes': instance.defaultVolumes,
+      'default_ports': instance.defaultPorts.map((e) => e.toJson()).toList(),
+      'default_volumes':
+          instance.defaultVolumes.map((e) => e.toJson()).toList(),
       'required_env': instance.requiredEnv,
     };
 
@@ -566,9 +568,9 @@ Map<String, dynamic> _$DockerAppToJson(DockerApp instance) => <String, dynamic>{
       'category': instance.category,
       'docker_image': instance.dockerImage,
       'docker_tag': instance.dockerTag,
-      'ports': instance.ports,
-      'volumes': instance.volumes,
-      'environment': instance.environment,
+      'ports': instance.ports.map((e) => e.toJson()).toList(),
+      'volumes': instance.volumes.map((e) => e.toJson()).toList(),
+      'environment': instance.environment.map((e) => e.toJson()).toList(),
       'status': instance.status,
       'container_id': instance.containerId,
       'created_at': instance.createdAt.toIso8601String(),
@@ -650,7 +652,7 @@ Map<String, dynamic> _$DirectoryListingToJson(DirectoryListing instance) =>
     <String, dynamic>{
       'current_path': instance.currentPath,
       'parent_path': instance.parentPath,
-      'entries': instance.entries,
+      'entries': instance.entries.map((e) => e.toJson()).toList(),
       'total_size': instance.totalSize,
       'total_files': instance.totalFiles,
       'total_directories': instance.totalDirectories,
@@ -762,6 +764,49 @@ Map<String, dynamic> _$StorageDeviceToJson(StorageDevice instance) =>
       'bus_type': instance.busType,
     };
 
+ExternalStorageStats _$ExternalStorageStatsFromJson(
+        Map<String, dynamic> json) =>
+    ExternalStorageStats(
+      totalSize: (json['total_size'] as num).toInt(),
+      usedSize: (json['used_size'] as num).toInt(),
+      availableSize: (json['available_size'] as num).toInt(),
+      deviceCount: (json['device_count'] as num).toInt(),
+      devices: (json['devices'] as List<dynamic>)
+          .map((e) => StorageDevice.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      formatted: StorageStatsFormatted.fromJson(
+          json['formatted'] as Map<String, dynamic>),
+    );
+
+Map<String, dynamic> _$ExternalStorageStatsToJson(
+        ExternalStorageStats instance) =>
+    <String, dynamic>{
+      'total_size': instance.totalSize,
+      'used_size': instance.usedSize,
+      'available_size': instance.availableSize,
+      'device_count': instance.deviceCount,
+      'devices': instance.devices.map((e) => e.toJson()).toList(),
+      'formatted': instance.formatted.toJson(),
+    };
+
+StorageStatsFormatted _$StorageStatsFormattedFromJson(
+        Map<String, dynamic> json) =>
+    StorageStatsFormatted(
+      total: json['total'] as String,
+      used: json['used'] as String,
+      available: json['available'] as String,
+      usagePercent: (json['usage_percent'] as num).toInt(),
+    );
+
+Map<String, dynamic> _$StorageStatsFormattedToJson(
+        StorageStatsFormatted instance) =>
+    <String, dynamic>{
+      'total': instance.total,
+      'used': instance.used,
+      'available': instance.available,
+      'usage_percent': instance.usagePercent,
+    };
+
 DockerStatus _$DockerStatusFromJson(Map<String, dynamic> json) => DockerStatus(
       dockerAvailable: json['docker_available'] as bool,
       dockerComposeAvailable: json['docker_compose_available'] as bool,
@@ -776,7 +821,7 @@ Map<String, dynamic> _$DockerStatusToJson(DockerStatus instance) =>
       'docker_available': instance.dockerAvailable,
       'docker_compose_available': instance.dockerComposeAvailable,
       'version': instance.version,
-      'info': instance.info,
+      'info': instance.info?.toJson(),
     };
 
 DockerInfo _$DockerInfoFromJson(Map<String, dynamic> json) => DockerInfo(
@@ -840,8 +885,8 @@ Map<String, dynamic> _$DockerContainerToJson(DockerContainer instance) =>
       'status': instance.status,
       'state': instance.state,
       'created': instance.created,
-      'ports': instance.ports,
-      'volumes': instance.volumes,
+      'ports': instance.ports.map((e) => e.toJson()).toList(),
+      'volumes': instance.volumes.map((e) => e.toJson()).toList(),
       'networks': instance.networks,
       'labels': instance.labels,
       'cpu_usage': instance.cpuUsage,

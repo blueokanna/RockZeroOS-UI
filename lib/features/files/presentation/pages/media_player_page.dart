@@ -242,6 +242,13 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
       debugPrint('[MediaPlayer] File type: ${fileName.split('.').last}');
       debugPrint('[MediaPlayer] Is large format: $isLargeFileFormat');
 
+      // Dispose previous controller if exists
+      if (_videoController != null) {
+        _videoController!.removeListener(_onVideoUpdate);
+        await _videoController!.dispose();
+        _videoController = null;
+      }
+
       _videoController = VideoPlayerController.networkUrl(
         Uri.parse(widget.mediaUrl),
         httpHeaders: headers,
@@ -393,22 +400,85 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
   void _onVideoUpdate() {
     if (_videoController != null && mounted) {
       final value = _videoController!.value;
+
+      // Check for audio desync after seeking
+      final newPosition = value.position;
+      final positionJump =
+          (_position.inMilliseconds - newPosition.inMilliseconds).abs();
+
       setState(() {
-        _position = value.position;
+        _position = newPosition;
         _duration = value.duration;
         // Track buffering state for large files
         _isBuffering = value.isBuffering;
       });
+
+      // Handle errors
       if (value.hasError) {
+        final errorDesc = value.errorDescription ?? 'Unknown error';
+        debugPrint('[MediaPlayer] Playback error: $errorDesc');
+
+        // Check if this is an audio sync issue after seek
+        if (errorDesc.toLowerCase().contains('audio') ||
+            errorDesc.toLowerCase().contains('sync')) {
+          debugPrint(
+              '[MediaPlayer] Audio sync issue detected, attempting recovery');
+          _recoverAudioSync();
+          return;
+        }
+
         setState(() {
-          _error = value.errorDescription ?? 'Unknown error';
+          _error = errorDesc;
         });
       }
+
+      // Handle playback completion
       if (value.position >= value.duration &&
           value.duration > Duration.zero &&
           !value.isPlaying) {
         _handlePlaybackComplete();
       }
+
+      // Detect potential audio desync (large position jump without seeking)
+      if (positionJump > 5000 && !_isBuffering) {
+        debugPrint(
+            '[MediaPlayer] Large position jump detected: ${positionJump}ms');
+      }
+    }
+  }
+
+  /// Attempt to recover audio sync after seek
+  Future<void> _recoverAudioSync() async {
+    if (_videoController == null || !_isInitialized) return;
+
+    debugPrint('[MediaPlayer] Attempting audio sync recovery');
+
+    final currentPosition = _videoController!.value.position;
+    final wasPlaying = _videoController!.value.isPlaying;
+
+    try {
+      // Pause briefly
+      await _videoController!.pause();
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // Seek to slightly before current position to force audio resync
+      final seekPosition = Duration(
+        milliseconds: (currentPosition.inMilliseconds - 500)
+            .clamp(0, _duration.inMilliseconds),
+      );
+      await _videoController!.seekTo(seekPosition);
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // Resume if was playing
+      if (wasPlaying && mounted) {
+        await _videoController!.play();
+      }
+
+      debugPrint('[MediaPlayer] Audio sync recovery completed');
+    } catch (e) {
+      debugPrint('[MediaPlayer] Audio sync recovery failed: $e');
+      // If recovery fails, try full reinitialization
+      _reinitializeAtPosition(currentPosition);
     }
   }
 
@@ -444,18 +514,120 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
   }
 
   void _seekTo(Duration position) {
-    _videoController?.seekTo(position);
-    _startHideControlsTimer();
+    if (_videoController == null || !_isInitialized) return;
+
+    // Clamp position to valid range
+    final clampedPosition = Duration(
+      milliseconds: position.inMilliseconds.clamp(0, _duration.inMilliseconds),
+    );
+
+    debugPrint('[MediaPlayer] Seeking to: ${clampedPosition.inSeconds}s');
+
+    // Pause before seeking to ensure clean state
+    final wasPlaying = _videoController?.value.isPlaying ?? false;
+
+    // Perform seek
+    _videoController?.seekTo(clampedPosition).then((_) {
+      // Resume playback if it was playing before
+      if (wasPlaying && mounted) {
+        _videoController?.play();
+      }
+      _startHideControlsTimer();
+    }).catchError((e) {
+      debugPrint('[MediaPlayer] Seek error: $e');
+      // Try to recover by reinitializing at the target position
+      if (mounted) {
+        _reinitializeAtPosition(clampedPosition);
+      }
+    });
+  }
+
+  /// Reinitialize player at a specific position (fallback for seek failures)
+  Future<void> _reinitializeAtPosition(Duration position) async {
+    debugPrint(
+        '[MediaPlayer] Reinitializing at position: ${position.inSeconds}s');
+
+    final wasPlaying = _videoController?.value.isPlaying ?? false;
+
+    // Dispose current controller
+    _videoController?.removeListener(_onVideoUpdate);
+    await _videoController?.dispose();
+    _videoController = null;
+
+    setState(() {
+      _isLoading = true;
+      _isInitialized = false;
+    });
+
+    try {
+      final headers = <String, String>{
+        'Accept': '*/*',
+        'Accept-Ranges': 'bytes',
+        'Connection': 'keep-alive',
+      };
+
+      if (_authToken != null && _authToken!.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $_authToken';
+      }
+
+      // Create new controller
+      _videoController = VideoPlayerController.networkUrl(
+        Uri.parse(widget.mediaUrl),
+        httpHeaders: headers,
+        videoPlayerOptions: VideoPlayerOptions(
+          mixWithOthers: false,
+          allowBackgroundPlayback: false,
+        ),
+      );
+
+      await _videoController!.initialize();
+      _videoController!.addListener(_onVideoUpdate);
+      await _videoController!.setLooping(_loopMode == LoopMode.one);
+      await _videoController!.setVolume(_volume);
+
+      // Seek to target position
+      await _videoController!.seekTo(position);
+
+      if (wasPlaying) {
+        await _videoController!.play();
+      }
+
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
+          _isLoading = false;
+          _duration = _videoController!.value.duration;
+        });
+      }
+    } catch (e) {
+      debugPrint('[MediaPlayer] Reinitialize failed: $e');
+      if (mounted) {
+        setState(() {
+          _error = 'Failed to seek: $e';
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   void _seekForward() {
+    if (_videoController == null || !_isInitialized) return;
+
     final newPos = _position + const Duration(seconds: 10);
-    _seekTo(newPos > _duration ? _duration : newPos);
+    final clampedPos = newPos > _duration ? _duration : newPos;
+
+    debugPrint('[MediaPlayer] Seeking forward to: ${clampedPos.inSeconds}s');
+    _seekTo(clampedPos);
   }
 
   void _seekBackward() {
+    if (_videoController == null || !_isInitialized) return;
+
     final newPos = _position - const Duration(seconds: 10);
-    _seekTo(newPos < Duration.zero ? Duration.zero : newPos);
+    final clampedPos = newPos < Duration.zero ? Duration.zero : newPos;
+
+    debugPrint('[MediaPlayer] Seeking backward to: ${clampedPos.inSeconds}s');
+    _seekTo(clampedPos);
   }
 
   void _setVolume(double v) {

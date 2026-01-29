@@ -15,6 +15,7 @@ class DiscoveredDevice {
   final String version;
   final bool isSecure;
   final DateTime discoveredAt;
+  final String? iconUrl;
 
   DiscoveredDevice({
     required this.id,
@@ -24,9 +25,17 @@ class DiscoveredDevice {
     required this.version,
     required this.isSecure,
     required this.discoveredAt,
+    this.iconUrl,
   });
 
   String get baseUrl => isSecure ? 'https://$ip:$port' : 'http://$ip:$port';
+
+  /// 获取完整的图标URL
+  String? get fullIconUrl {
+    if (iconUrl == null) return null;
+    if (iconUrl!.startsWith('http')) return iconUrl;
+    return '$baseUrl$iconUrl';
+  }
 
   factory DiscoveredDevice.fromJson(Map<String, dynamic> json, String ip) {
     return DiscoveredDevice(
@@ -37,6 +46,7 @@ class DiscoveredDevice {
       version: json['version'] ?? 'unknown',
       isSecure: json['tls'] ?? false,
       discoveredAt: DateTime.now(),
+      iconUrl: json['icon_url'],
     );
   }
 
@@ -366,12 +376,13 @@ class DeviceDiscoveryService {
             _notifier.addDevice(
               DiscoveredDevice(
                 id: ip,
-                name: 'RockZero @ $ip',
+                name: json['name'] ?? 'RockZero @ $ip',
                 ip: ip,
                 port: _servicePort,
                 version: json['version'] ?? 'unknown',
                 isSecure: false,
                 discoveredAt: DateTime.now(),
+                iconUrl: json['icon_url'],
               ),
             );
           }
@@ -394,12 +405,13 @@ class DeviceDiscoveryService {
               _notifier.addDevice(
                 DiscoveredDevice(
                   id: ip,
-                  name: 'RockZero @ $ip',
+                  name: json['name'] ?? 'RockZero @ $ip',
                   ip: ip,
                   port: _servicePort,
                   version: json['version'] ?? 'unknown',
                   isSecure: true,
                   discoveredAt: DateTime.now(),
+                  iconUrl: json['icon_url'],
                 ),
               );
             }
@@ -454,12 +466,13 @@ class DeviceDiscoveryService {
           client.close();
           return DiscoveredDevice(
             id: ip,
-            name: 'RockZero @ $ip',
+            name: json['name'] ?? 'RockZero @ $ip',
             ip: ip,
             port: targetPort,
             version: json['version'] ?? 'unknown',
             isSecure: false,
             discoveredAt: DateTime.now(),
+            iconUrl: json['icon_url'],
           );
         }
       }
@@ -482,12 +495,13 @@ class DeviceDiscoveryService {
           client.close();
           return DiscoveredDevice(
             id: ip,
-            name: 'RockZero @ $ip',
+            name: json['name'] ?? 'RockZero @ $ip',
             ip: ip,
             port: targetPort,
             version: json['version'] ?? 'unknown',
             isSecure: true,
             discoveredAt: DateTime.now(),
+            iconUrl: json['icon_url'],
           );
         }
       }

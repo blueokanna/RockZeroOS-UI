@@ -451,20 +451,13 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     return Scaffold(
       body: CustomScrollView(
         slivers: [
-          // Material Design 3 Expressive App Bar
-          SliverAppBar.large(
-            expandedHeight: 120,
-            pinned: true,
-            flexibleSpace: FlexibleSpaceBar(
-              title: Text(
-                'Speed Test',
-                style: textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: colorScheme.onSurface,
-                ),
-              ),
-              centerTitle: true,
-            ),
+          // 简化的AppBar - 只保留单位切换器
+          SliverAppBar(
+            floating: true,
+            snap: true,
+            pinned: false,
+            expandedHeight: 56,
+            backgroundColor: colorScheme.surface,
             actions: [
               _buildUnitSwitcher(colorScheme),
             ],
@@ -701,17 +694,8 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
         _state != SpeedTestState.error;
 
     final displaySpeed = _convertSpeed(_currentSpeed);
-    final maxSpeed = _speedUnit == SpeedUnit.mbps
-        ? (displaySpeed > 500
-            ? 1000.0
-            : displaySpeed > 100
-                ? 500.0
-                : 200.0)
-        : (displaySpeed > 62.5
-            ? 125.0
-            : displaySpeed > 12.5
-                ? 62.5
-                : 25.0);
+    // 最大速度: 10000 Mbps 或 1250 MB/s
+    final maxSpeed = _speedUnit == SpeedUnit.mbps ? 10000.0 : 1250.0;
 
     return TweenAnimationBuilder<double>(
       duration: const Duration(milliseconds: 800),
@@ -720,8 +704,8 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       builder: (context, animatedSpeed, child) {
         return Center(
           child: SizedBox(
-            width: 300,
-            height: 300,
+            width: 320,
+            height: 320,
             child: Stack(
               alignment: Alignment.center,
               children: [
@@ -731,8 +715,8 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
                     animation: _glowController,
                     builder: (context, child) {
                       return Container(
-                        width: 280 + _glowController.value * 30,
-                        height: 280 + _glowController.value * 30,
+                        width: 300 + _glowController.value * 30,
+                        height: 300 + _glowController.value * 30,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           gradient: RadialGradient(
@@ -748,8 +732,8 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
                   ),
                 // Main circular background
                 Container(
-                  width: 260,
-                  height: 260,
+                  width: 280,
+                  height: 280,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     gradient: LinearGradient(
@@ -774,14 +758,17 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
                     ],
                   ),
                 ),
-                // Progress ring
+                // Progress ring with scale markings
                 CustomPaint(
-                  size: const Size(240, 240),
+                  size: const Size(260, 260),
                   painter: _SpeedGaugePainter(
                     progress: (animatedSpeed / maxSpeed).clamp(0, 1),
                     color: _getSpeedColor(animatedSpeed),
                     backgroundColor: colorScheme.surfaceContainerHigh,
                     isActive: isActive,
+                    maxSpeed: maxSpeed,
+                    speedUnit: _speedUnit,
+                    textColor: colorScheme.onSurfaceVariant,
                   ),
                 ),
                 // Inner pulse ring
@@ -815,7 +802,9 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
                         ],
                       ).createShader(bounds),
                       child: Text(
-                        animatedSpeed.toStringAsFixed(1),
+                        animatedSpeed < 100
+                            ? animatedSpeed.toStringAsFixed(1)
+                            : animatedSpeed.toStringAsFixed(0),
                         style: textTheme.displayLarge?.copyWith(
                           fontWeight: FontWeight.w800,
                           color: Colors.white,
@@ -1038,11 +1027,16 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       _speedUnit == SpeedUnit.mbps ? 'Mbps' : 'MB/s';
 
   Color _getSpeedColor(double speed) {
-    final threshold = _speedUnit == SpeedUnit.mbps ? 1.0 : 0.125;
-    if (speed >= 100 * threshold) return Colors.green;
-    if (speed >= 50 * threshold) return Colors.lightGreen;
-    if (speed >= 20 * threshold) return Colors.orange;
-    if (speed >= 5 * threshold) return Colors.deepOrange;
+    // 基于10000 Mbps最大值的颜色阈值
+    final maxSpeed = _speedUnit == SpeedUnit.mbps ? 10000.0 : 1250.0;
+    final percentage = speed / maxSpeed;
+
+    if (percentage >= 0.5) return Colors.green; // >= 5000 Mbps / 625 MB/s
+    if (percentage >= 0.25)
+      return Colors.lightGreen; // >= 2500 Mbps / 312.5 MB/s
+    if (percentage >= 0.1) return Colors.amber; // >= 1000 Mbps / 125 MB/s
+    if (percentage >= 0.05) return Colors.orange; // >= 500 Mbps / 62.5 MB/s
+    if (percentage >= 0.01) return Colors.deepOrange; // >= 100 Mbps / 12.5 MB/s
     return Colors.red;
   }
 }
@@ -1052,18 +1046,34 @@ class _SpeedGaugePainter extends CustomPainter {
   final Color color;
   final Color backgroundColor;
   final bool isActive;
+  final double maxSpeed;
+  final SpeedUnit speedUnit;
+  final Color textColor;
 
   _SpeedGaugePainter({
     required this.progress,
     required this.color,
     required this.backgroundColor,
     this.isActive = false,
+    required this.maxSpeed,
+    required this.speedUnit,
+    required this.textColor,
   });
+
+  // 刻度值 - Mbps: 0, 50, 100, 250, 500, 1000, 2500, 5000, 10000
+  // MB/s: 0, 6.25, 12.5, 31.25, 62.5, 125, 312.5, 625, 1250
+  List<double> get _scaleValues {
+    if (speedUnit == SpeedUnit.mbps) {
+      return [0, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
+    } else {
+      return [0, 6.25, 12.5, 31.25, 62.5, 125, 312.5, 625, 1250];
+    }
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2 - 16;
+    final radius = size.width / 2 - 20;
     const startAngle = 135 * math.pi / 180;
     const sweepAngle = 270 * math.pi / 180;
 
@@ -1071,7 +1081,7 @@ class _SpeedGaugePainter extends CustomPainter {
     final bgPaint = Paint()
       ..color = backgroundColor.withOpacity(0.4)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 20
+      ..strokeWidth = 16
       ..strokeCap = StrokeCap.round;
 
     canvas.drawArc(
@@ -1082,6 +1092,9 @@ class _SpeedGaugePainter extends CustomPainter {
       bgPaint,
     );
 
+    // Draw scale markings and labels
+    _drawScaleMarkings(canvas, center, radius, startAngle, sweepAngle);
+
     // Progress bar
     if (progress > 0) {
       final progressPaint = Paint()
@@ -1091,7 +1104,7 @@ class _SpeedGaugePainter extends CustomPainter {
           colors: _getGradientColors(),
         ).createShader(Rect.fromCircle(center: center, radius: radius))
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 20
+        ..strokeWidth = 16
         ..strokeCap = StrokeCap.round;
 
       canvas.drawArc(
@@ -1112,12 +1125,108 @@ class _SpeedGaugePainter extends CustomPainter {
         final glowPaint = Paint()
           ..color = color.withOpacity(0.5)
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12);
-        canvas.drawCircle(endPoint, 16, glowPaint);
+        canvas.drawCircle(endPoint, 14, glowPaint);
 
         final dotPaint = Paint()
           ..color = Colors.white
           ..style = PaintingStyle.fill;
-        canvas.drawCircle(endPoint, 8, dotPaint);
+        canvas.drawCircle(endPoint, 6, dotPaint);
+      }
+    }
+  }
+
+  void _drawScaleMarkings(Canvas canvas, Offset center, double radius,
+      double startAngle, double sweepAngle) {
+    final tickPaint = Paint()
+      ..color = textColor.withOpacity(0.6)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+
+    final smallTickPaint = Paint()
+      ..color = textColor.withOpacity(0.3)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+
+    final textPainter = TextPainter(
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+    );
+
+    final scaleValues = _scaleValues;
+    final outerRadius = radius + 8;
+    final innerRadius = radius - 24;
+    final labelRadius = radius + 28;
+
+    for (int i = 0; i < scaleValues.length; i++) {
+      final value = scaleValues[i];
+      final normalizedValue = value / maxSpeed;
+      final angle = startAngle + sweepAngle * normalizedValue;
+
+      // 主刻度线
+      final outerX = center.dx + outerRadius * math.cos(angle);
+      final outerY = center.dy + outerRadius * math.sin(angle);
+      final innerX = center.dx + innerRadius * math.cos(angle);
+      final innerY = center.dy + innerRadius * math.sin(angle);
+
+      canvas.drawLine(
+        Offset(innerX, innerY),
+        Offset(outerX, outerY),
+        tickPaint,
+      );
+
+      // 刻度标签
+      final labelX = center.dx + labelRadius * math.cos(angle);
+      final labelY = center.dy + labelRadius * math.sin(angle);
+
+      String labelText;
+      if (speedUnit == SpeedUnit.mbps) {
+        if (value >= 1000) {
+          labelText =
+              '${(value / 1000).toStringAsFixed(value % 1000 == 0 ? 0 : 1)}k';
+        } else {
+          labelText = value.toStringAsFixed(0);
+        }
+      } else {
+        if (value >= 100) {
+          labelText = value.toStringAsFixed(0);
+        } else if (value >= 10) {
+          labelText = value.toStringAsFixed(value % 1 == 0 ? 0 : 1);
+        } else {
+          labelText = value.toStringAsFixed(value % 1 == 0 ? 0 : 2);
+        }
+      }
+
+      textPainter.text = TextSpan(
+        text: labelText,
+        style: TextStyle(
+          color: textColor.withOpacity(0.7),
+          fontSize: 9,
+          fontWeight: FontWeight.w500,
+        ),
+      );
+      textPainter.layout();
+      textPainter.paint(
+        canvas,
+        Offset(labelX - textPainter.width / 2, labelY - textPainter.height / 2),
+      );
+
+      // 在主刻度之间绘制小刻度
+      if (i < scaleValues.length - 1) {
+        final nextValue = scaleValues[i + 1];
+        final midValue = (value + nextValue) / 2;
+        final midNormalized = midValue / maxSpeed;
+        final midAngle = startAngle + sweepAngle * midNormalized;
+
+        final midOuterX = center.dx + (outerRadius - 4) * math.cos(midAngle);
+        final midOuterY = center.dy + (outerRadius - 4) * math.sin(midAngle);
+        final midInnerX = center.dx + (innerRadius + 8) * math.cos(midAngle);
+        final midInnerY = center.dy + (innerRadius + 8) * math.sin(midAngle);
+
+        canvas.drawLine(
+          Offset(midInnerX, midInnerY),
+          Offset(midOuterX, midOuterY),
+          smallTickPaint,
+        );
       }
     }
   }
@@ -1134,7 +1243,9 @@ class _SpeedGaugePainter extends CustomPainter {
   bool shouldRepaint(covariant _SpeedGaugePainter oldDelegate) {
     return oldDelegate.progress != progress ||
         oldDelegate.color != color ||
-        oldDelegate.isActive != isActive;
+        oldDelegate.isActive != isActive ||
+        oldDelegate.maxSpeed != maxSpeed ||
+        oldDelegate.speedUnit != speedUnit;
   }
 }
 
