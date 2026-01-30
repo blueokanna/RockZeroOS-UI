@@ -22,7 +22,13 @@ class SecureHlsProxyServer {
   int _segmentCounter = 0;
 
   final Map<String, Uint8List> _segmentCache = {};
-  static const int _maxCacheSize = 20;
+  static const int _maxCacheSize = 10;
+
+  // Pending requests to avoid duplicate fetches
+  final Map<String, Completer<Uint8List>> _pendingRequests = {};
+
+  // Derived encryption key (cached)
+  Uint8List? _encryptionKey;
 
   SecureHlsProxyServer({
     required this.baseUrl,
@@ -31,7 +37,15 @@ class SecureHlsProxyServer {
     this.jwtToken = '',
     this.bulletproofsService,
     this.onSegmentLoaded,
-  });
+  }) {
+    // Pre-derive the encryption key
+    _encryptionKey = _deriveKey(pmk, 'hls-master-key');
+    debugPrint('[SecureHLS Proxy] Encryption key derived');
+    debugPrint(
+        '[SecureHLS Proxy] PMK: ${pmk.sublist(0, 8).map((b) => b.toRadixString(16).padLeft(2, '0')).join()}...');
+    debugPrint(
+        '[SecureHLS Proxy] Key: ${_encryptionKey!.sublist(0, 8).map((b) => b.toRadixString(16).padLeft(2, '0')).join()}...');
+  }
 
   Future<String> start() async {
     try {
@@ -40,8 +54,6 @@ class SecureHlsProxyServer {
 
       debugPrint('[SecureHLS Proxy] Started on http://127.0.0.1:$_port');
       debugPrint('[SecureHLS Proxy] Session: $sessionId');
-      debugPrint(
-          '[SecureHLS Proxy] Security: SAE + AES-256-GCM + Bulletproofs ZKP');
 
       _server!.listen(_handleRequest);
 
@@ -58,6 +70,7 @@ class SecureHlsProxyServer {
     _port = null;
     _segmentCounter = 0;
     _segmentCache.clear();
+    _pendingRequests.clear();
     debugPrint('[SecureHLS Proxy] Stopped');
   }
 
@@ -110,9 +123,11 @@ class SecureHlsProxyServer {
     } catch (e, stack) {
       debugPrint('[SecureHLS Proxy] Error: $e');
       debugPrint('[SecureHLS Proxy] Stack: $stack');
-      request.response.statusCode = HttpStatus.internalServerError;
-      request.response.write('Internal Server Error');
-      await request.response.close();
+      try {
+        request.response.statusCode = HttpStatus.internalServerError;
+        request.response.write('Internal Server Error');
+        await request.response.close();
+      } catch (_) {}
     }
   }
 
@@ -121,6 +136,7 @@ class SecureHlsProxyServer {
       final playlistUrl = '$baseUrl/api/v1/secure-hls/$sessionId/playlist.m3u8';
 
       final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 30);
       final req = await client.getUrl(Uri.parse(playlistUrl));
       if (jwtToken.isNotEmpty) {
         req.headers.add('Authorization', 'Bearer $jwtToken');
@@ -145,6 +161,7 @@ class SecureHlsProxyServer {
         request.response.statusCode = response.statusCode;
         request.response.write('Failed to fetch playlist');
       }
+      client.close();
     } catch (e) {
       debugPrint('[SecureHLS Proxy] Playlist error: $e');
       request.response.statusCode = HttpStatus.internalServerError;
@@ -162,13 +179,12 @@ class SecureHlsProxyServer {
   }
 
   Future<void> _handleSegmentRequest(HttpRequest request, String path) async {
+    final segmentName = path.substring(1);
+
     try {
-      final segmentName = path.substring(1);
-      final segmentIndex = _segmentCounter++;
+      debugPrint('[SecureHLS Proxy] Fetching segment: $segmentName');
 
-      debugPrint(
-          '[SecureHLS Proxy] Fetching segment: $segmentName (index: $segmentIndex)');
-
+      // Check cache first
       if (_segmentCache.containsKey(segmentName)) {
         debugPrint('[SecureHLS Proxy] Cache hit for $segmentName');
         final cachedData = _segmentCache[segmentName]!;
@@ -176,113 +192,123 @@ class SecureHlsProxyServer {
         return;
       }
 
-      final secureParams = _generateSecureParams(segmentName);
-
-      VideoStreamProof? zkpProof;
-      if (bulletproofsService != null) {
-        try {
-          zkpProof = await bulletproofsService!
-              .createVideoStreamProof(
-                sessionId: sessionId,
-                segmentIndex: segmentIndex,
-                content: Uint8List.fromList(utf8.encode(segmentName)),
-              )
-              .timeout(const Duration(seconds: 2));
-          if (zkpProof != null) {
-            debugPrint(
-                '[SecureHLS Proxy] ✅ ZKP proof created for segment $segmentIndex');
-          }
-        } catch (e) {
-          debugPrint('[SecureHLS Proxy] ⚠️ ZKP proof creation failed: $e');
-        }
-      }
-
-      Uint8List? decryptedData;
-      int retryCount = 0;
-      const maxRetries = 2;
-
-      while (decryptedData == null && retryCount <= maxRetries) {
-        try {
-          decryptedData = await _fetchAndDecryptSegment(
-            segmentName,
-            secureParams,
-            zkpProof,
-          ).timeout(const Duration(seconds: 30));
-        } catch (e) {
-          retryCount++;
-          debugPrint(
-              '[SecureHLS Proxy] Segment fetch failed (attempt $retryCount): $e');
-          if (retryCount <= maxRetries) {
-            await Future.delayed(Duration(milliseconds: 200 * retryCount));
-          }
-        }
-      }
-
-      if (decryptedData != null) {
-        _cacheSegment(segmentName, decryptedData);
-        _serveSegment(request, decryptedData, segmentName);
-      } else {
+      // Check if there's already a pending request for this segment
+      if (_pendingRequests.containsKey(segmentName)) {
         debugPrint(
-            '[SecureHLS Proxy] Failed to fetch segment after $maxRetries retries');
+            '[SecureHLS Proxy] Waiting for pending request: $segmentName');
+        try {
+          final data = await _pendingRequests[segmentName]!.future;
+          _serveSegment(request, data, segmentName);
+        } catch (e) {
+          request.response.statusCode = HttpStatus.serviceUnavailable;
+          request.response.write('Failed to fetch segment');
+          await request.response.close();
+        }
+        return;
+      }
+
+      // Create a new pending request
+      final completer = Completer<Uint8List>();
+      _pendingRequests[segmentName] = completer;
+
+      try {
+        final decryptedData = await _fetchAndDecryptSegmentWithRetry(
+          segmentName,
+          maxRetries: 3,
+        );
+
+        _cacheSegment(segmentName, decryptedData);
+        completer.complete(decryptedData);
+        _serveSegment(request, decryptedData, segmentName);
+      } catch (e) {
+        completer.completeError(e);
+        debugPrint('[SecureHLS Proxy] Failed to fetch segment: $e');
         request.response.statusCode = HttpStatus.serviceUnavailable;
-        request.response.write('Failed to fetch segment');
+        request.response.write('Failed to fetch segment: $e');
         await request.response.close();
+      } finally {
+        _pendingRequests.remove(segmentName);
       }
     } catch (e, stack) {
       debugPrint('[SecureHLS Proxy] Segment error: $e');
       debugPrint('[SecureHLS Proxy] Stack: $stack');
-      request.response.statusCode = HttpStatus.internalServerError;
-      request.response.write('Error: $e');
-      await request.response.close();
+      try {
+        request.response.statusCode = HttpStatus.internalServerError;
+        request.response.write('Error: $e');
+        await request.response.close();
+      } catch (_) {}
     }
+  }
+
+  Future<Uint8List> _fetchAndDecryptSegmentWithRetry(
+    String segmentName, {
+    int maxRetries = 3,
+  }) async {
+    Exception? lastError;
+
+    for (int attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        final secureParams = _generateSecureParams(segmentName);
+        return await _fetchAndDecryptSegment(segmentName, secureParams)
+            .timeout(const Duration(seconds: 60));
+      } catch (e) {
+        lastError = e is Exception ? e : Exception(e.toString());
+        debugPrint(
+            '[SecureHLS Proxy] Attempt $attempt failed for $segmentName: $e');
+        if (attempt < maxRetries) {
+          await Future.delayed(Duration(milliseconds: 500 * attempt));
+        }
+      }
+    }
+
+    throw lastError ??
+        Exception('Failed to fetch segment after $maxRetries attempts');
   }
 
   Future<Uint8List> _fetchAndDecryptSegment(
     String segmentName,
     Map<String, String> secureParams,
-    VideoStreamProof? zkpProof,
   ) async {
     final segmentUrl =
         Uri.parse('$baseUrl/api/v1/secure-hls/$sessionId/$segmentName')
             .replace(queryParameters: secureParams);
 
     final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 30);
+    client.connectionTimeout = const Duration(seconds: 60);
 
-    final backendRequest = await client.postUrl(segmentUrl);
-    backendRequest.headers.contentType = ContentType.json;
-    if (jwtToken.isNotEmpty) {
-      backendRequest.headers.add('Authorization', 'Bearer $jwtToken');
-    }
-
-    final requestBody = <String, dynamic>{};
-    if (zkpProof != null) {
-      requestBody['zkp_proof'] = zkpProof.toJson();
-    }
-    backendRequest.write(jsonEncode(requestBody));
-
-    final backendResponse = await backendRequest.close();
-
-    if (backendResponse.statusCode == 200) {
-      final encryptedData = await backendResponse.fold<List<int>>(
-        [],
-        (previous, element) => previous..addAll(element),
-      );
-
-      debugPrint(
-          '[SecureHLS Proxy] Received ${encryptedData.length} bytes encrypted data for $segmentName');
-
-      // Validate minimum size: 12 (nonce) + 16 (tag) + at least some data
-      if (encryptedData.length < 1024) {
-        throw Exception(
-            'Received invalid segment data: only ${encryptedData.length} bytes (expected at least 1KB)');
+    try {
+      final backendRequest = await client.postUrl(segmentUrl);
+      backendRequest.headers.contentType = ContentType.json;
+      if (jwtToken.isNotEmpty) {
+        backendRequest.headers.add('Authorization', 'Bearer $jwtToken');
       }
+      backendRequest.write(jsonEncode({}));
 
-      return _decryptSegment(Uint8List.fromList(encryptedData));
-    } else {
-      final errorBody = await backendResponse.transform(utf8.decoder).join();
-      throw Exception(
-          'Backend error: ${backendResponse.statusCode} - $errorBody');
+      final backendResponse = await backendRequest.close();
+
+      if (backendResponse.statusCode == 200) {
+        final encryptedData = await backendResponse.fold<List<int>>(
+          [],
+          (previous, element) => previous..addAll(element),
+        );
+
+        debugPrint(
+            '[SecureHLS Proxy] Received ${encryptedData.length} bytes for $segmentName');
+
+        // Minimum valid size: 12 (nonce) + 16 (tag) + some data
+        if (encryptedData.length < 100) {
+          throw Exception(
+              'Invalid segment: only ${encryptedData.length} bytes');
+        }
+
+        return _decryptSegment(Uint8List.fromList(encryptedData));
+      } else {
+        final errorBody = await backendResponse.transform(utf8.decoder).join();
+        throw Exception(
+            'Server error ${backendResponse.statusCode}: $errorBody');
+      }
+    } finally {
+      client.close();
     }
   }
 
@@ -295,62 +321,48 @@ class SecureHlsProxyServer {
     request.response.close();
 
     onSegmentLoaded?.call(data.length, true);
+    _segmentCounter++;
 
     debugPrint(
-        '[SecureHLS Proxy] ✅ Segment served: $segmentName (${data.length} bytes)');
+        '[SecureHLS Proxy] ✅ Served $segmentName (${data.length} bytes)');
   }
 
   void _cacheSegment(String segmentName, Uint8List data) {
-    // Only cache valid segments (at least 1KB)
-    if (data.length < 1024) {
-      debugPrint(
-          '[SecureHLS Proxy] ⚠️ Not caching invalid segment $segmentName (${data.length} bytes)');
+    if (data.length < 100) {
+      debugPrint('[SecureHLS Proxy] Not caching invalid segment $segmentName');
       return;
     }
 
     if (_segmentCache.length >= _maxCacheSize) {
       final oldestKey = _segmentCache.keys.first;
       _segmentCache.remove(oldestKey);
-      debugPrint('[SecureHLS Proxy] Evicted cached segment: $oldestKey');
     }
     _segmentCache[segmentName] = data;
-    debugPrint(
-        '[SecureHLS Proxy] Cached segment $segmentName (${data.length} bytes)');
   }
 
   Uint8List _decryptSegment(Uint8List encryptedData) {
-    // Minimum size: 12 (nonce) + 16 (GCM tag) + at least 1 byte of data
     if (encryptedData.length < 29) {
       throw Exception(
-          'Invalid encrypted data: too short (${encryptedData.length} bytes, need at least 29)');
+          'Encrypted data too short: ${encryptedData.length} bytes');
     }
 
+    final nonce = encryptedData.sublist(0, 12);
+    final ciphertextWithTag = encryptedData.sublist(12);
+
+    debugPrint(
+        '[SecureHLS Proxy] Decrypting: nonce=${nonce.length}B, data=${ciphertextWithTag.length}B');
+
     try {
-      final nonce = encryptedData.sublist(0, 12);
-      final ciphertextWithTag = encryptedData.sublist(12);
-
-      final decryptionKey = _deriveKey(pmk, 'hls-master-key');
-
-      debugPrint(
-          '[SecureHLS Proxy] Decrypting: nonce=${nonce.length}B, ciphertext=${ciphertextWithTag.length}B, key=${decryptionKey.length}B');
-      debugPrint(
-          '[SecureHLS Proxy] PMK first 8 bytes: ${pmk.sublist(0, 8).map((b) => b.toRadixString(16).padLeft(2, '0')).join()}');
-      debugPrint(
-          '[SecureHLS Proxy] Derived key first 8 bytes: ${decryptionKey.sublist(0, 8).map((b) => b.toRadixString(16).padLeft(2, '0')).join()}');
-
       final decrypted = _aesGcmDecrypt(
         ciphertextWithTag: ciphertextWithTag,
-        key: decryptionKey,
+        key: _encryptionKey!,
         nonce: nonce,
       );
 
-      debugPrint(
-          '[SecureHLS Proxy] ✅ Decryption successful: ${decrypted.length} bytes');
-
+      debugPrint('[SecureHLS Proxy] ✅ Decrypted ${decrypted.length} bytes');
       return decrypted;
-    } catch (e, stack) {
-      debugPrint('[SecureHLS Proxy] ❌ Decryption error: $e');
-      debugPrint('[SecureHLS Proxy] Stack: $stack');
+    } catch (e) {
+      debugPrint('[SecureHLS Proxy] ❌ Decryption failed: $e');
       rethrow;
     }
   }
@@ -361,13 +373,13 @@ class SecureHlsProxyServer {
     required Uint8List nonce,
   }) {
     if (key.length != 32) {
-      throw ArgumentError('AES-256 requires 32-byte key, got ${key.length}');
+      throw ArgumentError('Key must be 32 bytes, got ${key.length}');
     }
     if (nonce.length != 12) {
-      throw ArgumentError('GCM requires 12-byte nonce, got ${nonce.length}');
+      throw ArgumentError('Nonce must be 12 bytes, got ${nonce.length}');
     }
     if (ciphertextWithTag.length < 16) {
-      throw ArgumentError('Ciphertext too short, must include 16-byte tag');
+      throw ArgumentError('Ciphertext too short');
     }
 
     final cipher = GCMBlockCipher(AESEngine());
@@ -379,32 +391,24 @@ class SecureHlsProxyServer {
     );
 
     cipher.init(false, params);
-
-    try {
-      return cipher.process(ciphertextWithTag);
-    } catch (e) {
-      throw Exception(
-          'GCM decryption failed: Authentication tag verification failed');
-    }
+    return cipher.process(ciphertextWithTag);
   }
 
-  /// HKDF-Blake3 key derivation - matches server-side implementation exactly
-  /// Server uses: PRK = hash(salt + ikm), then expand with hash(prk + t + info + counter)
+  /// HKDF-Blake3 key derivation - matches server implementation exactly
   Uint8List _deriveKey(Uint8List ikm, String info) {
     final infoBytes = Uint8List.fromList(utf8.encode(info));
     final salt = Uint8List(32); // Zero salt
 
-    // Extract phase: PRK = hash(salt + ikm)
+    // Extract: PRK = hash(salt + ikm)
     final prkInput = Uint8List.fromList([...salt, ...ikm]);
     final prk = Uint8List.fromList(blake3.blake3(prkInput, 32));
 
-    // Expand phase: hash(prk + t + info + counter)
+    // Expand: hash(prk + t + info + counter)
     final output = <int>[];
     var t = Uint8List(0);
     var counter = 1;
 
     while (output.length < 32) {
-      // Server does: prk + t + info + counter
       final expandInput = Uint8List.fromList([
         ...prk,
         ...t,

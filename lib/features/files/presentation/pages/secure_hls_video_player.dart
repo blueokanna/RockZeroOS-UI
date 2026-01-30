@@ -76,6 +76,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   SecureHlsProxyServer? _proxyServer;
 
   bool _isLoading = true;
+  bool _isInitializing = false;
   String _loadingStatus = '初始化...';
   double _loadingProgress = 0;
   String? _error;
@@ -88,12 +89,13 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   bool _isDownloading = false;
   double _downloadProgress = 0;
   bool _isLooping = false;
+  bool _isDisposed = false;
 
   final SecureStreamStats _stats = SecureStreamStats();
   Timer? _statsUpdateTimer;
 
   int _prebufferedSegments = 0;
-  static const int _prebufferTarget = 3;
+  static const int _prebufferTarget = 2;
 
   late Color _primaryColor;
 
@@ -109,12 +111,15 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _primaryColor = Theme.of(context).colorScheme.primary;
-    if (_videoController == null && _error == null) {
+    if (!_isInitializing && _videoController == null && _error == null) {
+      _isInitializing = true;
       _initPlayer();
     }
   }
 
   Future<void> _initPlayer() async {
+    if (_isDisposed) return;
+
     try {
       setState(() {
         _isLoading = true;
@@ -129,20 +134,26 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       _userPassword = await storage.read(key: 'user_password_hash');
 
       if (_authToken == null || _authToken!.isEmpty) {
-        setState(() {
-          _error = '未登录，请先登录';
-          _isLoading = false;
-        });
+        if (mounted && !_isDisposed) {
+          setState(() {
+            _error = '未登录，请先登录';
+            _isLoading = false;
+          });
+        }
         return;
       }
 
       if (_userId == null || _userPassword == null) {
-        setState(() {
-          _error = '无法获取用户凭据，请重新登录';
-          _isLoading = false;
-        });
+        if (mounted && !_isDisposed) {
+          setState(() {
+            _error = '无法获取用户凭据，请重新登录';
+            _isLoading = false;
+          });
+        }
         return;
       }
+
+      if (_isDisposed) return;
 
       setState(() {
         _loadingStatus = '正在建立SAE安全握手...';
@@ -160,6 +171,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         password: _userPassword!,
         userId: _userId!,
       );
+
+      if (_isDisposed) return;
 
       _hlsSessionId = sessionId;
       _pmk = pmk;
@@ -180,22 +193,12 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       final proxyPlaylistUrl = await _proxyServer!.start();
       debugPrint('[SecureHLS] Proxy server started: $proxyPlaylistUrl');
 
-      setState(() {
-        _loadingStatus = '正在预缓冲视频片段...';
-        _loadingProgress = 0.5;
-      });
-
-      await _prebufferSegments();
+      if (_isDisposed) return;
 
       setState(() {
         _loadingStatus = '正在初始化播放器...';
-        _loadingProgress = 0.8;
+        _loadingProgress = 0.7;
       });
-
-      _chewieController?.dispose();
-      _chewieController = null;
-      _videoController?.dispose();
-      _videoController = null;
 
       _videoController = VideoPlayerController.networkUrl(
         Uri.parse(proxyPlaylistUrl),
@@ -211,11 +214,16 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       _videoController!.addListener(_onVideoControllerUpdate);
 
       await _videoController!.initialize().timeout(
-        const Duration(seconds: 60),
+        const Duration(seconds: 120),
         onTimeout: () {
-          throw TimeoutException('视频加载超时');
+          throw TimeoutException('视频加载超时，请检查网络连接');
         },
       );
+
+      if (_isDisposed) {
+        _videoController?.dispose();
+        return;
+      }
 
       _videoController!.setLooping(_isLooping);
 
@@ -247,10 +255,10 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       );
 
       _statsUpdateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (mounted) setState(() {});
+        if (mounted && !_isDisposed) setState(() {});
       });
 
-      if (mounted) {
+      if (mounted && !_isDisposed) {
         setState(() {
           _isLoading = false;
           _loadingProgress = 1.0;
@@ -261,87 +269,24 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     } catch (e, stack) {
       debugPrint('[SecureHLS] Error: $e');
       debugPrint('[SecureHLS] Stack: $stack');
-      if (mounted) {
+      if (mounted && !_isDisposed) {
         setState(() {
           _error = '播放失败: $e';
           _isLoading = false;
         });
       }
+    } finally {
+      _isInitializing = false;
     }
   }
 
   void _onVideoControllerUpdate() {
-    if (_videoController == null || !mounted) return;
+    if (_videoController == null || !mounted || _isDisposed) return;
 
     final value = _videoController!.value;
 
     if (value.hasError) {
       debugPrint('[SecureHLS] Video error: ${value.errorDescription}');
-      _attemptRecovery();
-    }
-  }
-
-  int _stallCount = 0;
-
-  Future<void> _attemptRecovery() async {
-    if (_stallCount >= 3) {
-      debugPrint('[SecureHLS] Too many recovery attempts, giving up');
-      return;
-    }
-
-    _stallCount++;
-    debugPrint('[SecureHLS] Attempting recovery (attempt $_stallCount)');
-
-    try {
-      final currentPosition = _videoController?.value.position ?? Duration.zero;
-
-      await _videoController?.pause();
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      await _videoController?.seekTo(currentPosition);
-      await Future.delayed(const Duration(milliseconds: 200));
-
-      await _videoController?.play();
-
-      debugPrint('[SecureHLS] Recovery successful');
-    } catch (e) {
-      debugPrint('[SecureHLS] Recovery failed: $e');
-    }
-  }
-
-  Future<void> _prebufferSegments() async {
-    if (_proxyServer == null || _hlsSessionId == null) return;
-
-    try {
-      for (int i = 0; i < _prebufferTarget; i++) {
-        if (!mounted) break;
-
-        setState(() {
-          _loadingStatus = '预缓冲片段 ${i + 1}/$_prebufferTarget...';
-          _loadingProgress = 0.5 + (0.3 * (i + 1) / _prebufferTarget);
-        });
-
-        final segmentUrl =
-            '${widget.baseUrl}/api/v1/secure-hls/$_hlsSessionId/segment_$i.ts';
-
-        try {
-          final response = await http.head(
-            Uri.parse(segmentUrl),
-            headers: {'Authorization': 'Bearer $_authToken'},
-          ).timeout(const Duration(seconds: 15));
-
-          if (response.statusCode == 200) {
-            _prebufferedSegments++;
-            debugPrint('[SecureHLS] Prebuffered segment $i');
-          }
-        } catch (e) {
-          debugPrint('[SecureHLS] Prebuffer segment $i failed: $e');
-        }
-
-        await Future.delayed(const Duration(milliseconds: 200));
-      }
-    } catch (e) {
-      debugPrint('[SecureHLS] Prebuffer error: $e');
     }
   }
 
@@ -511,42 +456,74 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   }
 
   Future<void> _retry() async {
-    await _cleanupHlsSession();
-    _chewieController?.dispose();
-    _videoController?.dispose();
-    _chewieController = null;
-    _videoController = null;
+    await _cleanupAll();
+    _isInitializing = false;
     _prebufferedSegments = 0;
     await _initPlayer();
   }
 
-  Future<void> _cleanupHlsSession() async {
+  Future<void> _cleanupAll() async {
+    debugPrint('[SecureHLS] Starting cleanup...');
+
     _statsUpdateTimer?.cancel();
     _statsUpdateTimer = null;
 
+    // Stop video controller first
+    try {
+      _videoController?.removeListener(_onVideoControllerUpdate);
+      await _videoController?.pause();
+    } catch (e) {
+      debugPrint('[SecureHLS] Error pausing video: $e');
+    }
+
+    // Dispose chewie controller
+    try {
+      _chewieController?.dispose();
+    } catch (e) {
+      debugPrint('[SecureHLS] Error disposing chewie: $e');
+    }
+    _chewieController = null;
+
+    // Dispose video controller
+    try {
+      _videoController?.dispose();
+    } catch (e) {
+      debugPrint('[SecureHLS] Error disposing video controller: $e');
+    }
+    _videoController = null;
+
+    // Stop proxy server
     if (_proxyServer != null) {
-      await _proxyServer!.stop();
+      try {
+        await _proxyServer!.stop();
+      } catch (e) {
+        debugPrint('[SecureHLS] Error stopping proxy: $e');
+      }
       _proxyServer = null;
     }
 
+    // Stop HLS session on server
     if (_hlsSessionId != null && _authToken != null) {
       try {
         await http.post(
           Uri.parse('${widget.baseUrl}/api/v1/secure-hls/$_hlsSessionId/stop'),
           headers: {'Authorization': 'Bearer $_authToken'},
-        );
+        ).timeout(const Duration(seconds: 5));
+        debugPrint('[SecureHLS] Server session stopped');
       } catch (e) {
-        debugPrint('[SecureHLS] Failed to stop HLS session: $e');
+        debugPrint('[SecureHLS] Failed to stop server session: $e');
       }
-      _hlsSessionId = null;
     }
+    _hlsSessionId = null;
+    _pmk = null;
+
+    debugPrint('[SecureHLS] Cleanup completed');
   }
 
   @override
   void dispose() {
-    _cleanupHlsSession();
-    _chewieController?.dispose();
-    _videoController?.dispose();
+    _isDisposed = true;
+    _cleanupAll();
     _exitFullscreen();
     WakelockPlus.disable();
     super.dispose();
@@ -563,7 +540,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       DeviceOrientation.portraitUp,
     ]);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
+      if (mounted && !_isDisposed) {
         ref.read(bottomNavVisibleProvider.notifier).hide();
       }
     });
@@ -580,7 +557,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
-    ref.read(bottomNavVisibleProvider.notifier).show();
+    if (mounted) {
+      ref.read(bottomNavVisibleProvider.notifier).show();
+    }
   }
 
   Future<void> _downloadFile() async {
@@ -718,12 +697,12 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
                         color: Colors.green.withValues(alpha: 0.5),
                       ),
                     ),
-                    child: Row(
+                    child: const Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.lock, size: 14, color: Colors.green),
-                        const SizedBox(width: 6),
-                        const Text(
+                        Icon(Icons.lock, size: 14, color: Colors.green),
+                        SizedBox(width: 6),
+                        Text(
                           'SECURE',
                           style: TextStyle(
                             fontSize: 11,
@@ -807,9 +786,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
               children: [
                 _buildSecurityChip('SAE握手', _loadingProgress >= 0.3),
                 _buildSecurityChip('AES-256-GCM', _loadingProgress >= 0.4),
-                _buildSecurityChip(
-                    '预缓冲 $_prebufferedSegments/$_prebufferTarget',
-                    _loadingProgress >= 0.5),
+                _buildSecurityChip('安全代理', _loadingProgress >= 0.5),
               ],
             ),
           ],
