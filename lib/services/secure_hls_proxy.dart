@@ -16,6 +16,7 @@ import 'bulletproofs_ffi.dart';
 /// - Decrypts video segments using SAE-derived PMK
 /// - Generates Bulletproofs ZKP proof for each video segment
 /// - Replay attack protection (timestamp + nonce + signature)
+/// - Callback for segment load statistics
 class SecureHlsProxyServer {
   HttpServer? _server;
   int? _port;
@@ -24,12 +25,14 @@ class SecureHlsProxyServer {
   final Uint8List pmk;
   final String jwtToken;
   final BulletproofsService? bulletproofsService;
+  final void Function(int bytes, bool decrypted)? onSegmentLoaded;
   final Random _random = Random.secure();
   int _segmentCounter = 0;
 
   // Cache for verified segments
   final Map<String, Uint8List> _segmentCache = {};
-  static const int _maxCacheSize = 10;
+  static const int _maxCacheSize =
+      20; // Increased cache size for smoother playback
 
   SecureHlsProxyServer({
     required this.baseUrl,
@@ -37,6 +40,7 @@ class SecureHlsProxyServer {
     required this.pmk,
     this.jwtToken = '',
     this.bulletproofsService,
+    this.onSegmentLoaded,
   });
 
   /// Start the proxy server
@@ -275,6 +279,9 @@ class SecureHlsProxyServer {
     request.response.headers.add('Cache-Control', 'no-cache');
     request.response.add(data);
     request.response.close();
+
+    // Notify callback
+    onSegmentLoaded?.call(data.length, true);
 
     debugPrint(
         '[SecureHLS Proxy] ✅ Segment served: $segmentName (${data.length} bytes)');

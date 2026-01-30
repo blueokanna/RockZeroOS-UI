@@ -1060,14 +1060,24 @@ class _SpeedGaugePainter extends CustomPainter {
     required this.textColor,
   });
 
-  // 刻度值 - Mbps: 0, 50, 100, 250, 500, 1000, 2500, 5000, 10000
-  // MB/s: 0, 6.25, 12.5, 31.25, 62.5, 125, 312.5, 625, 1250
+  // 使用对数刻度让刻度分布更均匀 - 像汽车时速表
+  // Mbps: 0, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000
+  // MB/s: 0, 1.25, 3.125, 6.25, 12.5, 31.25, 62.5, 125, 312.5, 625, 1250
   List<double> get _scaleValues {
     if (speedUnit == SpeedUnit.mbps) {
-      return [0, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
+      return [0, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
     } else {
-      return [0, 6.25, 12.5, 31.25, 62.5, 125, 312.5, 625, 1250];
+      return [0, 1.25, 3.125, 6.25, 12.5, 31.25, 62.5, 125, 312.5, 625, 1250];
     }
+  }
+
+  // 将线性值转换为对数刻度位置 (0-1)
+  double _valueToPosition(double value) {
+    if (value <= 0) return 0;
+    // 使用对数刻度: log(1 + value) / log(1 + maxSpeed)
+    // 这样可以让小值有更大的显示空间
+    final logValue = math.log(1 + value) / math.log(1 + maxSpeed);
+    return logValue.clamp(0.0, 1.0);
   }
 
   @override
@@ -1095,12 +1105,13 @@ class _SpeedGaugePainter extends CustomPainter {
     // Draw scale markings and labels
     _drawScaleMarkings(canvas, center, radius, startAngle, sweepAngle);
 
-    // Progress bar
-    if (progress > 0) {
+    // Progress bar - 使用对数刻度
+    final logProgress = _valueToPosition(progress * maxSpeed);
+    if (logProgress > 0) {
       final progressPaint = Paint()
         ..shader = SweepGradient(
           startAngle: startAngle,
-          endAngle: startAngle + sweepAngle * progress,
+          endAngle: startAngle + sweepAngle * logProgress,
           colors: _getGradientColors(),
         ).createShader(Rect.fromCircle(center: center, radius: radius))
         ..style = PaintingStyle.stroke
@@ -1110,14 +1121,14 @@ class _SpeedGaugePainter extends CustomPainter {
       canvas.drawArc(
         Rect.fromCircle(center: center, radius: radius),
         startAngle,
-        sweepAngle * progress,
+        sweepAngle * logProgress,
         false,
         progressPaint,
       );
 
       // Endpoint glow
       if (isActive) {
-        final endAngle = startAngle + sweepAngle * progress;
+        final endAngle = startAngle + sweepAngle * logProgress;
         final endX = center.dx + radius * math.cos(endAngle);
         final endY = center.dy + radius * math.sin(endAngle);
         final endPoint = Offset(endX, endY);
@@ -1155,11 +1166,12 @@ class _SpeedGaugePainter extends CustomPainter {
     final scaleValues = _scaleValues;
     final outerRadius = radius + 8;
     final innerRadius = radius - 24;
-    final labelRadius = radius + 28;
+    final labelRadius = radius + 32;
 
     for (int i = 0; i < scaleValues.length; i++) {
       final value = scaleValues[i];
-      final normalizedValue = value / maxSpeed;
+      // 使用对数刻度计算角度位置
+      final normalizedValue = _valueToPosition(value);
       final angle = startAngle + sweepAngle * normalizedValue;
 
       // 主刻度线
@@ -1199,9 +1211,9 @@ class _SpeedGaugePainter extends CustomPainter {
       textPainter.text = TextSpan(
         text: labelText,
         style: TextStyle(
-          color: textColor.withOpacity(0.7),
-          fontSize: 9,
-          fontWeight: FontWeight.w500,
+          color: textColor.withOpacity(0.8),
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
         ),
       );
       textPainter.layout();
@@ -1210,31 +1222,41 @@ class _SpeedGaugePainter extends CustomPainter {
         Offset(labelX - textPainter.width / 2, labelY - textPainter.height / 2),
       );
 
-      // 在主刻度之间绘制小刻度
+      // 在主刻度之间绘制小刻度 (只在相邻刻度间距足够大时)
       if (i < scaleValues.length - 1) {
         final nextValue = scaleValues[i + 1];
-        final midValue = (value + nextValue) / 2;
-        final midNormalized = midValue / maxSpeed;
-        final midAngle = startAngle + sweepAngle * midNormalized;
+        final currentPos = _valueToPosition(value);
+        final nextPos = _valueToPosition(nextValue);
 
-        final midOuterX = center.dx + (outerRadius - 4) * math.cos(midAngle);
-        final midOuterY = center.dy + (outerRadius - 4) * math.sin(midAngle);
-        final midInnerX = center.dx + (innerRadius + 8) * math.cos(midAngle);
-        final midInnerY = center.dy + (innerRadius + 8) * math.sin(midAngle);
+        // 只有当间距足够大时才绘制中间刻度
+        if ((nextPos - currentPos) > 0.08) {
+          final midValue = (value + nextValue) / 2;
+          final midNormalized = _valueToPosition(midValue);
+          final midAngle = startAngle + sweepAngle * midNormalized;
 
-        canvas.drawLine(
-          Offset(midInnerX, midInnerY),
-          Offset(midOuterX, midOuterY),
-          smallTickPaint,
-        );
+          final midOuterX = center.dx + (outerRadius - 4) * math.cos(midAngle);
+          final midOuterY = center.dy + (outerRadius - 4) * math.sin(midAngle);
+          final midInnerX = center.dx + (innerRadius + 10) * math.cos(midAngle);
+          final midInnerY = center.dy + (innerRadius + 10) * math.sin(midAngle);
+
+          canvas.drawLine(
+            Offset(midInnerX, midInnerY),
+            Offset(midOuterX, midOuterY),
+            smallTickPaint,
+          );
+        }
       }
     }
   }
 
   List<Color> _getGradientColors() {
-    if (progress < 0.25) return [Colors.red.shade400, Colors.orange.shade400];
-    if (progress < 0.5) return [Colors.orange.shade400, Colors.amber.shade400];
-    if (progress < 0.75)
+    // 基于对数位置的颜色
+    final logProgress = _valueToPosition(progress * maxSpeed);
+    if (logProgress < 0.25)
+      return [Colors.red.shade400, Colors.orange.shade400];
+    if (logProgress < 0.5)
+      return [Colors.orange.shade400, Colors.amber.shade400];
+    if (logProgress < 0.75)
       return [Colors.amber.shade400, Colors.lightGreen.shade400];
     return [Colors.lightGreen.shade400, Colors.green.shade400];
   }

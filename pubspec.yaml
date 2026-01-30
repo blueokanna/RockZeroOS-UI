@@ -98,6 +98,25 @@ dev_dependencies:
   json_serializable: ^6.9.5
   freezed: ^3.2.3
   riverpod_generator: ^3.0.3
+  flutter_launcher_icons: ^0.14.3
+
+# App icon configuration
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  image_path: "assets/images/RockZero.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#1a1a2e"
+  adaptive_icon_foreground: "assets/images/RockZero.png"
+  web:
+    generate: true
+    image_path: "assets/images/RockZero.png"
+  windows:
+    generate: true
+    image_path: "assets/images/RockZero.png"
+  macos:
+    generate: true
+    image_path: "assets/images/RockZero.png"
 
 flutter:
   uses-material-design: true
