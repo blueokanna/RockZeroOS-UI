@@ -244,8 +244,67 @@ class _EnhancedAudioPlayerPageState
     }
   }
 
-  void _seekTo(Duration position) {
-    _audioPlayer?.seek(position);
+  void _seekTo(Duration position) async {
+    if (_audioPlayer == null) return;
+
+    try {
+      // Show buffering state during seek
+      setState(() => _isBuffering = true);
+
+      await _audioPlayer!.seek(position);
+
+      // If not playing, start playback after seek
+      if (!_isPlaying) {
+        await _audioPlayer!.play();
+      }
+    } catch (e) {
+      debugPrint('[AudioPlayer] Seek error: $e');
+
+      // If seek fails, try to reinitialize at the new position
+      if (e.toString().contains('source') ||
+          e.toString().contains('position')) {
+        debugPrint(
+            '[AudioPlayer] Attempting to reinitialize at position: $position');
+        await _reinitializeAtPosition(position);
+      }
+    }
+  }
+
+  /// Reinitialize the audio player at a specific position
+  /// Used when seek fails due to buffering issues
+  Future<void> _reinitializeAtPosition(Duration position) async {
+    try {
+      final wasPlaying = _isPlaying;
+
+      // Dispose current player
+      await _audioPlayer?.stop();
+
+      // Create new audio source
+      final headers = <String, String>{};
+      if (_authToken != null && _authToken!.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $_authToken';
+      }
+
+      final streamUrl = _getStreamUrl();
+      final audioSource =
+          AudioSource.uri(Uri.parse(streamUrl), headers: headers);
+
+      // Set source and seek to position
+      await _audioPlayer!.setAudioSource(
+        audioSource,
+        initialPosition: position,
+      );
+
+      // Resume playback if was playing
+      if (wasPlaying) {
+        await _audioPlayer!.play();
+      }
+
+      debugPrint('[AudioPlayer] Reinitialized at position: $position');
+    } catch (e) {
+      debugPrint('[AudioPlayer] Reinitialize failed: $e');
+      setState(() => _error = '跳转失败，请重试');
+    }
   }
 
   void _seekForward() {

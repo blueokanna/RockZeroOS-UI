@@ -16,7 +16,6 @@ import '../../../../core/widgets/shell_scaffold.dart';
 import '../../../../services/sae_handshake_service.dart';
 import '../../../../services/secure_hls_proxy.dart';
 
-/// 安全流量统计
 class SecureStreamStats {
   int bytesReceived = 0;
   int bytesSent = 0;
@@ -51,8 +50,6 @@ class SecureStreamStats {
   }
 }
 
-/// 安全HLS视频播放器 - 使用SAE握手和AES-256-GCM加密
-/// 支持预缓冲、安全信息显示、流量统计
 class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
   final String? filePath;
   final String? fileId;
@@ -92,13 +89,11 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   double _downloadProgress = 0;
   bool _isLooping = false;
 
-  // 安全流量统计
   final SecureStreamStats _stats = SecureStreamStats();
   Timer? _statsUpdateTimer;
 
-  // 预缓冲状态
   int _prebufferedSegments = 0;
-  static const int _prebufferTarget = 3; // 预缓冲3个片段
+  static const int _prebufferTarget = 3;
 
   late Color _primaryColor;
 
@@ -149,7 +144,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         return;
       }
 
-      // SAE握手
       setState(() {
         _loadingStatus = '正在建立SAE安全握手...';
         _loadingProgress = 0.2;
@@ -175,11 +169,11 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         _loadingProgress = 0.4;
       });
 
-      // 启动本地代理服务器
       _proxyServer = SecureHlsProxyServer(
         baseUrl: widget.baseUrl,
         sessionId: _hlsSessionId!,
         pmk: _pmk!,
+        jwtToken: _authToken ?? '',
         onSegmentLoaded: _onSegmentLoaded,
       );
 
@@ -191,7 +185,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         _loadingProgress = 0.5;
       });
 
-      // 预缓冲：提前加载前几个片段
       await _prebufferSegments();
 
       setState(() {
@@ -199,23 +192,26 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         _loadingProgress = 0.8;
       });
 
-      // 清理旧控制器
       _chewieController?.dispose();
       _chewieController = null;
       _videoController?.dispose();
       _videoController = null;
 
-      // 创建视频播放器
       _videoController = VideoPlayerController.networkUrl(
         Uri.parse(proxyPlaylistUrl),
+        httpHeaders: {
+          'Connection': 'keep-alive',
+        },
         videoPlayerOptions: VideoPlayerOptions(
           mixWithOthers: false,
           allowBackgroundPlayback: false,
         ),
       );
 
+      _videoController!.addListener(_onVideoControllerUpdate);
+
       await _videoController!.initialize().timeout(
-        const Duration(seconds: 30),
+        const Duration(seconds: 60),
         onTimeout: () {
           throw TimeoutException('视频加载超时');
         },
@@ -233,6 +229,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         showControlsOnInitialize: true,
         placeholder: Container(color: Colors.black),
         autoInitialize: true,
+        progressIndicatorDelay: Duration.zero,
         additionalOptions: (context) => [
           OptionItem(
             onTap: (_) => _toggleLooping(),
@@ -249,7 +246,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         ),
       );
 
-      // 启动统计更新定时器
       _statsUpdateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (mounted) setState(() {});
       });
@@ -274,7 +270,50 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     }
   }
 
-  /// 预缓冲前几个视频片段
+  void _onVideoControllerUpdate() {
+    if (_videoController == null || !mounted) return;
+
+    final value = _videoController!.value;
+
+    if (value.hasError) {
+      debugPrint('[SecureHLS] Video error: ${value.errorDescription}');
+      _attemptRecovery();
+    }
+
+    if (value.isPlaying && !value.isBuffering) {
+      _lastPlaybackPosition = value.position;
+    }
+  }
+
+  Duration? _lastPlaybackPosition;
+  int _stallCount = 0;
+
+  Future<void> _attemptRecovery() async {
+    if (_stallCount >= 3) {
+      debugPrint('[SecureHLS] Too many recovery attempts, giving up');
+      return;
+    }
+
+    _stallCount++;
+    debugPrint('[SecureHLS] Attempting recovery (attempt $_stallCount)');
+
+    try {
+      final currentPosition = _videoController?.value.position ?? Duration.zero;
+
+      await _videoController?.pause();
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      await _videoController?.seekTo(currentPosition);
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      await _videoController?.play();
+
+      debugPrint('[SecureHLS] Recovery successful');
+    } catch (e) {
+      debugPrint('[SecureHLS] Recovery failed: $e');
+    }
+  }
+
   Future<void> _prebufferSegments() async {
     if (_proxyServer == null || _hlsSessionId == null) return;
 
@@ -287,7 +326,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           _loadingProgress = 0.5 + (0.3 * (i + 1) / _prebufferTarget);
         });
 
-        // 请求片段以触发服务器端转码和缓存
         final segmentUrl =
             '${widget.baseUrl}/api/v1/secure-hls/$_hlsSessionId/segment_$i.ts';
 
@@ -303,10 +341,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           }
         } catch (e) {
           debugPrint('[SecureHLS] Prebuffer segment $i failed: $e');
-          // 继续尝试下一个片段
         }
 
-        // 短暂延迟避免服务器过载
         await Future.delayed(const Duration(milliseconds: 200));
       }
     } catch (e) {
@@ -314,7 +350,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     }
   }
 
-  /// 片段加载回调
   void _onSegmentLoaded(int bytes, bool decrypted) {
     _stats.bytesReceived += bytes;
     _stats.segmentsLoaded++;
@@ -331,7 +366,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     _chewieController?.setLooping(_isLooping);
   }
 
-  /// 显示安全信息弹窗
   void _showSecurityInfoDialog() {
     showDialog(
       context: context,
@@ -670,7 +704,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
             overflow: TextOverflow.ellipsis,
           ),
           actions: [
-            // 安全信息按钮
             if (!_isLoading && _error == null)
               Material(
                 color: Colors.transparent,
@@ -757,7 +790,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
-            // 进度条
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
@@ -773,7 +805,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
               style: const TextStyle(color: Colors.white70, fontSize: 14),
             ),
             const SizedBox(height: 24),
-            // 安全特性指示器
             Wrap(
               spacing: 8,
               runSpacing: 8,

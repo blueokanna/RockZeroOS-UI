@@ -5,19 +5,8 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:edwards25519/edwards25519.dart' as ed25519;
-import 'package:hashlib/hashlib.dart' as hashlib;
 import 'package:thirds/blake3.dart' as blake3;
 
-/// SAE (Simultaneous Authentication of Equals) Client
-///
-/// Complete WPA3-SAE implementation based on Edwards25519 curve
-/// Aligned with Rust `rockzero-sae` crate
-///
-/// Cryptographic algorithms:
-/// - Elliptic curve: Edwards25519 (compatible with curve25519_dalek)
-/// - PWE derivation: Blake3 (Hunt-and-Peck method)
-/// - HMAC: SHA3-256
-/// - HKDF: SHA3-256
 class SaeClientCurve25519 {
   static const int GROUP_ID = 19;
   static const int SAE_MAX_PWE_LOOP = 40;
@@ -292,14 +281,14 @@ class SaeClientCurve25519 {
 
   void _deriveKeys(Uint8List sharedSecret) {
     final zeroKey = Uint8List(32);
-    final keyseed = _hmacSha3_256(zeroKey, sharedSecret);
+    final keyseed = _blake3KeyedHash(zeroKey, sharedSecret);
 
     final value = ed25519.Scalar()..add(_scalar!, _peerScalar!);
     final valueBytes = _scalarToBytes(value);
 
     final info =
         Uint8List.fromList([...utf8.encode('SAE KCK and PMK'), ...valueBytes]);
-    final kckPmk = _hkdfSha3_256(keyseed, info, 64);
+    final kckPmk = _hkdfBlake3Expand(keyseed, info, 64);
 
     _kck = Uint8List.fromList(kckPmk.sublist(0, 32));
     _pmk = Uint8List.fromList(kckPmk.sublist(32, 64));
@@ -315,7 +304,7 @@ class SaeClientCurve25519 {
       ..._pointToBytes(_peerElement!),
     ]);
 
-    return _hmacSha3_256(_kck!, data);
+    return _blake3KeyedHash(_kck!, data);
   }
 
   Uint8List _computePeerConfirm(int sendConfirm) {
@@ -328,7 +317,7 @@ class SaeClientCurve25519 {
       ..._pointToBytes(_element!),
     ]);
 
-    return _hmacSha3_256(_kck!, data);
+    return _blake3KeyedHash(_kck!, data);
   }
 
   Uint8List _computePmkid() {
@@ -348,27 +337,35 @@ class SaeClientCurve25519 {
       ...id2,
     ]);
 
-    final fullHash = _hmacSha3_256(_pmk!, data);
+    final fullHash = _blake3KeyedHash(_pmk!, data);
     return Uint8List.fromList(fullHash.sublist(0, 16));
   }
 
-  Uint8List _hmacSha3_256(Uint8List key, Uint8List message) {
-    final hmac = hashlib.HMAC(hashlib.sha3_256).by(key);
-    final digest = hmac.convert(message);
-    return Uint8List.fromList(digest.bytes);
+  Uint8List _blake3KeyedHash(Uint8List key, Uint8List message) {
+    Uint8List normalizedKey;
+    if (key.length == 32) {
+      normalizedKey = key;
+    } else if (key.length < 32) {
+      normalizedKey = Uint8List(32);
+      normalizedKey.setRange(0, key.length, key);
+    } else {
+      final hash = blake3.blake3(key, 32);
+      normalizedKey = Uint8List.fromList(hash);
+    }
+
+    final input = Uint8List.fromList([...normalizedKey, ...message]);
+    final hash = blake3.blake3(input, 32);
+    return Uint8List.fromList(hash);
   }
 
-  Uint8List _hkdfSha3_256(Uint8List ikm, Uint8List info, int length) {
-    final salt = Uint8List(32);
-    final prk = _hmacSha3_256(salt, ikm);
-
+  Uint8List _hkdfBlake3Expand(Uint8List prk, Uint8List info, int length) {
     final output = <int>[];
     var t = Uint8List(0);
     var counter = 1;
 
     while (output.length < length) {
       final hmacInput = Uint8List.fromList([...t, ...info, counter]);
-      t = _hmacSha3_256(prk, hmacInput);
+      t = _blake3KeyedHash(prk, hmacInput);
       output.addAll(t);
       counter++;
     }

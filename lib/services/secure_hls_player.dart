@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:hashlib/hashlib.dart' as hashlib;
 import 'package:pointycastle/export.dart' as pc;
 import 'package:thirds/blake3.dart' as blake3;
 import 'package:video_player/video_player.dart';
@@ -297,22 +296,25 @@ class HlsEncryptor {
     return _aesGcmDecrypt(_encryptionKey, nonce, ciphertextWithTag);
   }
 
-  /// Derive key (HKDF-like)
+  /// Derive key using HKDF-Blake3
+  ///
+  /// Uses Blake3 hash with key prefix for HKDF-like key derivation
+  /// This matches the server-side HKDF-Blake3 implementation
   Uint8List _deriveKey(Uint8List key, String info) {
     final infoBytes = Uint8List.fromList(utf8.encode(info));
     final salt = Uint8List(32);
 
-    // Extract
-    final prk = _hmacSha3_256(salt, key);
+    // Extract: PRK = Blake3(salt || key)
+    final prk = _blake3WithKey(salt, key);
 
-    // Expand
+    // Expand: output = Blake3(PRK || T(i-1) || info || counter)
     final output = <int>[];
     var t = Uint8List(0);
     var counter = 1;
 
     while (output.length < 32) {
       final hmacInput = Uint8List.fromList([...t, ...infoBytes, counter]);
-      t = _hmacSha3_256(prk, hmacInput);
+      t = _blake3WithKey(prk, hmacInput);
       output.addAll(t);
       counter++;
     }
@@ -320,11 +322,24 @@ class HlsEncryptor {
     return Uint8List.fromList(output.sublist(0, 32));
   }
 
-  /// HMAC-SHA3-256
-  Uint8List _hmacSha3_256(Uint8List key, Uint8List message) {
-    final hmac = hashlib.HMAC(hashlib.sha3_256).by(key);
-    final digest = hmac.convert(message);
-    return Uint8List.fromList(digest.bytes);
+  /// Blake3 hash with key prefix (simulates keyed hash)
+  Uint8List _blake3WithKey(Uint8List key, Uint8List message) {
+    // Ensure key is 32 bytes
+    Uint8List normalizedKey;
+    if (key.length == 32) {
+      normalizedKey = key;
+    } else if (key.length < 32) {
+      normalizedKey = Uint8List(32);
+      normalizedKey.setRange(0, key.length, key);
+    } else {
+      final hash = blake3.blake3(key, 32);
+      normalizedKey = Uint8List.fromList(hash);
+    }
+
+    // Concatenate key and message, then hash
+    final input = Uint8List.fromList([...normalizedKey, ...message]);
+    final hash = blake3.blake3(input, 32);
+    return Uint8List.fromList(hash);
   }
 
   /// AES-256-GCM decryption

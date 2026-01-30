@@ -1,21 +1,21 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:hashlib/hashlib.dart' as hashlib;
+import 'package:thirds/blake3.dart' as blake3;
 
 /// SAE utility functions
 class SaeUtils {
-  /// Hash arbitrary length device ID to 32 bytes
+  /// Hash arbitrary length device ID to 32 bytes using Blake3
   ///
   /// Consistent with Rust side, ensures device ID is always 32 bytes
   static Uint8List hashDeviceId(String deviceId) {
-    final hash = hashlib.sha3_256.convert(utf8.encode(deviceId));
-    return Uint8List.fromList(hash.bytes);
+    final hash = blake3.blake3(utf8.encode(deviceId), 32);
+    return Uint8List.fromList(hash);
   }
 
   /// Create 32-byte device ID from string
   ///
   /// If input is already a 32-byte hex string, decode directly
-  /// Otherwise use SHA3-256 hash
+  /// Otherwise use Blake3 hash
   static Uint8List deviceIdFromString(String input) {
     // Try to parse as hex
     if (input.length == 64) {
@@ -32,7 +32,7 @@ class SaeUtils {
       }
     }
 
-    // Use SHA3-256 hash
+    // Use Blake3 hash
     return hashDeviceId(input);
   }
 

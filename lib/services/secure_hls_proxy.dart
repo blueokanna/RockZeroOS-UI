@@ -4,19 +4,11 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
-import 'package:hashlib/hashlib.dart' as hashlib;
 import 'package:pointycastle/export.dart';
+import 'package:thirds/blake3.dart' as blake3;
 
 import 'bulletproofs_ffi.dart';
 
-/// Secure HLS Proxy Server
-///
-/// Features:
-/// - Local proxy server that intercepts HLS requests
-/// - Decrypts video segments using SAE-derived PMK
-/// - Generates Bulletproofs ZKP proof for each video segment
-/// - Replay attack protection (timestamp + nonce + signature)
-/// - Callback for segment load statistics
 class SecureHlsProxyServer {
   HttpServer? _server;
   int? _port;
@@ -29,10 +21,9 @@ class SecureHlsProxyServer {
   final Random _random = Random.secure();
   int _segmentCounter = 0;
 
-  // Cache for verified segments
   final Map<String, Uint8List> _segmentCache = {};
   static const int _maxCacheSize =
-      20; // Increased cache size for smoother playback
+      20;
 
   SecureHlsProxyServer({
     required this.baseUrl,
@@ -43,27 +34,25 @@ class SecureHlsProxyServer {
     this.onSegmentLoaded,
   });
 
-  /// Start the proxy server
   Future<String> start() async {
     try {
       _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       _port = _server!.port;
 
-      debugPrint('[SecureHLS Proxy] Started on http://127.0.0.1:$_port');
+      debugPrint('[SecureHLS Proxy] Started on http:
       debugPrint('[SecureHLS Proxy] Session: $sessionId');
       debugPrint(
           '[SecureHLS Proxy] Security: SAE + AES-256-GCM + Bulletproofs ZKP');
 
       _server!.listen(_handleRequest);
 
-      return 'http://127.0.0.1:$_port/playlist.m3u8';
+      return 'http:
     } catch (e) {
       debugPrint('[SecureHLS Proxy] Failed to start: $e');
       rethrow;
     }
   }
 
-  /// Stop the proxy server
   Future<void> stop() async {
     await _server?.close(force: true);
     _server = null;
@@ -73,7 +62,6 @@ class SecureHlsProxyServer {
     debugPrint('[SecureHLS Proxy] Stopped');
   }
 
-  /// Generate secure request parameters (replay attack protection)
   Map<String, String> _generateSecureParams(String segmentName) {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final nonce = _generateNonce();
@@ -86,26 +74,26 @@ class SecureHlsProxyServer {
     };
   }
 
-  /// Generate random nonce
   String _generateNonce() {
     final bytes = List<int>.generate(16, (_) => _random.nextInt(256));
     return base64Encode(bytes);
   }
 
-  /// Compute request signature
-  /// signature = HMAC-SHA256(session_id:timestamp:nonce:segment_name, pmk)
   String _computeRequestSignature(
     int timestamp,
     String nonce,
     String segmentName,
   ) {
     final message = '$sessionId:$timestamp:$nonce:$segmentName';
-    final hmac = hashlib.HMAC(hashlib.sha256).by(pmk);
-    final digest = hmac.convert(utf8.encode(message));
-    return digest.hex();
+    final input = Uint8List.fromList([...pmk, ...utf8.encode(message)]);
+    final hash = blake3.blake3(input, 32);
+    return _bytesToHex(Uint8List.fromList(hash));
   }
 
-  /// Handle incoming requests
+  String _bytesToHex(Uint8List bytes) {
+    return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  }
+
   Future<void> _handleRequest(HttpRequest request) async {
     try {
       final path = request.uri.path;
@@ -129,7 +117,6 @@ class SecureHlsProxyServer {
     }
   }
 
-  /// Handle playlist requests
   Future<void> _handlePlaylistRequest(HttpRequest request) async {
     try {
       final playlistUrl = '$baseUrl/api/v1/secure-hls/$sessionId/playlist.m3u8';
@@ -168,15 +155,13 @@ class SecureHlsProxyServer {
     }
   }
 
-  /// Modify playlist to point segment URLs to local proxy
   String _modifyPlaylist(String content) {
     return content.replaceAllMapped(
       RegExp(r'(segment_\d+\.ts)'),
-      (match) => 'http://127.0.0.1:$_port/${match.group(1)}',
+      (match) => 'http:
     );
   }
 
-  /// Handle video segment requests
   Future<void> _handleSegmentRequest(HttpRequest request, String path) async {
     try {
       final segmentName = path.substring(1);
@@ -185,7 +170,6 @@ class SecureHlsProxyServer {
       debugPrint(
           '[SecureHLS Proxy] Fetching segment: $segmentName (index: $segmentIndex)');
 
-      // Check cache
       if (_segmentCache.containsKey(segmentName)) {
         debugPrint('[SecureHLS Proxy] Cache hit for $segmentName');
         final cachedData = _segmentCache[segmentName]!;
@@ -193,18 +177,18 @@ class SecureHlsProxyServer {
         return;
       }
 
-      // Generate secure request parameters
       final secureParams = _generateSecureParams(segmentName);
 
-      // Create Bulletproofs ZKP proof
       VideoStreamProof? zkpProof;
       if (bulletproofsService != null) {
         try {
-          zkpProof = await bulletproofsService!.createVideoStreamProof(
-            sessionId: sessionId,
-            segmentIndex: segmentIndex,
-            content: Uint8List.fromList(utf8.encode(segmentName)),
-          );
+          zkpProof = await bulletproofsService!
+              .createVideoStreamProof(
+                sessionId: sessionId,
+                segmentIndex: segmentIndex,
+                content: Uint8List.fromList(utf8.encode(segmentName)),
+              )
+              .timeout(const Duration(seconds: 2));
           if (zkpProof != null) {
             debugPrint(
                 '[SecureHLS Proxy] ✅ ZKP proof created for segment $segmentIndex');
@@ -214,52 +198,35 @@ class SecureHlsProxyServer {
         }
       }
 
-      // Build request URL (using GET request + query parameters)
-      final segmentUrl =
-          Uri.parse('$baseUrl/api/v1/secure-hls/$sessionId/$segmentName')
-              .replace(queryParameters: secureParams);
+      Uint8List? decryptedData;
+      int retryCount = 0;
+      const maxRetries = 2;
 
-      final client = HttpClient();
-      final backendRequest = await client.postUrl(segmentUrl);
-      backendRequest.headers.contentType = ContentType.json;
-      if (jwtToken.isNotEmpty) {
-        backendRequest.headers.add('Authorization', 'Bearer $jwtToken');
+      while (decryptedData == null && retryCount <= maxRetries) {
+        try {
+          decryptedData = await _fetchAndDecryptSegment(
+            segmentName,
+            secureParams,
+            zkpProof,
+          ).timeout(const Duration(seconds: 30));
+        } catch (e) {
+          retryCount++;
+          debugPrint(
+              '[SecureHLS Proxy] Segment fetch failed (attempt $retryCount): $e');
+          if (retryCount <= maxRetries) {
+            await Future.delayed(Duration(milliseconds: 200 * retryCount));
+          }
+        }
       }
 
-      // Send request body (containing ZKP proof)
-      final requestBody = <String, dynamic>{};
-      if (zkpProof != null) {
-        requestBody['zkp_proof'] = zkpProof.toJson();
-      }
-      backendRequest.write(jsonEncode(requestBody));
-
-      final backendResponse = await backendRequest.close();
-
-      if (backendResponse.statusCode == 200) {
-        // Read encrypted data
-        final encryptedData = await backendResponse.fold<List<int>>(
-          [],
-          (previous, element) => previous..addAll(element),
-        );
-
-        debugPrint(
-            '[SecureHLS Proxy] Received ${encryptedData.length} bytes encrypted data');
-
-        // Decrypt video segment
-        final decryptedData =
-            _decryptSegment(Uint8List.fromList(encryptedData));
-
-        // Cache decrypted data
+      if (decryptedData != null) {
         _cacheSegment(segmentName, decryptedData);
-
-        // Return decrypted video segment
         _serveSegment(request, decryptedData, segmentName);
       } else {
-        final errorBody = await backendResponse.transform(utf8.decoder).join();
         debugPrint(
-            '[SecureHLS Proxy] Backend error: ${backendResponse.statusCode} - $errorBody');
-        request.response.statusCode = backendResponse.statusCode;
-        request.response.write('Backend error: $errorBody');
+            '[SecureHLS Proxy] Failed to fetch segment after $maxRetries retries');
+        request.response.statusCode = HttpStatus.serviceUnavailable;
+        request.response.write('Failed to fetch segment');
         await request.response.close();
       }
     } catch (e, stack) {
@@ -271,7 +238,49 @@ class SecureHlsProxyServer {
     }
   }
 
-  /// Serve video segment
+  Future<Uint8List> _fetchAndDecryptSegment(
+    String segmentName,
+    Map<String, String> secureParams,
+    VideoStreamProof? zkpProof,
+  ) async {
+    final segmentUrl =
+        Uri.parse('$baseUrl/api/v1/secure-hls/$sessionId/$segmentName')
+            .replace(queryParameters: secureParams);
+
+    final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 10);
+
+    final backendRequest = await client.postUrl(segmentUrl);
+    backendRequest.headers.contentType = ContentType.json;
+    if (jwtToken.isNotEmpty) {
+      backendRequest.headers.add('Authorization', 'Bearer $jwtToken');
+    }
+
+    final requestBody = <String, dynamic>{};
+    if (zkpProof != null) {
+      requestBody['zkp_proof'] = zkpProof.toJson();
+    }
+    backendRequest.write(jsonEncode(requestBody));
+
+    final backendResponse = await backendRequest.close();
+
+    if (backendResponse.statusCode == 200) {
+      final encryptedData = await backendResponse.fold<List<int>>(
+        [],
+        (previous, element) => previous..addAll(element),
+      );
+
+      debugPrint(
+          '[SecureHLS Proxy] Received ${encryptedData.length} bytes encrypted data');
+
+      return _decryptSegment(Uint8List.fromList(encryptedData));
+    } else {
+      final errorBody = await backendResponse.transform(utf8.decoder).join();
+      throw Exception(
+          'Backend error: ${backendResponse.statusCode} - $errorBody');
+    }
+  }
+
   void _serveSegment(HttpRequest request, Uint8List data, String segmentName) {
     request.response.statusCode = HttpStatus.ok;
     request.response.headers.contentType = ContentType('video', 'mp2t');
@@ -280,16 +289,13 @@ class SecureHlsProxyServer {
     request.response.add(data);
     request.response.close();
 
-    // Notify callback
     onSegmentLoaded?.call(data.length, true);
 
     debugPrint(
         '[SecureHLS Proxy] ✅ Segment served: $segmentName (${data.length} bytes)');
   }
 
-  /// Cache video segment
   void _cacheSegment(String segmentName, Uint8List data) {
-    // Limit cache size
     if (_segmentCache.length >= _maxCacheSize) {
       final oldestKey = _segmentCache.keys.first;
       _segmentCache.remove(oldestKey);
@@ -297,9 +303,6 @@ class SecureHlsProxyServer {
     _segmentCache[segmentName] = data;
   }
 
-  /// Decrypt video segment
-  ///
-  /// Format: [12-byte Nonce][Ciphertext + 16-byte Tag]
   Uint8List _decryptSegment(Uint8List encryptedData) {
     if (encryptedData.length < 28) {
       throw Exception(
@@ -307,17 +310,14 @@ class SecureHlsProxyServer {
     }
 
     try {
-      // Extract nonce and ciphertext
       final nonce = encryptedData.sublist(0, 12);
       final ciphertextWithTag = encryptedData.sublist(12);
 
-      // Derive decryption key
       final decryptionKey = _deriveKey(pmk, 'hls-master-key');
 
       debugPrint(
           '[SecureHLS Proxy] Decrypting: nonce=${nonce.length}B, ciphertext=${ciphertextWithTag.length}B');
 
-      // AES-256-GCM decryption
       return _aesGcmDecrypt(
         ciphertextWithTag: ciphertextWithTag,
         key: decryptionKey,
@@ -330,7 +330,6 @@ class SecureHlsProxyServer {
     }
   }
 
-  /// AES-256-GCM decryption
   Uint8List _aesGcmDecrypt({
     required Uint8List ciphertextWithTag,
     required Uint8List key,
@@ -349,9 +348,9 @@ class SecureHlsProxyServer {
     final cipher = GCMBlockCipher(AESEngine());
     final params = AEADParameters(
       KeyParameter(key),
-      128, // Tag length (bits)
+      128,
       nonce,
-      Uint8List(0), // AAD
+      Uint8List(0),
     );
 
     cipher.init(false, params);
@@ -364,22 +363,19 @@ class SecureHlsProxyServer {
     }
   }
 
-  /// Derive key (HKDF-like)
   Uint8List _deriveKey(Uint8List key, String info) {
     final infoBytes = Uint8List.fromList(utf8.encode(info));
     final salt = Uint8List(32);
 
-    // Extract
-    final prk = _hmacSha3_256(salt, key);
+    final prk = _blake3WithKey(salt, key);
 
-    // Expand
     final output = <int>[];
     var t = Uint8List(0);
     var counter = 1;
 
     while (output.length < 32) {
       final hmacInput = Uint8List.fromList([...t, ...infoBytes, counter]);
-      t = _hmacSha3_256(prk, hmacInput);
+      t = _blake3WithKey(prk, hmacInput);
       output.addAll(t);
       counter++;
     }
@@ -387,10 +383,20 @@ class SecureHlsProxyServer {
     return Uint8List.fromList(output.sublist(0, 32));
   }
 
-  /// HMAC-SHA3-256
-  Uint8List _hmacSha3_256(Uint8List key, Uint8List message) {
-    final hmac = hashlib.HMAC(hashlib.sha3_256).by(key);
-    final digest = hmac.convert(message);
-    return Uint8List.fromList(digest.bytes);
+  Uint8List _blake3WithKey(Uint8List key, Uint8List message) {
+    Uint8List normalizedKey;
+    if (key.length == 32) {
+      normalizedKey = key;
+    } else if (key.length < 32) {
+      normalizedKey = Uint8List(32);
+      normalizedKey.setRange(0, key.length, key);
+    } else {
+      final hash = blake3.blake3(key, 32);
+      normalizedKey = Uint8List.fromList(hash);
+    }
+
+    final input = Uint8List.fromList([...normalizedKey, ...message]);
+    final hash = blake3.blake3(input, 32);
+    return Uint8List.fromList(hash);
   }
 }

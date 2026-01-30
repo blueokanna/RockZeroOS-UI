@@ -4,8 +4,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:hashlib/hashlib.dart' as hashlib;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:thirds/blake3.dart' as blake3;
 
 import '../../../core/models/api_models.dart';
 import '../../../core/network/api_client.dart';
@@ -264,15 +264,15 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
-  /// 计算密码的 SHA3-256 哈希
+  /// 计算密码的 Blake3 哈希
   ///
   /// 这个哈希值用于 SAE 握手，不是用于认证
   /// 认证使用的是 JWT token
   /// 与 Rust 端的 compute_sae_secret 函数保持一致
   String _hashPassword(String password) {
-    // 使用 hashlib 包的 sha3_256（与 Rust sha3::Sha3_256 兼容）
-    final digest = hashlib.sha3_256.convert(utf8.encode(password));
-    return digest.toString();
+    // 使用 Blake3 哈希（与 Rust blake3::hash 兼容）
+    final hash = blake3.blake3(utf8.encode(password), 32);
+    return hash.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 }
 
