@@ -279,13 +279,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       debugPrint('[SecureHLS] Video error: ${value.errorDescription}');
       _attemptRecovery();
     }
-
-    if (value.isPlaying && !value.isBuffering) {
-      _lastPlaybackPosition = value.position;
-    }
   }
 
-  Duration? _lastPlaybackPosition;
   int _stallCount = 0;
 
   Future<void> _attemptRecovery() async {

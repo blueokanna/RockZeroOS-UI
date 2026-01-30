@@ -22,8 +22,7 @@ class SecureHlsProxyServer {
   int _segmentCounter = 0;
 
   final Map<String, Uint8List> _segmentCache = {};
-  static const int _maxCacheSize =
-      20;
+  static const int _maxCacheSize = 20;
 
   SecureHlsProxyServer({
     required this.baseUrl,
@@ -39,14 +38,14 @@ class SecureHlsProxyServer {
       _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       _port = _server!.port;
 
-      debugPrint('[SecureHLS Proxy] Started on http:
+      debugPrint('[SecureHLS Proxy] Started on http://127.0.0.1:$_port');
       debugPrint('[SecureHLS Proxy] Session: $sessionId');
       debugPrint(
           '[SecureHLS Proxy] Security: SAE + AES-256-GCM + Bulletproofs ZKP');
 
       _server!.listen(_handleRequest);
 
-      return 'http:
+      return 'http://127.0.0.1:$_port/playlist.m3u8';
     } catch (e) {
       debugPrint('[SecureHLS Proxy] Failed to start: $e');
       rethrow;
@@ -158,7 +157,7 @@ class SecureHlsProxyServer {
   String _modifyPlaylist(String content) {
     return content.replaceAllMapped(
       RegExp(r'(segment_\d+\.ts)'),
-      (match) => 'http:
+      (match) => 'http://127.0.0.1:$_port/${match.group(1)}',
     );
   }
 
@@ -248,7 +247,7 @@ class SecureHlsProxyServer {
             .replace(queryParameters: secureParams);
 
     final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 10);
+    client.connectionTimeout = const Duration(seconds: 30);
 
     final backendRequest = await client.postUrl(segmentUrl);
     backendRequest.headers.contentType = ContentType.json;
@@ -271,7 +270,13 @@ class SecureHlsProxyServer {
       );
 
       debugPrint(
-          '[SecureHLS Proxy] Received ${encryptedData.length} bytes encrypted data');
+          '[SecureHLS Proxy] Received ${encryptedData.length} bytes encrypted data for $segmentName');
+
+      // Validate minimum size: 12 (nonce) + 16 (tag) + at least some data
+      if (encryptedData.length < 1024) {
+        throw Exception(
+            'Received invalid segment data: only ${encryptedData.length} bytes (expected at least 1KB)');
+      }
 
       return _decryptSegment(Uint8List.fromList(encryptedData));
     } else {
@@ -296,17 +301,28 @@ class SecureHlsProxyServer {
   }
 
   void _cacheSegment(String segmentName, Uint8List data) {
+    // Only cache valid segments (at least 1KB)
+    if (data.length < 1024) {
+      debugPrint(
+          '[SecureHLS Proxy] ⚠️ Not caching invalid segment $segmentName (${data.length} bytes)');
+      return;
+    }
+
     if (_segmentCache.length >= _maxCacheSize) {
       final oldestKey = _segmentCache.keys.first;
       _segmentCache.remove(oldestKey);
+      debugPrint('[SecureHLS Proxy] Evicted cached segment: $oldestKey');
     }
     _segmentCache[segmentName] = data;
+    debugPrint(
+        '[SecureHLS Proxy] Cached segment $segmentName (${data.length} bytes)');
   }
 
   Uint8List _decryptSegment(Uint8List encryptedData) {
-    if (encryptedData.length < 28) {
+    // Minimum size: 12 (nonce) + 16 (GCM tag) + at least 1 byte of data
+    if (encryptedData.length < 29) {
       throw Exception(
-          'Invalid encrypted data: too short (${encryptedData.length} bytes)');
+          'Invalid encrypted data: too short (${encryptedData.length} bytes, need at least 29)');
     }
 
     try {
@@ -316,15 +332,24 @@ class SecureHlsProxyServer {
       final decryptionKey = _deriveKey(pmk, 'hls-master-key');
 
       debugPrint(
-          '[SecureHLS Proxy] Decrypting: nonce=${nonce.length}B, ciphertext=${ciphertextWithTag.length}B');
+          '[SecureHLS Proxy] Decrypting: nonce=${nonce.length}B, ciphertext=${ciphertextWithTag.length}B, key=${decryptionKey.length}B');
+      debugPrint(
+          '[SecureHLS Proxy] PMK first 8 bytes: ${pmk.sublist(0, 8).map((b) => b.toRadixString(16).padLeft(2, '0')).join()}');
+      debugPrint(
+          '[SecureHLS Proxy] Derived key first 8 bytes: ${decryptionKey.sublist(0, 8).map((b) => b.toRadixString(16).padLeft(2, '0')).join()}');
 
-      return _aesGcmDecrypt(
+      final decrypted = _aesGcmDecrypt(
         ciphertextWithTag: ciphertextWithTag,
         key: decryptionKey,
         nonce: nonce,
       );
+
+      debugPrint(
+          '[SecureHLS Proxy] ✅ Decryption successful: ${decrypted.length} bytes');
+
+      return decrypted;
     } catch (e, stack) {
-      debugPrint('[SecureHLS Proxy] Decryption error: $e');
+      debugPrint('[SecureHLS Proxy] ❌ Decryption error: $e');
       debugPrint('[SecureHLS Proxy] Stack: $stack');
       rethrow;
     }
@@ -363,40 +388,35 @@ class SecureHlsProxyServer {
     }
   }
 
-  Uint8List _deriveKey(Uint8List key, String info) {
+  /// HKDF-Blake3 key derivation - matches server-side implementation exactly
+  /// Server uses: PRK = hash(salt + ikm), then expand with hash(prk + t + info + counter)
+  Uint8List _deriveKey(Uint8List ikm, String info) {
     final infoBytes = Uint8List.fromList(utf8.encode(info));
-    final salt = Uint8List(32);
+    final salt = Uint8List(32); // Zero salt
 
-    final prk = _blake3WithKey(salt, key);
+    // Extract phase: PRK = hash(salt + ikm)
+    final prkInput = Uint8List.fromList([...salt, ...ikm]);
+    final prk = Uint8List.fromList(blake3.blake3(prkInput, 32));
 
+    // Expand phase: hash(prk + t + info + counter)
     final output = <int>[];
     var t = Uint8List(0);
     var counter = 1;
 
     while (output.length < 32) {
-      final hmacInput = Uint8List.fromList([...t, ...infoBytes, counter]);
-      t = _blake3WithKey(prk, hmacInput);
+      // Server does: prk + t + info + counter
+      final expandInput = Uint8List.fromList([
+        ...prk,
+        ...t,
+        ...infoBytes,
+        counter,
+      ]);
+      final hash = blake3.blake3(expandInput, 32);
+      t = Uint8List.fromList(hash);
       output.addAll(t);
       counter++;
     }
 
     return Uint8List.fromList(output.sublist(0, 32));
-  }
-
-  Uint8List _blake3WithKey(Uint8List key, Uint8List message) {
-    Uint8List normalizedKey;
-    if (key.length == 32) {
-      normalizedKey = key;
-    } else if (key.length < 32) {
-      normalizedKey = Uint8List(32);
-      normalizedKey.setRange(0, key.length, key);
-    } else {
-      final hash = blake3.blake3(key, 32);
-      normalizedKey = Uint8List.fromList(hash);
-    }
-
-    final input = Uint8List.fromList([...normalizedKey, ...message]);
-    final hash = blake3.blake3(input, 32);
-    return Uint8List.fromList(hash);
   }
 }

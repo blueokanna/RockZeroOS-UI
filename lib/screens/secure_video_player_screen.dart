@@ -57,7 +57,7 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
       await _player!.initializeSaeHandshake(
         widget.userId,
         widget.password,
-        widget.fileId,
+        fileId: widget.fileId,
       );
 
       // 3. Start playback

@@ -1531,6 +1531,7 @@ class _RadioGroupScope<T> extends InheritedWidget {
     required super.child,
   });
 
+  // ignore: unused_element
   static _RadioGroupScope<T>? of<T>(BuildContext context) {
     return context.dependOnInheritedWidgetOfExactType<_RadioGroupScope<T>>();
   }
