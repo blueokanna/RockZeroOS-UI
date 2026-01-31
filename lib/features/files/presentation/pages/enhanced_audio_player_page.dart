@@ -50,10 +50,16 @@ class _EnhancedAudioPlayerPageState
   bool _isTranscoding = false;
   String? _transcodeUrl;
   double? _mediaDuration;
+  bool _disposed = false;
 
   late AnimationController _rotationController;
   final List<double> _audioLevels = List.filled(24, 0.1);
   Timer? _visualizationTimer;
+
+  StreamSubscription<PlayerState>? _playerStateSubscription;
+  StreamSubscription<Duration>? _positionSubscription;
+  StreamSubscription<Duration?>? _durationSubscription;
+  StreamSubscription<Duration>? _bufferedSubscription;
 
   @override
   void initState() {
@@ -71,7 +77,7 @@ class _EnhancedAudioPlayerPageState
     _visualizationTimer = Timer.periodic(
       const Duration(milliseconds: 100),
       (timer) {
-        if (!mounted) return;
+        if (!mounted || _disposed) return;
         bool needsUpdate = false;
         for (int i = 0; i < _audioLevels.length; i++) {
           final oldValue = _audioLevels[i];
@@ -83,18 +89,31 @@ class _EnhancedAudioPlayerPageState
           }
           if ((oldValue - _audioLevels[i]).abs() > 0.02) needsUpdate = true;
         }
-        if (needsUpdate && mounted) setState(() {});
+        if (needsUpdate && mounted && !_disposed) setState(() {});
       },
     );
   }
 
   @override
   void dispose() {
+    _disposed = true;
     _visualizationTimer?.cancel();
     _rotationController.dispose();
+    _cancelSubscriptions();
     _audioPlayer?.dispose();
     WakelockPlus.disable();
     super.dispose();
+  }
+
+  void _cancelSubscriptions() {
+    _playerStateSubscription?.cancel();
+    _positionSubscription?.cancel();
+    _durationSubscription?.cancel();
+    _bufferedSubscription?.cancel();
+    _playerStateSubscription = null;
+    _positionSubscription = null;
+    _durationSubscription = null;
+    _bufferedSubscription = null;
   }
 
   Future<void> _loadTokenAndInitialize() async {
@@ -160,13 +179,17 @@ class _EnhancedAudioPlayerPageState
   }
 
   Future<void> _initializePlayer() async {
+    if (_disposed) return;
+
     setState(() {
       _isInitialized = false;
       _error = null;
     });
 
     try {
-      _audioPlayer?.dispose();
+      // Dispose previous player if exists
+      _cancelSubscriptions();
+      await _audioPlayer?.dispose();
       _audioPlayer = AudioPlayer();
 
       final headers = <String, String>{};
@@ -177,7 +200,8 @@ class _EnhancedAudioPlayerPageState
       final streamUrl = _getStreamUrl();
       debugPrint('[AudioPlayer] Using stream URL: $streamUrl');
 
-      final audioSource = AudioSource.uri(
+      // Use LockCachingAudioSource for better seek support
+      final audioSource = LockCachingAudioSource(
         Uri.parse(streamUrl),
         headers: headers,
       );
@@ -192,7 +216,12 @@ class _EnhancedAudioPlayerPageState
       _setupListeners();
       _startVisualization();
       _retryCount = 0;
-      setState(() => _isInitialized = true);
+
+      if (mounted && !_disposed) {
+        setState(() => _isInitialized = true);
+      }
+
+      // Start playing
       await _audioPlayer!.play();
     } catch (e) {
       debugPrint('[AudioPlayer] Error: $e');
@@ -202,10 +231,11 @@ class _EnhancedAudioPlayerPageState
         debugPrint(
             '[AudioPlayer] Retrying... attempt $_retryCount/$_maxRetries');
         await Future.delayed(Duration(milliseconds: 500 * _retryCount));
-        if (mounted) await _initializePlayer();
+        if (mounted && !_disposed) await _initializePlayer();
         return;
       }
 
+      // Try transcoded stream if direct stream failed
       if (!_isTranscoding && _transcodeUrl != null) {
         debugPrint('[AudioPlayer] Retrying with transcoded stream...');
         _isTranscoding = true;
@@ -214,41 +244,52 @@ class _EnhancedAudioPlayerPageState
         return;
       }
 
-      if (mounted) setState(() => _error = _getErrorMessage(e));
+      if (mounted && !_disposed) setState(() => _error = _getErrorMessage(e));
     }
   }
 
   void _setupListeners() {
-    _audioPlayer!.playerStateStream.listen((state) {
-      if (!mounted) return;
+    _playerStateSubscription = _audioPlayer!.playerStateStream.listen((state) {
+      if (!mounted || _disposed) return;
       final playing = state.playing;
       final processing = state.processingState;
+
       setState(() {
         _isPlaying = playing;
         _isBuffering = processing == ProcessingState.buffering ||
             processing == ProcessingState.loading;
       });
+
       if (playing && !_isBuffering) {
         _rotationController.repeat();
       } else {
         _rotationController.stop();
       }
+
+      // Handle completion
+      if (processing == ProcessingState.completed) {
+        if (_isLooping) {
+          _audioPlayer?.seek(Duration.zero);
+          _audioPlayer?.play();
+        }
+      }
     });
 
-    _audioPlayer!.positionStream.listen((position) {
-      if (mounted && !_isSeeking) {
+    _positionSubscription = _audioPlayer!.positionStream.listen((position) {
+      if (mounted && !_disposed && !_isSeeking) {
         setState(() => _position = position);
       }
     });
 
-    _audioPlayer!.durationStream.listen((duration) {
-      if (mounted && duration != null) {
+    _durationSubscription = _audioPlayer!.durationStream.listen((duration) {
+      if (mounted && !_disposed && duration != null) {
         setState(() => _duration = duration);
       }
     });
 
-    _audioPlayer!.bufferedPositionStream.listen((buffered) {
-      if (mounted) {
+    _bufferedSubscription =
+        _audioPlayer!.bufferedPositionStream.listen((buffered) {
+      if (mounted && !_disposed) {
         setState(() => _bufferedPosition = buffered);
       }
     });
@@ -268,7 +309,7 @@ class _EnhancedAudioPlayerPageState
   }
 
   void _togglePlayPause() async {
-    if (_audioPlayer == null) return;
+    if (_audioPlayer == null || _disposed) return;
     if (_isPlaying) {
       await _audioPlayer!.pause();
     } else {
@@ -277,7 +318,7 @@ class _EnhancedAudioPlayerPageState
   }
 
   Future<void> _seekTo(Duration position) async {
-    if (_audioPlayer == null || _isSeeking) return;
+    if (_audioPlayer == null || _isSeeking || _disposed) return;
 
     final clampedPosition = Duration(
       milliseconds: position.inMilliseconds.clamp(0, _duration.inMilliseconds),
@@ -285,18 +326,35 @@ class _EnhancedAudioPlayerPageState
 
     setState(() {
       _isSeeking = true;
-      _isBuffering = true;
       _position = clampedPosition;
     });
 
     try {
       debugPrint('[AudioPlayer] Seeking to: $clampedPosition');
+
+      // Remember if we were playing
+      final wasPlaying = _isPlaying;
+
+      // Pause before seeking for smoother experience
+      if (wasPlaying) {
+        await _audioPlayer!.pause();
+      }
+
+      // Perform the seek
       await _audioPlayer!.seek(clampedPosition);
-      await Future.delayed(const Duration(milliseconds: 200));
+
+      // Wait for buffering to complete
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // Resume playback if we were playing
+      if (wasPlaying && mounted && !_disposed) {
+        await _audioPlayer!.play();
+      }
+
       debugPrint('[AudioPlayer] Seek completed to: $clampedPosition');
     } catch (e) {
       debugPrint('[AudioPlayer] Seek error: $e');
-      if (mounted) {
+      if (mounted && !_disposed) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('跳转失败: ${e.toString().split('\n').first}'),
@@ -305,7 +363,7 @@ class _EnhancedAudioPlayerPageState
         );
       }
     } finally {
-      if (mounted) {
+      if (mounted && !_disposed) {
         setState(() => _isSeeking = false);
       }
     }
