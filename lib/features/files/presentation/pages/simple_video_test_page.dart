@@ -2,7 +2,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
-/// 简单的视频测试页面 - 用于调试视频播放问题
 class SimpleVideoTestPage extends StatefulWidget {
   final String videoUrl;
   final String? authToken;

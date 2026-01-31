@@ -260,6 +260,11 @@ class _EnhancedAudioPlayerPageState
             processing == ProcessingState.loading;
       });
 
+      // Reset seeking state when buffering completes
+      if (_isSeeking && !_isBuffering && processing == ProcessingState.ready) {
+        setState(() => _isSeeking = false);
+      }
+
       if (playing && !_isBuffering) {
         _rotationController.repeat();
       } else {
@@ -276,8 +281,16 @@ class _EnhancedAudioPlayerPageState
     });
 
     _positionSubscription = _audioPlayer!.positionStream.listen((position) {
-      if (mounted && !_disposed && !_isSeeking) {
+      if (mounted && !_disposed) {
+        // Always update position, even when seeking
+        // This ensures the progress bar moves correctly
         setState(() => _position = position);
+
+        // If we're seeking and position is close to target, reset seeking state
+        if (_isSeeking) {
+          // Position is being updated, so seek is progressing
+          debugPrint('[AudioPlayer] Position update during seek: $position');
+        }
       }
     });
 
@@ -318,7 +331,13 @@ class _EnhancedAudioPlayerPageState
   }
 
   Future<void> _seekTo(Duration position) async {
-    if (_audioPlayer == null || _isSeeking || _disposed) return;
+    if (_audioPlayer == null || _disposed) return;
+
+    // If already seeking, just update the target position
+    if (_isSeeking) {
+      setState(() => _position = position);
+      return;
+    }
 
     final clampedPosition = Duration(
       milliseconds: position.inMilliseconds.clamp(0, _duration.inMilliseconds),
@@ -335,16 +354,30 @@ class _EnhancedAudioPlayerPageState
       // Remember if we were playing
       final wasPlaying = _isPlaying;
 
-      // Pause before seeking for smoother experience
-      if (wasPlaying) {
-        await _audioPlayer!.pause();
-      }
-
-      // Perform the seek
+      // Perform the seek directly without pausing first
+      // This provides better UX for streaming audio
       await _audioPlayer!.seek(clampedPosition);
 
-      // Wait for buffering to complete
-      await Future.delayed(const Duration(milliseconds: 100));
+      // Wait for the seek to complete and position to update
+      // Listen for position updates to confirm seek completed
+      int attempts = 0;
+      const maxAttempts = 50; // 5 seconds max wait
+
+      while (attempts < maxAttempts && mounted && !_disposed) {
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        final currentPos = _audioPlayer!.position;
+        final diff =
+            (currentPos.inMilliseconds - clampedPosition.inMilliseconds).abs();
+
+        // Consider seek complete if within 500ms of target
+        if (diff < 500) {
+          debugPrint('[AudioPlayer] Seek confirmed at: $currentPos');
+          break;
+        }
+
+        attempts++;
+      }
 
       // Resume playback if we were playing
       if (wasPlaying && mounted && !_disposed) {
@@ -364,6 +397,7 @@ class _EnhancedAudioPlayerPageState
       }
     } finally {
       if (mounted && !_disposed) {
+        // Always reset seeking state
         setState(() => _isSeeking = false);
       }
     }

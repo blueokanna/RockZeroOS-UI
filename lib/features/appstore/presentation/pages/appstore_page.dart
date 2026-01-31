@@ -16,7 +16,7 @@ final storeAppsProvider = FutureProvider.autoDispose<List<AppStoreItem>>((
   try {
     // Add timeout to prevent infinite loading
     final apps = await api.listStoreApps().timeout(
-      const Duration(seconds: 60),
+      const Duration(seconds: 180), // 增加超时到180秒
       onTimeout: () {
         throw TimeoutException('App store request timed out');
       },

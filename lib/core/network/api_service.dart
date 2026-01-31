@@ -537,15 +537,19 @@ class ApiService {
       final response = await _dio.get(
         '/api/v1/appstore/casaos',
         options: Options(
-          receiveTimeout: const Duration(seconds: 60), // 增加超时到60秒
-          sendTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 120), // 增加超时到120秒
+          sendTimeout: const Duration(seconds: 60),
         ),
       );
       final data = response.data;
       if (data is Map && data.containsKey('apps')) {
-        return (data['apps'] as List)
+        final apps = (data['apps'] as List)
             .map((e) => AppStoreItem.fromJson(e))
             .toList();
+        if (kDebugMode) {
+          print('✅ Fetched ${apps.length} CasaOS apps');
+        }
+        return apps;
       }
       return [];
     } catch (e) {
@@ -563,15 +567,19 @@ class ApiService {
       final response = await _dio.get(
         '/api/v1/appstore/istoreos',
         options: Options(
-          receiveTimeout: const Duration(seconds: 60),
-          sendTimeout: const Duration(seconds: 30),
+          receiveTimeout: const Duration(seconds: 120),
+          sendTimeout: const Duration(seconds: 60),
         ),
       );
       final data = response.data;
       if (data is Map && data.containsKey('apps')) {
-        return (data['apps'] as List)
+        final apps = (data['apps'] as List)
             .map((e) => AppStoreItem.fromJson(e))
             .toList();
+        if (kDebugMode) {
+          print('✅ Fetched ${apps.length} iStoreOS apps');
+        }
+        return apps;
       }
       return [];
     } catch (e) {
@@ -584,13 +592,30 @@ class ApiService {
 
   // Legacy method for backward compatibility
   Future<List<AppStoreItem>> listStoreApps() async {
-    // Try CasaOS first, fallback to iStoreOS
+    // 并行获取两个应用商店的应用
     try {
+      final results = await Future.wait([
+        listCasaosApps(),
+        listIstoreosApps(),
+      ], eagerError: false);
+
+      final allApps = <AppStoreItem>[];
+      for (final apps in results) {
+        allApps.addAll(apps);
+      }
+
+      if (allApps.isNotEmpty) {
+        if (kDebugMode) {
+          print('✅ Total apps fetched: ${allApps.length}');
+        }
+        return allApps;
+      }
+
+      // 如果并行获取失败，尝试单独获取
       final casaosApps = await listCasaosApps();
       if (casaosApps.isNotEmpty) {
         return casaosApps;
       }
-      // 如果 CasaOS 返回空，尝试 iStoreOS
       return await listIstoreosApps();
     } catch (e) {
       if (kDebugMode) {

@@ -2,9 +2,9 @@
 
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:edwards25519/edwards25519.dart' as ed25519;
+import 'package:flutter/foundation.dart';
 import 'package:thirds/blake3.dart' as blake3;
 
 class SaeClientCurve25519 {
@@ -320,15 +320,11 @@ class SaeClientCurve25519 {
     return _blake3KeyedHash(_kck!, data);
   }
 
-  /// Compute PMKID matching Rust client implementation:
-  /// `compute_pmkid(&pmk, &self.device_id_peer, &self.device_id_self)`
-  /// Note: Client uses (peer, self) order, Server uses (self, peer) order
   Uint8List _computePmkid() {
-    // Client order: peer first, then self (matching Rust client)
     final data = Uint8List.fromList([
       ...utf8.encode('PMK Name'),
-      ..._deviceIdPeer32, // peer first
-      ..._deviceIdSelf32, // self second
+      ..._deviceIdPeer32,
+      ..._deviceIdSelf32,
     ]);
 
     final fullHash = _blake3KeyedHash(_pmk!, data);

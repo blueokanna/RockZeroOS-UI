@@ -22,37 +22,27 @@ class SaeHandshakeService {
   }) async {
     try {
       debugPrint('[SAE Handshake] Starting for file: $filePath');
-      debugPrint('[SAE Handshake] User ID: $userId');
 
       // Generate device IDs matching Rust implementation exactly
-      // Rust: let server_id = blake3::hash(b"rockzero-server-device-id").into();
-      // Rust: let client_id = blake3::hash(user_id.as_bytes()).into();
       final deviceIdSelf = _generateClientDeviceId(userId);
       final deviceIdPeer = _generateServerDeviceId();
 
-      debugPrint(
-          '[SAE Handshake] Client device ID (Blake3 of userId): ${_bytesToHex(deviceIdSelf)}');
-      debugPrint(
-          '[SAE Handshake] Server device ID (Blake3 of "rockzero-server-device-id"): ${_bytesToHex(deviceIdPeer)}');
-
       // Create SAE client with password bytes
+      final passwordBytes = Uint8List.fromList(utf8.encode(password));
+
       final saeClient = SaeClientCurve25519(
-        password: Uint8List.fromList(utf8.encode(password)),
+        password: passwordBytes,
         deviceIdSelf: deviceIdSelf,
         deviceIdPeer: deviceIdPeer,
       );
 
       final clientCommit = saeClient.generateCommit();
       debugPrint('[SAE Handshake] Generated client commit');
-      debugPrint(
-          '[SAE Handshake] Client commit scalar length: ${(clientCommit['scalar'] as String).length}');
-      debugPrint(
-          '[SAE Handshake] Client commit element length: ${(clientCommit['element'] as String).length}');
 
       // Step 1: Initialize SAE handshake
       final initResponse = await _initSaeHandshake(filePath);
       final tempSessionId = initResponse['temp_session_id'] as String;
-      debugPrint('[SAE Handshake] Initialized, temp session: $tempSessionId');
+      debugPrint('[SAE Handshake] Initialized');
 
       // Step 2: Send client commit and receive server commit
       final serverCommitResponse = await _sendClientCommit(
@@ -90,12 +80,10 @@ class SaeHandshakeService {
       );
 
       final sessionId = sessionResponse['session_id'] as String;
-      debugPrint('[SAE Handshake] Created HLS session: $sessionId');
+      debugPrint('[SAE Handshake] ✅ SAE Handshake Complete!');
 
       // Get the derived PMK
       final pmk = saeClient.getPmk();
-      debugPrint(
-          '[SAE Handshake] Got PMK (${pmk.length} bytes): ${_bytesToHex(pmk.sublist(0, 8))}...');
 
       return (sessionId, pmk);
     } catch (e, stack) {
@@ -103,10 +91,6 @@ class SaeHandshakeService {
       debugPrint('[SAE Handshake] Stack: $stack');
       rethrow;
     }
-  }
-
-  String _bytesToHex(Uint8List bytes) {
-    return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
   Future<Map<String, dynamic>> _initSaeHandshake(String filePath) async {

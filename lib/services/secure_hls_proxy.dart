@@ -9,6 +9,227 @@ import 'package:thirds/blake3.dart' as blake3;
 
 import 'bulletproofs_ffi.dart';
 
+/// AES-256-GCM 加密/解密工具类
+///
+/// 提供统一的加密解密接口，确保与 Rust 后端完全一致
+class AesGcmCrypto {
+  /// AES-256-GCM 解密
+  ///
+  /// [ciphertextWithTag] - 密文 + 16字节认证标签
+  /// [key] - 32字节密钥
+  /// [nonce] - 12字节随机数
+  static Uint8List decrypt({
+    required Uint8List ciphertextWithTag,
+    required Uint8List key,
+    required Uint8List nonce,
+  }) {
+    if (key.length != 32) {
+      throw ArgumentError('Key must be 32 bytes, got ${key.length}');
+    }
+    if (nonce.length != 12) {
+      throw ArgumentError('Nonce must be 12 bytes, got ${nonce.length}');
+    }
+    if (ciphertextWithTag.length < 16) {
+      throw ArgumentError('Ciphertext too short (must include 16-byte tag)');
+    }
+
+    final cipher = GCMBlockCipher(AESEngine());
+    final params = AEADParameters(
+      KeyParameter(key),
+      128, // 128-bit tag
+      nonce,
+      Uint8List(0), // No AAD
+    );
+
+    cipher.init(false, params);
+    return cipher.process(ciphertextWithTag);
+  }
+
+  /// AES-256-GCM 加密
+  ///
+  /// [plaintext] - 明文
+  /// [key] - 32字节密钥
+  /// [nonce] - 12字节随机数（可选，不提供则自动生成）
+  /// 返回: [12字节nonce][密文][16字节tag]
+  static Uint8List encrypt({
+    required Uint8List plaintext,
+    required Uint8List key,
+    Uint8List? nonce,
+  }) {
+    if (key.length != 32) {
+      throw ArgumentError('Key must be 32 bytes, got ${key.length}');
+    }
+
+    final actualNonce = nonce ?? _generateNonce();
+    if (actualNonce.length != 12) {
+      throw ArgumentError('Nonce must be 12 bytes, got ${actualNonce.length}');
+    }
+
+    final cipher = GCMBlockCipher(AESEngine());
+    final params = AEADParameters(
+      KeyParameter(key),
+      128, // 128-bit tag
+      actualNonce,
+      Uint8List(0), // No AAD
+    );
+
+    cipher.init(true, params);
+    final ciphertextWithTag = cipher.process(plaintext);
+
+    // 返回格式: [nonce][ciphertext+tag]
+    final result = Uint8List(12 + ciphertextWithTag.length);
+    result.setRange(0, 12, actualNonce);
+    result.setRange(12, result.length, ciphertextWithTag);
+    return result;
+  }
+
+  static Uint8List _generateNonce() {
+    final random = Random.secure();
+    return Uint8List.fromList(
+      List<int>.generate(12, (_) => random.nextInt(256)),
+    );
+  }
+}
+
+/// HKDF-Blake3 密钥派生
+///
+/// 与 Rust 后端 HkdfBlake3 实现完全一致
+class HkdfBlake3 {
+  final Uint8List _prk;
+
+  HkdfBlake3._(this._prk);
+
+  /// 使用 session_id 派生 salt 创建 HKDF 实例
+  ///
+  /// Salt 派生: salt = blake3("hls-session-salt:" + session_id)
+  /// PRK 派生: prk = blake3(salt + ikm)
+  factory HkdfBlake3.withSessionSalt(String sessionId, Uint8List ikm) {
+    // 派生 salt: blake3("hls-session-salt:" + session_id)
+    final saltInput = 'hls-session-salt:$sessionId';
+    final saltInputBytes = utf8.encode(saltInput);
+    final salt = Uint8List.fromList(blake3.blake3(saltInputBytes, 32));
+
+    // PRK = blake3(salt + ikm)
+    final prkInput = Uint8List.fromList([...salt, ...ikm]);
+    final prk = Uint8List.fromList(blake3.blake3(prkInput, 32));
+
+    return HkdfBlake3._(prk);
+  }
+
+  /// 扩展 PRK 派生输出密钥材料
+  ///
+  /// T(i) = blake3(PRK + T(i-1) + info + counter)
+  Uint8List expand(String info, int length) {
+    final infoBytes = Uint8List.fromList(utf8.encode(info));
+    final output = <int>[];
+    var t = <int>[];
+    var counter = 1;
+
+    while (output.length < length) {
+      final expandInput = Uint8List.fromList([
+        ..._prk,
+        ...t,
+        ...infoBytes,
+        counter,
+      ]);
+
+      final hash = blake3.blake3(expandInput, 32);
+      t = List<int>.from(hash);
+
+      final copyLen = (length - output.length).clamp(0, 32);
+      output.addAll(t.sublist(0, copyLen));
+      counter++;
+    }
+
+    return Uint8List.fromList(output.sublist(0, length));
+  }
+}
+
+/// HLS 加密器
+///
+/// 使用 HKDF-Blake3 从 PMK 和 session_id 派生加密密钥
+/// 使用 AES-256-GCM 进行加密/解密
+class HlsEncryptor {
+  final Uint8List _encryptionKey;
+  final String sessionId;
+  final Uint8List pmk;
+
+  HlsEncryptor._({
+    required this.sessionId,
+    required this.pmk,
+    required Uint8List encryptionKey,
+  }) : _encryptionKey = encryptionKey;
+
+  /// 创建 HLS 加密器
+  ///
+  /// [sessionId] - HLS 会话 ID（用于派生 salt）
+  /// [pmk] - 从 SAE 握手获得的 PMK（32字节）
+  factory HlsEncryptor({
+    required String sessionId,
+    required Uint8List pmk,
+  }) {
+    if (pmk.length != 32) {
+      throw ArgumentError('PMK must be 32 bytes, got ${pmk.length}');
+    }
+
+    // 使用 session_id 派生 salt 的 HKDF
+    final hkdf = HkdfBlake3.withSessionSalt(sessionId, pmk);
+    final encryptionKey = hkdf.expand('hls-master-key', 32);
+
+    return HlsEncryptor._(
+      sessionId: sessionId,
+      pmk: pmk,
+      encryptionKey: encryptionKey,
+    );
+  }
+
+  /// 获取加密密钥（用于调试）
+  Uint8List get encryptionKey => Uint8List.fromList(_encryptionKey);
+
+  /// 解密视频段
+  ///
+  /// [encryptedData] - 加密数据，格式: [12字节nonce][密文+16字节tag]
+  Uint8List decryptSegment(Uint8List encryptedData) {
+    // 最小有效大小: 12 (nonce) + 16 (tag) + 1 (至少1字节数据)
+    if (encryptedData.length < 29) {
+      throw ArgumentError(
+        'Encrypted data too short: ${encryptedData.length} bytes (need at least 29)',
+      );
+    }
+
+    final nonce = encryptedData.sublist(0, 12);
+    final ciphertextWithTag = encryptedData.sublist(12);
+
+    return AesGcmCrypto.decrypt(
+      ciphertextWithTag: ciphertextWithTag,
+      key: _encryptionKey,
+      nonce: nonce,
+    );
+  }
+
+  /// 加密视频段
+  ///
+  /// [plaintext] - 明文数据
+  /// 返回: [12字节nonce][密文+16字节tag]
+  Uint8List encryptSegment(Uint8List plaintext) {
+    return AesGcmCrypto.encrypt(
+      plaintext: plaintext,
+      key: _encryptionKey,
+    );
+  }
+
+  /// 派生段密钥
+  ///
+  /// [segmentIndex] - 段索引
+  Uint8List deriveSegmentKey(int segmentIndex) {
+    final hkdf = HkdfBlake3.withSessionSalt(sessionId, pmk);
+    return hkdf.expand('hls-segment-$segmentIndex', 32);
+  }
+}
+
+/// 安全 HLS 代理服务器
+///
+/// 在本地启动 HTTP 服务器，拦截 HLS 请求，解密视频段后返回给播放器
 class SecureHlsProxyServer {
   HttpServer? _server;
   int? _port;
@@ -21,12 +242,16 @@ class SecureHlsProxyServer {
   final Random _random = Random.secure();
 
   final Map<String, Uint8List> _segmentCache = {};
-  static const int _maxCacheSize = 20;
+  static const int _maxCacheSize = 30;
 
   final Map<String, Completer<Uint8List>> _pendingRequests = {};
 
-  Uint8List? _encryptionKey;
-  bool _keyInitialized = false;
+  // 预加载队列
+  final Set<String> _prefetchQueue = {};
+  bool _isPrefetching = false;
+
+  late final HlsEncryptor _encryptor;
+  bool _initialized = false;
 
   SecureHlsProxyServer({
     required this.baseUrl,
@@ -37,32 +262,19 @@ class SecureHlsProxyServer {
     this.onSegmentLoaded,
   });
 
-  /// Initialize encryption key by fetching session info from server
-  /// This ensures we use the exact same key derivation as the server
-  Future<void> _initializeEncryptionKey() async {
-    if (_keyInitialized) return;
+  /// 初始化加密器
+  void _initialize() {
+    if (_initialized) return;
 
-    debugPrint('[SecureHLS Proxy] ========== Key Derivation ==========');
-    debugPrint('[SecureHLS Proxy] Session ID: $sessionId');
-    debugPrint(
-        '[SecureHLS Proxy] PMK (${pmk.length} bytes): ${_bytesToHex(pmk)}');
+    _encryptor = HlsEncryptor(sessionId: sessionId, pmk: pmk);
+    _initialized = true;
 
-    // Derive encryption key using HKDF-Blake3 with session-derived salt
-    // This matches the Rust backend implementation exactly
-    _encryptionKey =
-        _hkdfBlake3DeriveKeyWithSessionSalt(sessionId, pmk, 'hls-master-key');
-
-    debugPrint(
-        '[SecureHLS Proxy] Encryption Key: ${_bytesToHex(_encryptionKey!)}');
-    debugPrint('[SecureHLS Proxy] ====================================');
-
-    _keyInitialized = true;
+    debugPrint('[SecureHLS Proxy] Encryption initialized');
   }
 
   Future<String> start() async {
     try {
-      // Initialize encryption key first
-      await _initializeEncryptionKey();
+      _initialize();
 
       _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       _port = _server!.port;
@@ -85,8 +297,9 @@ class SecureHlsProxyServer {
     _port = null;
     _segmentCache.clear();
     _pendingRequests.clear();
-    _keyInitialized = false;
-    _encryptionKey = null;
+    _prefetchQueue.clear();
+    _isPrefetching = false;
+    _initialized = false;
     debugPrint('[SecureHLS Proxy] Stopped');
   }
 
@@ -262,7 +475,7 @@ class SecureHlsProxyServer {
 
   Future<Uint8List> _fetchAndDecryptSegmentWithRetry(
     String segmentName, {
-    int maxRetries = 3,
+    int maxRetries = 5,
   }) async {
     Exception? lastError;
 
@@ -270,13 +483,13 @@ class SecureHlsProxyServer {
       try {
         final secureParams = _generateSecureParams(segmentName);
         return await _fetchAndDecryptSegment(segmentName, secureParams)
-            .timeout(const Duration(seconds: 60));
+            .timeout(const Duration(seconds: 90));
       } catch (e) {
         lastError = e is Exception ? e : Exception(e.toString());
         debugPrint(
             '[SecureHLS Proxy] Attempt $attempt failed for $segmentName: $e');
         if (attempt < maxRetries) {
-          await Future.delayed(Duration(milliseconds: 500 * attempt));
+          await Future.delayed(Duration(milliseconds: 300 * attempt));
         }
       }
     }
@@ -315,7 +528,6 @@ class SecureHlsProxyServer {
         debugPrint(
             '[SecureHLS Proxy] Received ${encryptedData.length} bytes for $segmentName');
 
-        // Minimum valid size: 12 (nonce) + 16 (tag) + some data
         if (encryptedData.length < 100) {
           throw Exception(
               'Invalid segment: only ${encryptedData.length} bytes');
@@ -344,6 +556,60 @@ class SecureHlsProxyServer {
 
     debugPrint(
         '[SecureHLS Proxy] ✅ Served $segmentName (${data.length} bytes)');
+
+    _triggerPrefetch(segmentName);
+  }
+
+  void _triggerPrefetch(String currentSegment) {
+    final match = RegExp(r'segment_(\d+)\.ts').firstMatch(currentSegment);
+    if (match == null) return;
+
+    final currentIndex = int.tryParse(match.group(1) ?? '');
+    if (currentIndex == null) return;
+
+    for (int i = 1; i <= 5; i++) {
+      final nextSegment = 'segment_${currentIndex + i}.ts';
+      if (!_segmentCache.containsKey(nextSegment) &&
+          !_pendingRequests.containsKey(nextSegment) &&
+          !_prefetchQueue.contains(nextSegment)) {
+        _prefetchQueue.add(nextSegment);
+      }
+    }
+
+    _processPrefetchQueue();
+  }
+
+  Future<void> _processPrefetchQueue() async {
+    if (_isPrefetching || _prefetchQueue.isEmpty) return;
+
+    _isPrefetching = true;
+
+    try {
+      while (_prefetchQueue.isNotEmpty) {
+        final segmentName = _prefetchQueue.first;
+        _prefetchQueue.remove(segmentName);
+
+        if (_segmentCache.containsKey(segmentName) ||
+            _pendingRequests.containsKey(segmentName)) {
+          continue;
+        }
+
+        try {
+          debugPrint('[SecureHLS Proxy] Prefetching $segmentName');
+          final data = await _fetchAndDecryptSegmentWithRetry(segmentName,
+              maxRetries: 2);
+          _cacheSegment(segmentName, data);
+          debugPrint(
+              '[SecureHLS Proxy] ✅ Prefetched $segmentName (${data.length} bytes)');
+        } catch (e) {
+          debugPrint('[SecureHLS Proxy] Prefetch failed for $segmentName: $e');
+        }
+
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+    } finally {
+      _isPrefetching = false;
+    }
   }
 
   void _cacheSegment(String segmentName, Uint8List data) {
@@ -360,115 +626,19 @@ class SecureHlsProxyServer {
   }
 
   Uint8List _decryptSegment(Uint8List encryptedData) {
-    if (_encryptionKey == null) {
-      throw Exception('Encryption key not initialized');
-    }
-
     // Format: [12 bytes nonce][ciphertext + 16 bytes tag]
     if (encryptedData.length < 29) {
       throw Exception(
           'Encrypted data too short: ${encryptedData.length} bytes (need at least 29)');
     }
 
-    final nonce = encryptedData.sublist(0, 12);
-    final ciphertextWithTag = encryptedData.sublist(12);
-
-    debugPrint(
-        '[SecureHLS Proxy] Decrypting: nonce=${_bytesToHex(nonce)}, ciphertext_len=${ciphertextWithTag.length}');
-    debugPrint('[SecureHLS Proxy] Using key: ${_bytesToHex(_encryptionKey!)}');
-
     try {
-      final decrypted = _aesGcmDecrypt(
-        ciphertextWithTag: ciphertextWithTag,
-        key: _encryptionKey!,
-        nonce: nonce,
-      );
-
+      final decrypted = _encryptor.decryptSegment(encryptedData);
       debugPrint('[SecureHLS Proxy] ✅ Decrypted ${decrypted.length} bytes');
       return decrypted;
     } catch (e) {
       debugPrint('[SecureHLS Proxy] ❌ Decryption failed: $e');
-      debugPrint('[SecureHLS Proxy] Nonce: ${_bytesToHex(nonce)}');
-      debugPrint('[SecureHLS Proxy] Key: ${_bytesToHex(_encryptionKey!)}');
-      debugPrint('[SecureHLS Proxy] PMK: ${_bytesToHex(pmk)}');
-      debugPrint('[SecureHLS Proxy] Session ID: $sessionId');
       rethrow;
     }
-  }
-
-  Uint8List _aesGcmDecrypt({
-    required Uint8List ciphertextWithTag,
-    required Uint8List key,
-    required Uint8List nonce,
-  }) {
-    if (key.length != 32) {
-      throw ArgumentError('Key must be 32 bytes, got ${key.length}');
-    }
-    if (nonce.length != 12) {
-      throw ArgumentError('Nonce must be 12 bytes, got ${nonce.length}');
-    }
-    if (ciphertextWithTag.length < 16) {
-      throw ArgumentError('Ciphertext too short (must include 16-byte tag)');
-    }
-
-    final cipher = GCMBlockCipher(AESEngine());
-    final params = AEADParameters(
-      KeyParameter(key),
-      128, // 128-bit tag
-      nonce,
-      Uint8List(0), // No additional authenticated data
-    );
-
-    cipher.init(false, params); // false = decrypt
-    return cipher.process(ciphertextWithTag);
-  }
-
-  /// HKDF-Blake3 key derivation with session-derived salt
-  ///
-  /// This matches the Rust backend implementation exactly:
-  /// - Salt derivation: salt = blake3("hls-session-salt:" + session_id)
-  /// - Extract: PRK = blake3(salt || ikm)
-  /// - Expand: T(i) = blake3(PRK || T(i-1) || info || counter)
-  Uint8List _hkdfBlake3DeriveKeyWithSessionSalt(
-      String sessionId, Uint8List ikm, String info) {
-    final infoBytes = Uint8List.fromList(utf8.encode(info));
-
-    // Derive salt from session_id: blake3("hls-session-salt:" + session_id)
-    final saltInput = 'hls-session-salt:$sessionId';
-    final salt = Uint8List.fromList(blake3.blake3(utf8.encode(saltInput), 32));
-
-    debugPrint('[SecureHLS Proxy] Salt input: "$saltInput"');
-    debugPrint('[SecureHLS Proxy] Salt: ${_bytesToHex(salt.sublist(0, 8))}...');
-
-    // Extract phase: PRK = blake3(salt + ikm)
-    final prkInput = Uint8List.fromList([...salt, ...ikm]);
-    final prk = Uint8List.fromList(blake3.blake3(prkInput, 32));
-
-    debugPrint('[SecureHLS Proxy] PRK: ${_bytesToHex(prk.sublist(0, 8))}...');
-
-    // Expand phase - matching Rust exactly
-    // Input format: prk + t + info + counter
-    final output = <int>[];
-    var t = <int>[];
-    var counter = 1;
-
-    while (output.length < 32) {
-      // Build input exactly as Rust does: prk + t + info + counter
-      final expandInput = Uint8List.fromList([
-        ...prk, // PRK first (32 bytes)
-        ...t, // Previous T (empty on first iteration)
-        ...infoBytes, // Info bytes
-        counter, // Counter byte
-      ]);
-
-      final hash = blake3.blake3(expandInput, 32);
-      t = hash;
-
-      final copyLen = (32 - output.length).clamp(0, 32);
-      output.addAll(t.sublist(0, copyLen));
-      counter++;
-    }
-
-    return Uint8List.fromList(output.sublist(0, 32));
   }
 }

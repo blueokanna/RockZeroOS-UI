@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:pointycastle/export.dart' as pc;
 import 'package:thirds/blake3.dart' as blake3;
 import 'package:video_player/video_player.dart';
 
@@ -10,14 +9,14 @@ import 'bulletproofs_ffi.dart';
 import 'sae_client_curve25519.dart';
 import 'secure_hls_proxy.dart';
 
-/// Secure HLS Player
+/// 安全 HLS 播放器
 ///
-/// Implements complete secure video playback flow:
-/// 1. SAE Handshake: WPA3-SAE key exchange, establish shared key (PMK)
-/// 2. Session Creation: Create encrypted HLS session using PMK
-/// 3. Local Proxy: Start local proxy server to intercept HLS requests
-/// 4. Video Decryption: Decrypt video segments using AES-256-GCM
-/// 5. ZKP Proof: Generate Bulletproofs proof for each video segment
+/// 实现完整的安全视频播放流程:
+/// 1. SAE 握手: WPA3-SAE 密钥交换，建立共享密钥 (PMK)
+/// 2. 会话创建: 使用 PMK 创建加密 HLS 会话
+/// 3. 本地代理: 启动本地代理服务器拦截 HLS 请求
+/// 4. 视频解密: 使用 AES-256-GCM 解密视频段
+/// 5. ZKP 证明: 为每个视频段生成 Bulletproofs 证明（可选）
 class SecureHlsPlayer {
   final String baseUrl;
   final String jwtToken;
@@ -37,12 +36,12 @@ class SecureHlsPlayer {
     required this.jwtToken,
   });
 
-  /// Initialize SAE handshake and create HLS session
+  /// 初始化 SAE 握手并创建 HLS 会话
   ///
-  /// [userId] - User ID
-  /// [password] - User password (for SAE handshake)
-  /// [fileId] - File ID (optional, use either fileId or filePath)
-  /// [filePath] - File path (optional, use either fileId or filePath)
+  /// [userId] - 用户 ID
+  /// [password] - 用户密码（用于 SAE 握手）
+  /// [fileId] - 文件 ID（可选，fileId 和 filePath 二选一）
+  /// [filePath] - 文件路径（可选，fileId 和 filePath 二选一）
   Future<void> initializeSaeHandshake(
     String userId,
     String password, {
@@ -55,14 +54,14 @@ class SecureHlsPlayer {
 
     debugPrint('[SecureHLS] Starting SAE handshake for user: $userId');
 
-    // Initialize Bulletproofs service
+    // 初始化 Bulletproofs 服务
     _bulletproofsService = BulletproofsService(
       baseUrl: baseUrl,
       jwtToken: jwtToken,
     );
     await _bulletproofsService!.initialize();
 
-    // Generate device ID (using BLAKE3)
+    // 生成设备 ID（使用 BLAKE3）
     final deviceIdSelf = Uint8List.fromList(
       blake3.blake3(utf8.encode(userId), 32),
     );
@@ -73,17 +72,17 @@ class SecureHlsPlayer {
     debugPrint(
         '[SecureHLS] Client device ID: ${_bytesToHex(deviceIdSelf.sublist(0, 8))}...');
 
-    // Create SAE client
+    // 创建 SAE 客户端
     final saeClient = SaeClientCurve25519(
       password: Uint8List.fromList(utf8.encode(password)),
       deviceIdSelf: deviceIdSelf,
       deviceIdPeer: deviceIdPeer,
     );
 
-    // Generate client commit
+    // 生成客户端 commit
     final clientCommit = saeClient.generateCommit();
 
-    // Step 1: Initialize SAE handshake
+    // 步骤 1: 初始化 SAE 握手
     debugPrint('[SecureHLS] Step 1: Initializing SAE handshake...');
     final initResponse = await _httpPost(
       '$baseUrl/api/v1/secure-hls/sae/init',
@@ -97,7 +96,7 @@ class SecureHlsPlayer {
     _filePath = initResponse['file_path'] as String?;
     debugPrint('[SecureHLS] Temp session: $tempSessionId');
 
-    // Step 2: Send client commit
+    // 步骤 2: 发送客户端 commit
     debugPrint('[SecureHLS] Step 2: Sending client commit...');
     final commitResponse = await _httpPost(
       '$baseUrl/api/v1/secure-hls/sae/commit',
@@ -111,7 +110,7 @@ class SecureHlsPlayer {
         commitResponse['server_commit'] as Map<String, dynamic>;
     saeClient.processCommit(serverCommit);
 
-    // Step 3: Send client confirm
+    // 步骤 3: 发送客户端 confirm
     debugPrint('[SecureHLS] Step 3: Sending client confirm...');
     final clientConfirm = saeClient.generateConfirm();
     final confirmResponse = await _httpPost(
@@ -126,12 +125,11 @@ class SecureHlsPlayer {
         confirmResponse['server_confirm'] as Map<String, dynamic>;
     saeClient.verifyConfirm(serverConfirm);
 
-    // Get PMK
+    // 获取 PMK
     _pmk = saeClient.getPmk();
     debugPrint('[SecureHLS] ✅ SAE handshake completed');
-    debugPrint('[SecureHLS] PMK: ${_bytesToHex(_pmk!.sublist(0, 8))}...');
 
-    // Step 4: Create HLS session
+    // 步骤 4: 创建 HLS 会话
     debugPrint('[SecureHLS] Step 4: Creating HLS session...');
     final sessionResponse = await _httpPost(
       '$baseUrl/api/v1/secure-hls/session/create',
@@ -143,13 +141,13 @@ class SecureHlsPlayer {
     );
 
     _sessionId = sessionResponse['session_id'] as String;
-    debugPrint('[SecureHLS] ✅ HLS session created: $_sessionId');
+    debugPrint('[SecureHLS] ✅ HLS session created');
 
-    // Initialize encryptor
-    _encryptor = HlsEncryptor(pmk: _pmk!);
+    // 初始化加密器（使用 session_id 派生密钥）
+    _encryptor = HlsEncryptor(sessionId: _sessionId!, pmk: _pmk!);
   }
 
-  /// Create ZKP proof for video segment
+  /// 为视频段创建 ZKP 证明
   Future<VideoStreamProof?> createSegmentProof(
     int segmentIndex,
     Uint8List content,
@@ -166,7 +164,7 @@ class SecureHlsPlayer {
     );
   }
 
-  /// Start video playback
+  /// 开始视频播放
   Future<VideoPlayerController> play() async {
     if (_sessionId == null || _pmk == null) {
       throw StateError('SAE handshake not completed');
@@ -176,7 +174,7 @@ class SecureHlsPlayer {
       throw StateError('Encryptor not initialized');
     }
 
-    // Create local proxy server
+    // 创建本地代理服务器
     _proxy ??= SecureHlsProxyServer(
       baseUrl: baseUrl,
       sessionId: _sessionId!,
@@ -185,10 +183,10 @@ class SecureHlsPlayer {
       bulletproofsService: _bulletproofsService,
     );
 
-    // Start proxy and get local playlist URL
+    // 启动代理并获取本地播放列表 URL
     final proxyPlaylistUrl = await _proxy!.start();
 
-    // Create video player
+    // 创建视频播放器
     _controller = VideoPlayerController.networkUrl(
       Uri.parse(proxyPlaylistUrl),
       httpHeaders: const {},
@@ -202,17 +200,17 @@ class SecureHlsPlayer {
     return _controller!;
   }
 
-  /// Stop playback and cleanup resources
+  /// 停止播放并清理资源
   Future<void> stop() async {
-    // Stop local proxy
+    // 停止本地代理
     await _proxy?.stop();
     _proxy = null;
 
-    // Release video player
+    // 释放视频播放器
     await _controller?.dispose();
     _controller = null;
 
-    // Notify server to stop session
+    // 通知服务器停止会话
     if (_sessionId != null) {
       try {
         await _httpPost(
@@ -225,7 +223,7 @@ class SecureHlsPlayer {
       }
     }
 
-    // Clear state
+    // 清除状态
     _sessionId = null;
     _pmk = null;
     _encryptor = null;
@@ -235,7 +233,7 @@ class SecureHlsPlayer {
     debugPrint('[SecureHLS] ✅ Player stopped and cleaned up');
   }
 
-  /// HTTP POST request
+  /// HTTP POST 请求
   Future<Map<String, dynamic>> _httpPost(
     String url, {
     required Map<String, dynamic> body,
@@ -260,7 +258,7 @@ class SecureHlsPlayer {
     return jsonDecode(responseBody) as Map<String, dynamic>;
   }
 
-  /// Bytes to hex string
+  /// 字节转十六进制字符串
   String _bytesToHex(List<int> bytes) {
     return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
@@ -271,98 +269,5 @@ class SecureHlsPlayer {
   Uint8List? get pmk => _pmk;
   String? get filePath => _filePath;
   bool get isInitialized => _sessionId != null && _pmk != null;
-}
-
-/// HLS Encryptor
-///
-/// Decrypts video segments using AES-256-GCM
-class HlsEncryptor {
-  final Uint8List pmk;
-  late Uint8List _encryptionKey;
-
-  HlsEncryptor({required this.pmk}) {
-    _encryptionKey = _deriveKey(pmk, 'hls-master-key');
-  }
-
-  /// Decrypt video segment
-  Uint8List decryptSegment(Uint8List encryptedData) {
-    if (encryptedData.length < 28) {
-      throw ArgumentError('Encrypted data too short for AES-256-GCM');
-    }
-
-    final nonce = encryptedData.sublist(0, 12);
-    final ciphertextWithTag = encryptedData.sublist(12);
-
-    return _aesGcmDecrypt(_encryptionKey, nonce, ciphertextWithTag);
-  }
-
-  /// Derive key using HKDF-Blake3
-  ///
-  /// Uses Blake3 hash with key prefix for HKDF-like key derivation
-  /// This matches the server-side HKDF-Blake3 implementation
-  Uint8List _deriveKey(Uint8List key, String info) {
-    final infoBytes = Uint8List.fromList(utf8.encode(info));
-    final salt = Uint8List(32);
-
-    // Extract: PRK = Blake3(salt || key)
-    final prk = _blake3WithKey(salt, key);
-
-    // Expand: output = Blake3(PRK || T(i-1) || info || counter)
-    final output = <int>[];
-    var t = Uint8List(0);
-    var counter = 1;
-
-    while (output.length < 32) {
-      final hmacInput = Uint8List.fromList([...t, ...infoBytes, counter]);
-      t = _blake3WithKey(prk, hmacInput);
-      output.addAll(t);
-      counter++;
-    }
-
-    return Uint8List.fromList(output.sublist(0, 32));
-  }
-
-  /// Blake3 hash with key prefix (simulates keyed hash)
-  Uint8List _blake3WithKey(Uint8List key, Uint8List message) {
-    // Ensure key is 32 bytes
-    Uint8List normalizedKey;
-    if (key.length == 32) {
-      normalizedKey = key;
-    } else if (key.length < 32) {
-      normalizedKey = Uint8List(32);
-      normalizedKey.setRange(0, key.length, key);
-    } else {
-      final hash = blake3.blake3(key, 32);
-      normalizedKey = Uint8List.fromList(hash);
-    }
-
-    // Concatenate key and message, then hash
-    final input = Uint8List.fromList([...normalizedKey, ...message]);
-    final hash = blake3.blake3(input, 32);
-    return Uint8List.fromList(hash);
-  }
-
-  /// AES-256-GCM decryption
-  Uint8List _aesGcmDecrypt(
-    Uint8List key,
-    Uint8List nonce,
-    Uint8List ciphertextWithTag,
-  ) {
-    final gcm = pc.GCMBlockCipher(pc.AESEngine());
-
-    final params = pc.AEADParameters(
-      pc.KeyParameter(key),
-      128, // Tag length (bits)
-      nonce,
-      Uint8List(0), // AAD
-    );
-
-    gcm.init(false, params);
-
-    try {
-      return gcm.process(ciphertextWithTag);
-    } catch (e) {
-      throw Exception('AES-256-GCM decryption failed: $e');
-    }
-  }
+  HlsEncryptor? get encryptor => _encryptor;
 }

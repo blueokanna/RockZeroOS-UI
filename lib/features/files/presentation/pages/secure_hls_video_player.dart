@@ -134,7 +134,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           '[SecureHLS] Auth token: ${_authToken != null ? "present (${_authToken!.length} chars)" : "null"}');
       debugPrint('[SecureHLS] User ID: $_userId');
       debugPrint(
-          '[SecureHLS] Password hash: ${_userPassword != null ? "present (${_userPassword!.length} chars)" : "null"}');
+          '[SecureHLS] Password hash: ${_userPassword != null ? "present (${_userPassword!.length} chars): ${_userPassword!.substring(0, 16)}..." : "null"}');
 
       if (_authToken == null || _authToken!.isEmpty) {
         if (mounted && !_isDisposed) {
@@ -221,7 +221,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
       try {
         await _videoController!.initialize().timeout(
-          const Duration(seconds: 120),
+          const Duration(seconds: 180), // 增加超时时间
           onTimeout: () {
             throw TimeoutException('视频加载超时，请检查网络连接');
           },
@@ -257,6 +257,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         placeholder: Container(color: Colors.black),
         autoInitialize: true,
         progressIndicatorDelay: Duration.zero,
+        // 增加缓冲设置
+        hideControlsTimer: const Duration(seconds: 3),
         additionalOptions: (context) => [
           OptionItem(
             onTap: (_) => _toggleLooping(),

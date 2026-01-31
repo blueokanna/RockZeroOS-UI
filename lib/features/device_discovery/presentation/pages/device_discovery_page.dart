@@ -517,31 +517,34 @@ class _DeviceCard extends StatelessWidget {
   Widget _buildDeviceIcon(ColorScheme colorScheme) {
     // 优先使用服务端提供的图标URL
     if (device.fullIconUrl != null) {
-      return Image.network(
-        device.fullIconUrl!,
-        width: 48,
-        height: 48,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          // 网络图标加载失败，使用本地图标
-          return _buildLocalIcon(colorScheme);
-        },
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) return child;
-          return Center(
-            child: SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                value: loadingProgress.expectedTotalBytes != null
-                    ? loadingProgress.cumulativeBytesLoaded /
-                        loadingProgress.expectedTotalBytes!
-                    : null,
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.network(
+          device.fullIconUrl!,
+          width: 48,
+          height: 48,
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) {
+            // 网络图标加载失败，使用本地图标
+            return _buildLocalIcon(colorScheme);
+          },
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  value: loadingProgress.expectedTotalBytes != null
+                      ? loadingProgress.cumulativeBytesLoaded /
+                          loadingProgress.expectedTotalBytes!
+                      : null,
+                ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       );
     }
 
@@ -550,15 +553,22 @@ class _DeviceCard extends StatelessWidget {
   }
 
   Widget _buildLocalIcon(ColorScheme colorScheme) {
-    return Image.asset(
-      'assets/images/RockZero.png',
-      width: 48,
-      height: 48,
-      fit: BoxFit.cover,
-      errorBuilder: (context, error, stackTrace) {
-        // 本地图标也加载失败，使用默认图标
-        return Icon(Icons.dns, color: colorScheme.onPrimaryContainer);
-      },
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Image.asset(
+          'assets/images/RockZero.png',
+          width: 40,
+          height: 40,
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) {
+            // 本地图标也加载失败，使用默认图标
+            return Icon(Icons.dns,
+                color: colorScheme.onPrimaryContainer, size: 32);
+          },
+        ),
+      ),
     );
   }
 }
