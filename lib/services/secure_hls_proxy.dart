@@ -19,16 +19,13 @@ class SecureHlsProxyServer {
   final BulletproofsService? bulletproofsService;
   final void Function(int bytes, bool decrypted)? onSegmentLoaded;
   final Random _random = Random.secure();
-  int _segmentCounter = 0;
 
   final Map<String, Uint8List> _segmentCache = {};
-  static const int _maxCacheSize = 10;
+  static const int _maxCacheSize = 20;
 
-  // Pending requests to avoid duplicate fetches
   final Map<String, Completer<Uint8List>> _pendingRequests = {};
 
-  // Derived encryption key (cached)
-  Uint8List? _encryptionKey;
+  late final Uint8List _encryptionKey;
 
   SecureHlsProxyServer({
     required this.baseUrl,
@@ -38,13 +35,18 @@ class SecureHlsProxyServer {
     this.bulletproofsService,
     this.onSegmentLoaded,
   }) {
-    // Pre-derive the encryption key
-    _encryptionKey = _deriveKey(pmk, 'hls-master-key');
-    debugPrint('[SecureHLS Proxy] Encryption key derived');
+    // Derive encryption key using HKDF-Blake3 with session-derived salt
+    // This matches the Rust backend implementation exactly
+    _encryptionKey =
+        _hkdfBlake3DeriveKeyWithSessionSalt(sessionId, pmk, 'hls-master-key');
+
+    debugPrint('[SecureHLS Proxy] ========== Key Derivation ==========');
+    debugPrint('[SecureHLS Proxy] Session ID: $sessionId');
     debugPrint(
-        '[SecureHLS Proxy] PMK: ${pmk.sublist(0, 8).map((b) => b.toRadixString(16).padLeft(2, '0')).join()}...');
+        '[SecureHLS Proxy] PMK (${pmk.length} bytes): ${_bytesToHex(pmk.sublist(0, min(8, pmk.length)))}...');
     debugPrint(
-        '[SecureHLS Proxy] Key: ${_encryptionKey!.sublist(0, 8).map((b) => b.toRadixString(16).padLeft(2, '0')).join()}...');
+        '[SecureHLS Proxy] Encryption Key: ${_bytesToHex(_encryptionKey.sublist(0, 8))}...');
+    debugPrint('[SecureHLS Proxy] ====================================');
   }
 
   Future<String> start() async {
@@ -68,10 +70,13 @@ class SecureHlsProxyServer {
     await _server?.close(force: true);
     _server = null;
     _port = null;
-    _segmentCounter = 0;
     _segmentCache.clear();
     _pendingRequests.clear();
     debugPrint('[SecureHLS Proxy] Stopped');
+  }
+
+  String _bytesToHex(Uint8List bytes) {
+    return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
   Map<String, String> _generateSecureParams(String segmentName) {
@@ -96,14 +101,12 @@ class SecureHlsProxyServer {
     String nonce,
     String segmentName,
   ) {
+    // message = "session_id:timestamp:nonce:segment_name"
     final message = '$sessionId:$timestamp:$nonce:$segmentName';
+    // signature = blake3(pmk + message)
     final input = Uint8List.fromList([...pmk, ...utf8.encode(message)]);
     final hash = blake3.blake3(input, 32);
     return _bytesToHex(Uint8List.fromList(hash));
-  }
-
-  String _bytesToHex(Uint8List bytes) {
-    return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
   Future<void> _handleRequest(HttpRequest request) async {
@@ -132,10 +135,11 @@ class SecureHlsProxyServer {
   }
 
   Future<void> _handlePlaylistRequest(HttpRequest request) async {
+    HttpClient? client;
     try {
       final playlistUrl = '$baseUrl/api/v1/secure-hls/$sessionId/playlist.m3u8';
 
-      final client = HttpClient();
+      client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 30);
       final req = await client.getUrl(Uri.parse(playlistUrl));
       if (jwtToken.isNotEmpty) {
@@ -156,17 +160,18 @@ class SecureHlsProxyServer {
 
         debugPrint('[SecureHLS Proxy] Playlist served successfully');
       } else {
+        final errorBody = await response.transform(utf8.decoder).join();
         debugPrint(
-            '[SecureHLS Proxy] Playlist fetch failed: ${response.statusCode}');
+            '[SecureHLS Proxy] Playlist fetch failed: ${response.statusCode} - $errorBody');
         request.response.statusCode = response.statusCode;
-        request.response.write('Failed to fetch playlist');
+        request.response.write('Failed to fetch playlist: $errorBody');
       }
-      client.close();
     } catch (e) {
       debugPrint('[SecureHLS Proxy] Playlist error: $e');
       request.response.statusCode = HttpStatus.internalServerError;
       request.response.write('Error: $e');
     } finally {
+      client?.close();
       await request.response.close();
     }
   }
@@ -321,7 +326,6 @@ class SecureHlsProxyServer {
     request.response.close();
 
     onSegmentLoaded?.call(data.length, true);
-    _segmentCounter++;
 
     debugPrint(
         '[SecureHLS Proxy] ✅ Served $segmentName (${data.length} bytes)');
@@ -341,21 +345,19 @@ class SecureHlsProxyServer {
   }
 
   Uint8List _decryptSegment(Uint8List encryptedData) {
+    // Format: [12 bytes nonce][ciphertext + 16 bytes tag]
     if (encryptedData.length < 29) {
       throw Exception(
-          'Encrypted data too short: ${encryptedData.length} bytes');
+          'Encrypted data too short: ${encryptedData.length} bytes (need at least 29)');
     }
 
     final nonce = encryptedData.sublist(0, 12);
     final ciphertextWithTag = encryptedData.sublist(12);
 
-    debugPrint(
-        '[SecureHLS Proxy] Decrypting: nonce=${nonce.length}B, data=${ciphertextWithTag.length}B');
-
     try {
       final decrypted = _aesGcmDecrypt(
         ciphertextWithTag: ciphertextWithTag,
-        key: _encryptionKey!,
+        key: _encryptionKey,
         nonce: nonce,
       );
 
@@ -363,6 +365,9 @@ class SecureHlsProxyServer {
       return decrypted;
     } catch (e) {
       debugPrint('[SecureHLS Proxy] ❌ Decryption failed: $e');
+      debugPrint('[SecureHLS Proxy] Nonce: ${_bytesToHex(nonce)}');
+      debugPrint(
+          '[SecureHLS Proxy] Key: ${_bytesToHex(_encryptionKey.sublist(0, 8))}...');
       rethrow;
     }
   }
@@ -379,45 +384,96 @@ class SecureHlsProxyServer {
       throw ArgumentError('Nonce must be 12 bytes, got ${nonce.length}');
     }
     if (ciphertextWithTag.length < 16) {
-      throw ArgumentError('Ciphertext too short');
+      throw ArgumentError('Ciphertext too short (must include 16-byte tag)');
     }
 
     final cipher = GCMBlockCipher(AESEngine());
     final params = AEADParameters(
       KeyParameter(key),
-      128,
+      128, // 128-bit tag
       nonce,
-      Uint8List(0),
+      Uint8List(0), // No additional authenticated data
     );
 
-    cipher.init(false, params);
+    cipher.init(false, params); // false = decrypt
     return cipher.process(ciphertextWithTag);
   }
 
-  /// HKDF-Blake3 key derivation - matches server implementation exactly
-  Uint8List _deriveKey(Uint8List ikm, String info) {
+  /// HKDF-Blake3 key derivation with session-derived salt
+  ///
+  /// This matches the Rust backend implementation exactly:
+  /// - Salt derivation: salt = blake3("hls-session-salt:" + session_id)
+  /// - Extract: PRK = blake3(salt || ikm)
+  /// - Expand: T(i) = blake3(PRK || T(i-1) || info || counter)
+  Uint8List _hkdfBlake3DeriveKeyWithSessionSalt(
+      String sessionId, Uint8List ikm, String info) {
     final infoBytes = Uint8List.fromList(utf8.encode(info));
-    final salt = Uint8List(32); // Zero salt
 
-    // Extract: PRK = hash(salt + ikm)
+    // Derive salt from session_id: blake3("hls-session-salt:" + session_id)
+    final saltInput = 'hls-session-salt:$sessionId';
+    final salt = Uint8List.fromList(blake3.blake3(utf8.encode(saltInput), 32));
+
+    // Extract phase: PRK = blake3(salt + ikm)
     final prkInput = Uint8List.fromList([...salt, ...ikm]);
     final prk = Uint8List.fromList(blake3.blake3(prkInput, 32));
 
-    // Expand: hash(prk + t + info + counter)
+    // Expand phase - matching Rust exactly
+    // Input format: prk + t + info + counter
     final output = <int>[];
-    var t = Uint8List(0);
+    var t = <int>[];
     var counter = 1;
 
     while (output.length < 32) {
+      // Build input exactly as Rust does: prk + t + info + counter
       final expandInput = Uint8List.fromList([
-        ...prk,
-        ...t,
-        ...infoBytes,
-        counter,
+        ...prk, // PRK first (32 bytes)
+        ...t, // Previous T (empty on first iteration)
+        ...infoBytes, // Info bytes
+        counter, // Counter byte
       ]);
+
       final hash = blake3.blake3(expandInput, 32);
-      t = Uint8List.fromList(hash);
-      output.addAll(t);
+      t = hash;
+
+      final copyLen = (32 - output.length).clamp(0, 32);
+      output.addAll(t.sublist(0, copyLen));
+      counter++;
+    }
+
+    return Uint8List.fromList(output.sublist(0, 32));
+  }
+
+  /// Legacy HKDF-Blake3 key derivation (zero salt)
+  /// Kept for backward compatibility
+  Uint8List _hkdfBlake3DeriveKey(Uint8List ikm, String info) {
+    final infoBytes = Uint8List.fromList(utf8.encode(info));
+
+    // Extract phase: PRK = blake3(salt + ikm)
+    // salt = [0u8; 32] (None case in Rust)
+    final salt = Uint8List(32); // All zeros
+    final prkInput = Uint8List.fromList([...salt, ...ikm]);
+    final prk = Uint8List.fromList(blake3.blake3(prkInput, 32));
+
+    // Expand phase - matching Rust exactly
+    // Input format: prk + t + info + counter
+    final output = <int>[];
+    var t = <int>[];
+    var counter = 1;
+
+    while (output.length < 32) {
+      // Build input exactly as Rust does: prk + t + info + counter
+      final expandInput = Uint8List.fromList([
+        ...prk, // PRK first (32 bytes)
+        ...t, // Previous T (empty on first iteration)
+        ...infoBytes, // Info bytes
+        counter, // Counter byte
+      ]);
+
+      final hash = blake3.blake3(expandInput, 32);
+      t = hash;
+
+      final copyLen = (32 - output.length).clamp(0, 32);
+      output.addAll(t.sublist(0, copyLen));
       counter++;
     }
 

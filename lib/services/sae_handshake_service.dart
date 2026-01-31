@@ -22,15 +22,20 @@ class SaeHandshakeService {
   }) async {
     try {
       debugPrint('[SAE Handshake] Starting for file: $filePath');
+      debugPrint('[SAE Handshake] User ID: $userId');
 
+      // Generate device IDs matching Rust implementation exactly
+      // Rust: let server_id = blake3::hash(b"rockzero-server-device-id").into();
+      // Rust: let client_id = blake3::hash(user_id.as_bytes()).into();
       final deviceIdSelf = _generateClientDeviceId(userId);
       final deviceIdPeer = _generateServerDeviceId();
 
       debugPrint(
-          '[SAE Handshake] Client device ID (Blake3): ${base64Encode(deviceIdSelf)}');
+          '[SAE Handshake] Client device ID (Blake3 of userId): ${_bytesToHex(deviceIdSelf)}');
       debugPrint(
-          '[SAE Handshake] Server device ID (Blake3): ${base64Encode(deviceIdPeer)}');
+          '[SAE Handshake] Server device ID (Blake3 of "rockzero-server-device-id"): ${_bytesToHex(deviceIdPeer)}');
 
+      // Create SAE client with password bytes
       final saeClient = SaeClientCurve25519(
         password: Uint8List.fromList(utf8.encode(password)),
         deviceIdSelf: deviceIdSelf,
@@ -44,10 +49,12 @@ class SaeHandshakeService {
       debugPrint(
           '[SAE Handshake] Client commit element length: ${(clientCommit['element'] as String).length}');
 
+      // Step 1: Initialize SAE handshake
       final initResponse = await _initSaeHandshake(filePath);
       final tempSessionId = initResponse['temp_session_id'] as String;
       debugPrint('[SAE Handshake] Initialized, temp session: $tempSessionId');
 
+      // Step 2: Send client commit and receive server commit
       final serverCommitResponse = await _sendClientCommit(
         tempSessionId: tempSessionId,
         clientCommit: clientCommit,
@@ -59,9 +66,11 @@ class SaeHandshakeService {
       saeClient.processCommit(serverCommit);
       debugPrint('[SAE Handshake] Processed server commit');
 
+      // Step 3: Generate and send client confirm
       final clientConfirm = saeClient.generateConfirm();
       debugPrint('[SAE Handshake] Generated client confirm');
 
+      // Step 4: Send client confirm and receive server confirm
       final serverConfirmResponse = await _sendClientConfirm(
         tempSessionId: tempSessionId,
         clientConfirm: clientConfirm,
@@ -71,8 +80,10 @@ class SaeHandshakeService {
       final serverConfirm =
           serverConfirmResponse['server_confirm'] as Map<String, dynamic>;
       saeClient.verifyConfirm(serverConfirm);
-      debugPrint('[SAE Handshake] Verified server confirm');
+      debugPrint(
+          '[SAE Handshake] Verified server confirm - SAE authenticated!');
 
+      // Step 5: Create HLS session
       final sessionResponse = await _createHlsSession(
         tempSessionId: tempSessionId,
         filePath: filePath,
@@ -81,8 +92,10 @@ class SaeHandshakeService {
       final sessionId = sessionResponse['session_id'] as String;
       debugPrint('[SAE Handshake] Created HLS session: $sessionId');
 
+      // Get the derived PMK
       final pmk = saeClient.getPmk();
-      debugPrint('[SAE Handshake] Got PMK (${pmk.length} bytes)');
+      debugPrint(
+          '[SAE Handshake] Got PMK (${pmk.length} bytes): ${_bytesToHex(pmk.sublist(0, 8))}...');
 
       return (sessionId, pmk);
     } catch (e, stack) {
@@ -90,6 +103,10 @@ class SaeHandshakeService {
       debugPrint('[SAE Handshake] Stack: $stack');
       rethrow;
     }
+  }
+
+  String _bytesToHex(Uint8List bytes) {
+    return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
   Future<Map<String, dynamic>> _initSaeHandshake(String filePath) async {
@@ -192,12 +209,16 @@ class SaeHandshakeService {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  /// Generate server device ID matching Rust implementation:
+  /// `let server_id = blake3::hash(b"rockzero-server-device-id").into();`
   Uint8List _generateServerDeviceId() {
     const serverIdString = 'rockzero-server-device-id';
     final hash = blake3.blake3(utf8.encode(serverIdString), 32);
     return Uint8List.fromList(hash);
   }
 
+  /// Generate client device ID matching Rust implementation:
+  /// `let client_id = blake3::hash(user_id.as_bytes()).into();`
   Uint8List _generateClientDeviceId(String userId) {
     final hash = blake3.blake3(utf8.encode(userId), 32);
     return Uint8List.fromList(hash);

@@ -94,9 +94,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   final SecureStreamStats _stats = SecureStreamStats();
   Timer? _statsUpdateTimer;
 
-  int _prebufferedSegments = 0;
-  static const int _prebufferTarget = 2;
-
   late Color _primaryColor;
 
   @override
@@ -132,6 +129,12 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       _authToken = await storage.read(key: 'access_token');
       _userId = await storage.read(key: 'user_id');
       _userPassword = await storage.read(key: 'user_password_hash');
+
+      debugPrint(
+          '[SecureHLS] Auth token: ${_authToken != null ? "present (${_authToken!.length} chars)" : "null"}');
+      debugPrint('[SecureHLS] User ID: $_userId');
+      debugPrint(
+          '[SecureHLS] Password hash: ${_userPassword != null ? "present (${_userPassword!.length} chars)" : "null"}');
 
       if (_authToken == null || _authToken!.isEmpty) {
         if (mounted && !_isDisposed) {
@@ -213,12 +216,28 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
       _videoController!.addListener(_onVideoControllerUpdate);
 
-      await _videoController!.initialize().timeout(
-        const Duration(seconds: 120),
-        onTimeout: () {
-          throw TimeoutException('视频加载超时，请检查网络连接');
-        },
-      );
+      debugPrint(
+          '[SecureHLS] Initializing video controller with URL: $proxyPlaylistUrl');
+
+      try {
+        await _videoController!.initialize().timeout(
+          const Duration(seconds: 120),
+          onTimeout: () {
+            throw TimeoutException('视频加载超时，请检查网络连接');
+          },
+        );
+      } catch (e) {
+        debugPrint('[SecureHLS] Video initialization error: $e');
+        // Check if it's a decryption error
+        final errorStr = e.toString().toLowerCase();
+        if (errorStr.contains('source') ||
+            errorStr.contains('decrypt') ||
+            errorStr.contains('crypto') ||
+            errorStr.contains('tag')) {
+          throw Exception('解密失败，密钥可能不匹配。请重新登录后再试。');
+        }
+        rethrow;
+      }
 
       if (_isDisposed) {
         _videoController?.dispose();
@@ -270,8 +289,30 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       debugPrint('[SecureHLS] Error: $e');
       debugPrint('[SecureHLS] Stack: $stack');
       if (mounted && !_isDisposed) {
+        String errorMessage = '播放失败';
+        final errorStr = e.toString().toLowerCase();
+
+        if (errorStr.contains('sae') || errorStr.contains('handshake')) {
+          errorMessage = 'SAE安全握手失败，请检查密码是否正确';
+        } else if (errorStr.contains('timeout')) {
+          errorMessage = '连接超时，请检查网络连接';
+        } else if (errorStr.contains('decrypt') ||
+            errorStr.contains('crypto')) {
+          errorMessage = '解密失败，密钥可能不匹配';
+        } else if (errorStr.contains('network') ||
+            errorStr.contains('connection')) {
+          errorMessage = '网络错误，请检查服务器连接';
+        } else if (errorStr.contains('401') ||
+            errorStr.contains('unauthorized')) {
+          errorMessage = '认证失败，请重新登录';
+        } else if (errorStr.contains('404') || errorStr.contains('not found')) {
+          errorMessage = '文件不存在或已被删除';
+        } else {
+          errorMessage = '播放失败: $e';
+        }
+
         setState(() {
-          _error = '播放失败: $e';
+          _error = errorMessage;
           _isLoading = false;
         });
       }
@@ -458,7 +499,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   Future<void> _retry() async {
     await _cleanupAll();
     _isInitializing = false;
-    _prebufferedSegments = 0;
     await _initPlayer();
   }
 

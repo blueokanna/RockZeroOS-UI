@@ -320,21 +320,15 @@ class SaeClientCurve25519 {
     return _blake3KeyedHash(_kck!, data);
   }
 
+  /// Compute PMKID matching Rust client implementation:
+  /// `compute_pmkid(&pmk, &self.device_id_peer, &self.device_id_self)`
+  /// Note: Client uses (peer, self) order, Server uses (self, peer) order
   Uint8List _computePmkid() {
-    final List<int> id1;
-    final List<int> id2;
-    if (_compareBytes(_deviceIdSelf32, _deviceIdPeer32) < 0) {
-      id1 = _deviceIdSelf32;
-      id2 = _deviceIdPeer32;
-    } else {
-      id1 = _deviceIdPeer32;
-      id2 = _deviceIdSelf32;
-    }
-
+    // Client order: peer first, then self (matching Rust client)
     final data = Uint8List.fromList([
       ...utf8.encode('PMK Name'),
-      ...id1,
-      ...id2,
+      ..._deviceIdPeer32, // peer first
+      ..._deviceIdSelf32, // self second
     ]);
 
     final fullHash = _blake3KeyedHash(_pmk!, data);

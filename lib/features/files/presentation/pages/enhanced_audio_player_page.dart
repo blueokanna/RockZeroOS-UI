@@ -11,13 +11,16 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../../core/widgets/shell_scaffold.dart';
 
-/// Enhanced audio player with improved stability and error handling
+/// Enhanced audio player with improved stability and seek support
 class EnhancedAudioPlayerPage extends ConsumerStatefulWidget {
   final String mediaUrl;
   final String fileName;
 
-  const EnhancedAudioPlayerPage(
-      {super.key, required this.mediaUrl, required this.fileName});
+  const EnhancedAudioPlayerPage({
+    super.key,
+    required this.mediaUrl,
+    required this.fileName,
+  });
 
   @override
   ConsumerState<EnhancedAudioPlayerPage> createState() =>
@@ -37,6 +40,7 @@ class _EnhancedAudioPlayerPageState
   bool _isPlaying = false;
   bool _isBuffering = false;
   bool _isLooping = false;
+  bool _isSeeking = false;
   double _volume = 1.0;
   double _speed = 1.0;
   int _retryCount = 0;
@@ -45,6 +49,7 @@ class _EnhancedAudioPlayerPageState
   String? _audioCodec;
   bool _isTranscoding = false;
   String? _transcodeUrl;
+  double? _mediaDuration;
 
   late AnimationController _rotationController;
   final List<double> _audioLevels = List.filled(24, 0.1);
@@ -53,30 +58,34 @@ class _EnhancedAudioPlayerPageState
   @override
   void initState() {
     super.initState();
-    _rotationController =
-        AnimationController(vsync: this, duration: const Duration(seconds: 20));
+    _rotationController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 20),
+    );
     _loadTokenAndInitialize();
     WakelockPlus.enable();
   }
 
   void _startVisualization() {
     _visualizationTimer?.cancel();
-    _visualizationTimer =
-        Timer.periodic(const Duration(milliseconds: 100), (timer) {
-      if (!mounted) return;
-      bool needsUpdate = false;
-      for (int i = 0; i < _audioLevels.length; i++) {
-        final oldValue = _audioLevels[i];
-        if (_isPlaying && !_isBuffering) {
-          final target = math.Random().nextDouble() * 0.7 + 0.3;
-          _audioLevels[i] = _audioLevels[i] * 0.5 + target * 0.5;
-        } else {
-          _audioLevels[i] = (_audioLevels[i] * 0.9).clamp(0.1, 1.0);
+    _visualizationTimer = Timer.periodic(
+      const Duration(milliseconds: 100),
+      (timer) {
+        if (!mounted) return;
+        bool needsUpdate = false;
+        for (int i = 0; i < _audioLevels.length; i++) {
+          final oldValue = _audioLevels[i];
+          if (_isPlaying && !_isBuffering) {
+            final target = math.Random().nextDouble() * 0.7 + 0.3;
+            _audioLevels[i] = _audioLevels[i] * 0.5 + target * 0.5;
+          } else {
+            _audioLevels[i] = (_audioLevels[i] * 0.9).clamp(0.1, 1.0);
+          }
+          if ((oldValue - _audioLevels[i]).abs() > 0.02) needsUpdate = true;
         }
-        if ((oldValue - _audioLevels[i]).abs() > 0.02) needsUpdate = true;
-      }
-      if (needsUpdate && mounted) setState(() {});
-    });
+        if (needsUpdate && mounted) setState(() {});
+      },
+    );
   }
 
   @override
@@ -107,23 +116,34 @@ class _EnhancedAudioPlayerPageState
       }
       if (infoPath.isEmpty) {
         infoPath = uri.path.replaceFirst(
-            RegExp(r'/api/v1/(streaming|filemanager)/(play|stream)/'), '/');
+          RegExp(r'/api/v1/(streaming|filemanager)/(play|stream)/'),
+          '/',
+        );
       }
       final baseUrl = '${uri.scheme}://${uri.host}:${uri.port}';
       final infoUrl = '$baseUrl/api/v1/streaming/info$infoPath';
       debugPrint('[AudioPlayer] Fetching media info from: $infoUrl');
-      final response = await http.get(Uri.parse(infoUrl),
-          headers: _authToken != null
-              ? {'Authorization': 'Bearer $_authToken'}
-              : {});
+
+      final response = await http.get(
+        Uri.parse(infoUrl),
+        headers:
+            _authToken != null ? {'Authorization': 'Bearer $_authToken'} : {},
+      );
+
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
         _audioCodec = json['audio_codec'];
         final needsTranscode = json['needs_audio_transcode'] ?? false;
         _transcodeUrl = json['transcode_url'];
-        if (needsTranscode && _transcodeUrl != null) _isTranscoding = true;
-        debugPrint(
-            '[AudioPlayer] Audio codec: $_audioCodec, needsTranscode: $needsTranscode');
+        _mediaDuration = (json['duration'] as num?)?.toDouble();
+
+        if (needsTranscode && _transcodeUrl != null) {
+          _isTranscoding = true;
+        }
+
+        debugPrint('[AudioPlayer] Audio codec: $_audioCodec');
+        debugPrint('[AudioPlayer] Needs transcode: $needsTranscode');
+        debugPrint('[AudioPlayer] Duration: $_mediaDuration');
       }
     } catch (e) {
       debugPrint('[AudioPlayer] Failed to fetch media info: $e');
@@ -144,56 +164,32 @@ class _EnhancedAudioPlayerPageState
       _isInitialized = false;
       _error = null;
     });
+
     try {
       _audioPlayer?.dispose();
       _audioPlayer = AudioPlayer();
+
       final headers = <String, String>{};
       if (_authToken != null && _authToken!.isNotEmpty) {
         headers['Authorization'] = 'Bearer $_authToken';
       }
+
       final streamUrl = _getStreamUrl();
       debugPrint('[AudioPlayer] Using stream URL: $streamUrl');
-      final audioSource =
-          AudioSource.uri(Uri.parse(streamUrl), headers: headers);
 
-      await _audioPlayer!
-          .setAudioSource(audioSource)
-          .timeout(const Duration(seconds: 30), onTimeout: () {
-        throw TimeoutException('Audio initialization timed out');
-      });
+      final audioSource = AudioSource.uri(
+        Uri.parse(streamUrl),
+        headers: headers,
+      );
 
-      _audioPlayer!.playerStateStream.listen((state) {
-        if (!mounted) return;
-        final playing = state.playing;
-        final processing = state.processingState;
-        setState(() {
-          _isPlaying = playing;
-          _isBuffering = processing == ProcessingState.buffering ||
-              processing == ProcessingState.loading;
-        });
-        if (playing && !_isBuffering) {
-          _rotationController.repeat();
-        } else {
-          _rotationController.stop();
-        }
-      });
+      await _audioPlayer!.setAudioSource(audioSource).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          throw TimeoutException('Audio initialization timed out');
+        },
+      );
 
-      _audioPlayer!.positionStream.listen((position) {
-        if (mounted) {
-          setState(() => _position = position);
-        }
-      });
-      _audioPlayer!.durationStream.listen((duration) {
-        if (mounted && duration != null) {
-          setState(() => _duration = duration);
-        }
-      });
-      _audioPlayer!.bufferedPositionStream.listen((buffered) {
-        if (mounted) {
-          setState(() => _bufferedPosition = buffered);
-        }
-      });
-
+      _setupListeners();
       _startVisualization();
       _retryCount = 0;
       setState(() => _isInitialized = true);
@@ -222,10 +218,46 @@ class _EnhancedAudioPlayerPageState
     }
   }
 
+  void _setupListeners() {
+    _audioPlayer!.playerStateStream.listen((state) {
+      if (!mounted) return;
+      final playing = state.playing;
+      final processing = state.processingState;
+      setState(() {
+        _isPlaying = playing;
+        _isBuffering = processing == ProcessingState.buffering ||
+            processing == ProcessingState.loading;
+      });
+      if (playing && !_isBuffering) {
+        _rotationController.repeat();
+      } else {
+        _rotationController.stop();
+      }
+    });
+
+    _audioPlayer!.positionStream.listen((position) {
+      if (mounted && !_isSeeking) {
+        setState(() => _position = position);
+      }
+    });
+
+    _audioPlayer!.durationStream.listen((duration) {
+      if (mounted && duration != null) {
+        setState(() => _duration = duration);
+      }
+    });
+
+    _audioPlayer!.bufferedPositionStream.listen((buffered) {
+      if (mounted) {
+        setState(() => _bufferedPosition = buffered);
+      }
+    });
+  }
+
   String _getErrorMessage(dynamic error) {
     final errorStr = error.toString().toLowerCase();
     if (errorStr.contains('codec') || errorStr.contains('format')) {
-      return '不支持的音频格式\n编码: ${_audioCodec ?? "unknown"}\n${_isTranscoding ? "服务器转码失败" : "尝试启用服务器转码"}';
+      return '不支持的音频格式\n编码: ${_audioCodec ?? "unknown"}';
     }
     if (errorStr.contains('network') ||
         errorStr.contains('connection') ||
@@ -244,66 +276,38 @@ class _EnhancedAudioPlayerPageState
     }
   }
 
-  void _seekTo(Duration position) async {
-    if (_audioPlayer == null) return;
+  Future<void> _seekTo(Duration position) async {
+    if (_audioPlayer == null || _isSeeking) return;
+
+    final clampedPosition = Duration(
+      milliseconds: position.inMilliseconds.clamp(0, _duration.inMilliseconds),
+    );
+
+    setState(() {
+      _isSeeking = true;
+      _isBuffering = true;
+      _position = clampedPosition;
+    });
 
     try {
-      // Show buffering state during seek
-      setState(() => _isBuffering = true);
-
-      await _audioPlayer!.seek(position);
-
-      // If not playing, start playback after seek
-      if (!_isPlaying) {
-        await _audioPlayer!.play();
-      }
+      debugPrint('[AudioPlayer] Seeking to: $clampedPosition');
+      await _audioPlayer!.seek(clampedPosition);
+      await Future.delayed(const Duration(milliseconds: 200));
+      debugPrint('[AudioPlayer] Seek completed to: $clampedPosition');
     } catch (e) {
       debugPrint('[AudioPlayer] Seek error: $e');
-
-      // If seek fails, try to reinitialize at the new position
-      if (e.toString().contains('source') ||
-          e.toString().contains('position')) {
-        debugPrint(
-            '[AudioPlayer] Attempting to reinitialize at position: $position');
-        await _reinitializeAtPosition(position);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('跳转失败: ${e.toString().split('\n').first}'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
       }
-    }
-  }
-
-  /// Reinitialize the audio player at a specific position
-  /// Used when seek fails due to buffering issues
-  Future<void> _reinitializeAtPosition(Duration position) async {
-    try {
-      final wasPlaying = _isPlaying;
-
-      // Dispose current player
-      await _audioPlayer?.stop();
-
-      // Create new audio source
-      final headers = <String, String>{};
-      if (_authToken != null && _authToken!.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $_authToken';
+    } finally {
+      if (mounted) {
+        setState(() => _isSeeking = false);
       }
-
-      final streamUrl = _getStreamUrl();
-      final audioSource =
-          AudioSource.uri(Uri.parse(streamUrl), headers: headers);
-
-      // Set source and seek to position
-      await _audioPlayer!.setAudioSource(
-        audioSource,
-        initialPosition: position,
-      );
-
-      // Resume playback if was playing
-      if (wasPlaying) {
-        await _audioPlayer!.play();
-      }
-
-      debugPrint('[AudioPlayer] Reinitialized at position: $position');
-    } catch (e) {
-      debugPrint('[AudioPlayer] Reinitialize failed: $e');
-      setState(() => _error = '跳转失败，请重试');
     }
   }
 
@@ -358,8 +362,9 @@ class _EnhancedAudioPlayerPageState
           backgroundColor: Colors.transparent,
           elevation: 0,
           leading: IconButton(
-              icon: const Icon(Icons.arrow_back_rounded),
-              onPressed: () => Navigator.pop(context)),
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: () => Navigator.pop(context),
+          ),
           actions: [
             PopupMenuButton<double>(
               icon: const Icon(Icons.speed_rounded),
@@ -368,8 +373,9 @@ class _EnhancedAudioPlayerPageState
               itemBuilder: (context) => [
                 for (final speed in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
                   PopupMenuItem(
-                      value: speed,
-                      child: Row(children: [
+                    value: speed,
+                    child: Row(
+                      children: [
                         if (_speed == speed)
                           Icon(Icons.check,
                               color: colorScheme.primary, size: 18)
@@ -377,20 +383,24 @@ class _EnhancedAudioPlayerPageState
                           const SizedBox(width: 18),
                         const SizedBox(width: 8),
                         Text('${speed}x'),
-                      ])),
+                      ],
+                    ),
+                  ),
               ],
             ),
           ],
         ),
         body: Container(
           decoration: BoxDecoration(
-              gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
                 colorScheme.primary.withValues(alpha: 0.15),
-                colorScheme.surface
-              ])),
+                colorScheme.surface,
+              ],
+            ),
+          ),
           child: SafeArea(
             child: _error != null
                 ? _buildErrorState(colorScheme, textTheme)
@@ -405,126 +415,169 @@ class _EnhancedAudioPlayerPageState
 
   Widget _buildLoadingState(ColorScheme colorScheme, TextTheme textTheme) {
     return Center(
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-      Container(
-        width: 180,
-        height: 180,
-        decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: LinearGradient(colors: [
-              colorScheme.primary.withValues(alpha: 0.3),
-              colorScheme.secondary.withValues(alpha: 0.3)
-            ])),
-        child: Center(
-            child: CircularProgressIndicator(
-                color: colorScheme.primary, strokeWidth: 3)),
-      ),
-      const SizedBox(height: 24),
-      Text(_isTranscoding ? '正在转码...' : '加载中...',
-          style: textTheme.titleMedium?.copyWith(color: colorScheme.onSurface)),
-      const SizedBox(height: 8),
-      Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 48),
-          child: Text(widget.fileName,
-              style: textTheme.bodySmall
-                  ?.copyWith(color: colorScheme.onSurfaceVariant),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 180,
+            height: 180,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                colors: [
+                  colorScheme.primary.withValues(alpha: 0.3),
+                  colorScheme.secondary.withValues(alpha: 0.3),
+                ],
+              ),
+            ),
+            child: Center(
+              child: CircularProgressIndicator(
+                color: colorScheme.primary,
+                strokeWidth: 3,
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            _isTranscoding ? '正在转码...' : '加载中...',
+            style:
+                textTheme.titleMedium?.copyWith(color: colorScheme.onSurface),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 48),
+            child: Text(
+              widget.fileName,
+              style: textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
               textAlign: TextAlign.center,
               maxLines: 2,
-              overflow: TextOverflow.ellipsis)),
-      if (_retryCount > 0) ...[
-        const SizedBox(height: 8),
-        Text('重试 $_retryCount/$_maxRetries',
-            style: textTheme.bodySmall?.copyWith(color: Colors.orange))
-      ],
-    ]));
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (_retryCount > 0) ...[
+            const SizedBox(height: 8),
+            Text(
+              '重试 $_retryCount/$_maxRetries',
+              style: textTheme.bodySmall?.copyWith(color: Colors.orange),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Widget _buildErrorState(ColorScheme colorScheme, TextTheme textTheme) {
     return Center(
-        child: Padding(
-            padding: const EdgeInsets.all(32),
-            child:
-                Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Icon(Icons.error_outline_rounded,
-                  size: 72, color: colorScheme.error),
-              const SizedBox(height: 24),
-              Text('播放错误',
-                  style: textTheme.titleLarge
-                      ?.copyWith(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              Text(_error ?? '未知错误',
-                  style: textTheme.bodyMedium
-                      ?.copyWith(color: colorScheme.onSurfaceVariant),
-                  textAlign: TextAlign.center),
-              const SizedBox(height: 32),
-              FilledButton.icon(
-                  onPressed: () {
-                    _retryCount = 0;
-                    _initializePlayer();
-                  },
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('重试')),
-            ])));
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline_rounded,
+                size: 72, color: colorScheme.error),
+            const SizedBox(height: 24),
+            Text('播放错误',
+                style: textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text(_error ?? '未知错误',
+                style: textTheme.bodyMedium
+                    ?.copyWith(color: colorScheme.onSurfaceVariant),
+                textAlign: TextAlign.center),
+            const SizedBox(height: 32),
+            FilledButton.icon(
+              onPressed: () {
+                _retryCount = 0;
+                _initializePlayer();
+              },
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('重试'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildPlayerContent(ColorScheme colorScheme, TextTheme textTheme) {
-    return Column(children: [
-      const Spacer(flex: 1),
-      _buildAlbumArt(colorScheme),
-      const SizedBox(height: 24),
-      _buildAudioVisualizer(colorScheme),
-      const SizedBox(height: 24),
-      Padding(
+    return Column(
+      children: [
+        const Spacer(flex: 1),
+        _buildAlbumArt(colorScheme),
+        const SizedBox(height: 24),
+        _buildAudioVisualizer(colorScheme),
+        const SizedBox(height: 24),
+        Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Column(children: [
-            Text(widget.fileName,
-                style:
-                    textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis),
-            const SizedBox(height: 8),
-            if (_isBuffering)
-              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: colorScheme.primary)),
-                const SizedBox(width: 8),
-                Text(_isTranscoding ? '转码中...' : '缓冲中...',
-                    style: textTheme.bodySmall
-                        ?.copyWith(color: colorScheme.onSurfaceVariant)),
-              ])
-            else
-              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                Text('正在播放',
-                    style: textTheme.bodySmall
-                        ?.copyWith(color: colorScheme.onSurfaceVariant)),
-                if (_isTranscoding) ...[
-                  const SizedBox(width: 8),
-                  Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
+          child: Column(
+            children: [
+              Text(widget.fileName,
+                  style: textTheme.titleLarge
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis),
+              const SizedBox(height: 8),
+              if (_isBuffering || _isSeeking)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: colorScheme.primary),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _isSeeking
+                          ? '跳转中...'
+                          : (_isTranscoding ? '转码中...' : '缓冲中...'),
+                      style: textTheme.bodySmall
+                          ?.copyWith(color: colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                )
+              else
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text('正在播放',
+                        style: textTheme.bodySmall
+                            ?.copyWith(color: colorScheme.onSurfaceVariant)),
+                    if (_isTranscoding) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
                           color: Colors.orange.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(4)),
-                      child: Text(
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
                           '${_audioCodec?.toUpperCase() ?? "DTS"} → AAC',
                           style: textTheme.labelSmall?.copyWith(
                               color: Colors.orange,
-                              fontWeight: FontWeight.w500))),
-                ],
-              ]),
-          ])),
-      const SizedBox(height: 32),
-      _buildProgressBar(colorScheme, textTheme),
-      const SizedBox(height: 24),
-      _buildMainControls(colorScheme),
-      const SizedBox(height: 16),
-      _buildVolumeControl(colorScheme, textTheme),
-      const Spacer(flex: 2),
-    ]);
+                              fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 32),
+        _buildProgressBar(colorScheme, textTheme),
+        const SizedBox(height: 24),
+        _buildMainControls(colorScheme),
+        const SizedBox(height: 16),
+        _buildVolumeControl(colorScheme, textTheme),
+        const Spacer(flex: 2),
+      ],
+    );
   }
 
   Widget _buildAlbumArt(ColorScheme colorScheme) {
@@ -538,18 +591,20 @@ class _EnhancedAudioPlayerPageState
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  colorScheme.primary,
-                  colorScheme.secondary,
-                  colorScheme.tertiary
-                ]),
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                colorScheme.primary,
+                colorScheme.secondary,
+                colorScheme.tertiary
+              ],
+            ),
             boxShadow: [
               BoxShadow(
-                  color: colorScheme.primary.withValues(alpha: 0.3),
-                  blurRadius: 24,
-                  spreadRadius: 4)
+                color: colorScheme.primary.withValues(alpha: 0.3),
+                blurRadius: 24,
+                spreadRadius: 4,
+              ),
             ],
           ),
           child: Icon(Icons.music_note_rounded,
@@ -561,26 +616,28 @@ class _EnhancedAudioPlayerPageState
 
   Widget _buildAudioVisualizer(ColorScheme colorScheme) {
     return SizedBox(
-        height: 50,
-        child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: List.generate(
-                _audioLevels.length,
-                (index) => Container(
-                      width: 5,
-                      height: 50 * _audioLevels[index],
-                      margin: const EdgeInsets.symmetric(horizontal: 2),
-                      decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                              begin: Alignment.bottomCenter,
-                              end: Alignment.topCenter,
-                              colors: [
-                                colorScheme.primary,
-                                colorScheme.secondary
-                              ]),
-                          borderRadius: BorderRadius.circular(3)),
-                    ))));
+      height: 50,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: List.generate(
+          _audioLevels.length,
+          (index) => Container(
+            width: 5,
+            height: 50 * _audioLevels[index],
+            margin: const EdgeInsets.symmetric(horizontal: 2),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+                colors: [colorScheme.primary, colorScheme.secondary],
+              ),
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildProgressBar(ColorScheme colorScheme, TextTheme textTheme) {
@@ -591,9 +648,11 @@ class _EnhancedAudioPlayerPageState
         ? (_bufferedPosition.inMilliseconds / _duration.inMilliseconds)
             .clamp(0.0, 1.0)
         : 0.0;
+
     return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(children: [
+      padding: const EdgeInsets.symmetric(horizontal: 32),
+      child: Column(
+        children: [
           SliderTheme(
             data: SliderTheme.of(context).copyWith(
               trackHeight: 5,
@@ -607,97 +666,130 @@ class _EnhancedAudioPlayerPageState
               overlayColor: colorScheme.primary.withValues(alpha: 0.2),
             ),
             child: Slider(
-                value: progress,
-                secondaryTrackValue: buffered,
-                onChanged: (value) => _seekTo(Duration(
-                    milliseconds: (value * _duration.inMilliseconds).round()))),
+              value: progress,
+              secondaryTrackValue: buffered,
+              onChanged: (value) {
+                final newPosition = Duration(
+                  milliseconds: (value * _duration.inMilliseconds).round(),
+                );
+                setState(() => _position = newPosition);
+              },
+              onChangeEnd: (value) {
+                final newPosition = Duration(
+                  milliseconds: (value * _duration.inMilliseconds).round(),
+                );
+                _seekTo(newPosition);
+              },
+            ),
           ),
           Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(_formatDuration(_position),
-                        style: textTheme.bodySmall?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
-                            fontFamily: 'monospace')),
-                    Text(_formatDuration(_duration),
-                        style: textTheme.bodySmall?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
-                            fontFamily: 'monospace')),
-                  ])),
-        ]));
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(_formatDuration(_position),
+                    style: textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                        fontFamily: 'monospace')),
+                Text(_formatDuration(_duration),
+                    style: textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                        fontFamily: 'monospace')),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildMainControls(ColorScheme colorScheme) {
     return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+      padding: const EdgeInsets.symmetric(horizontal: 32),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
           IconButton(
-              iconSize: 28,
-              icon: Icon(
-                  _isLooping ? Icons.repeat_one_rounded : Icons.repeat_rounded,
-                  color: _isLooping
-                      ? colorScheme.primary
-                      : colorScheme.onSurfaceVariant),
-              onPressed: _toggleLoop),
+            iconSize: 28,
+            icon: Icon(
+              _isLooping ? Icons.repeat_one_rounded : Icons.repeat_rounded,
+              color: _isLooping
+                  ? colorScheme.primary
+                  : colorScheme.onSurfaceVariant,
+            ),
+            onPressed: _toggleLoop,
+          ),
           IconButton(
-              iconSize: 40,
-              icon: const Icon(Icons.replay_10_rounded),
-              onPressed: _seekBackward),
+            iconSize: 40,
+            icon: const Icon(Icons.replay_10_rounded),
+            onPressed: _seekBackward,
+          ),
           Container(
             width: 68,
             height: 68,
             decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: LinearGradient(
-                    colors: [colorScheme.primary, colorScheme.secondary]),
-                boxShadow: [
-                  BoxShadow(
-                      color: colorScheme.primary.withValues(alpha: 0.4),
-                      blurRadius: 16,
-                      spreadRadius: 2)
-                ]),
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                  colors: [colorScheme.primary, colorScheme.secondary]),
+              boxShadow: [
+                BoxShadow(
+                  color: colorScheme.primary.withValues(alpha: 0.4),
+                  blurRadius: 16,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
             child: IconButton(
-                iconSize: 32,
-                icon: Icon(
-                    _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                    color: colorScheme.onPrimary),
-                onPressed: _togglePlayPause),
+              iconSize: 32,
+              icon: Icon(
+                _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                color: colorScheme.onPrimary,
+              ),
+              onPressed: _togglePlayPause,
+            ),
           ),
           IconButton(
-              iconSize: 40,
-              icon: const Icon(Icons.forward_10_rounded),
-              onPressed: _seekForward),
+            iconSize: 40,
+            icon: const Icon(Icons.forward_10_rounded),
+            onPressed: _seekForward,
+          ),
           const SizedBox(width: 28),
-        ]));
+        ],
+      ),
+    );
   }
 
   Widget _buildVolumeControl(ColorScheme colorScheme, TextTheme textTheme) {
     return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 48),
-        child: Row(children: [
+      padding: const EdgeInsets.symmetric(horizontal: 48),
+      child: Row(
+        children: [
           Icon(
-              _volume == 0 ? Icons.volume_off_rounded : Icons.volume_up_rounded,
-              color: colorScheme.onSurfaceVariant,
-              size: 20),
+            _volume == 0 ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+            color: colorScheme.onSurfaceVariant,
+            size: 20,
+          ),
           Expanded(
-              child: SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              trackHeight: 3,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-              overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
-              activeTrackColor: colorScheme.primary,
-              inactiveTrackColor: colorScheme.surfaceContainerHighest,
-              thumbColor: colorScheme.primary,
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 3,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+                activeTrackColor: colorScheme.primary,
+                inactiveTrackColor: colorScheme.surfaceContainerHighest,
+                thumbColor: colorScheme.primary,
+              ),
+              child: Slider(value: _volume, onChanged: _setVolume),
             ),
-            child: Slider(value: _volume, onChanged: _setVolume),
-          )),
+          ),
           SizedBox(
-              width: 40,
-              child: Text('${(_volume * 100).round()}%',
-                  style: textTheme.bodySmall
-                      ?.copyWith(color: colorScheme.onSurfaceVariant))),
-        ]));
+            width: 40,
+            child: Text('${(_volume * 100).round()}%',
+                style: textTheme.bodySmall
+                    ?.copyWith(color: colorScheme.onSurfaceVariant)),
+          ),
+        ],
+      ),
+    );
   }
 }
