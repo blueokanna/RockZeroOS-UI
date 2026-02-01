@@ -37,11 +37,6 @@ class SecureHlsPlayer {
   });
 
   /// 初始化 SAE 握手并创建 HLS 会话
-  ///
-  /// [userId] - 用户 ID
-  /// [password] - 用户密码（用于 SAE 握手）
-  /// [fileId] - 文件 ID（可选，fileId 和 filePath 二选一）
-  /// [filePath] - 文件路径（可选，fileId 和 filePath 二选一）
   Future<void> initializeSaeHandshake(
     String userId,
     String password, {
@@ -128,6 +123,8 @@ class SecureHlsPlayer {
     // 获取 PMK
     _pmk = saeClient.getPmk();
     debugPrint('[SecureHLS] ✅ SAE handshake completed');
+    debugPrint(
+        '[SecureHLS] PMK (first 8 bytes): ${_bytesToHex(_pmk!.sublist(0, 8))}');
 
     // 步骤 4: 创建 HLS 会话
     debugPrint('[SecureHLS] Step 4: Creating HLS session...');
@@ -141,7 +138,7 @@ class SecureHlsPlayer {
     );
 
     _sessionId = sessionResponse['session_id'] as String;
-    debugPrint('[SecureHLS] ✅ HLS session created');
+    debugPrint('[SecureHLS] ✅ HLS session created: $_sessionId');
 
     // 初始化加密器（使用 session_id 派生密钥）
     _encryptor = HlsEncryptor(sessionId: _sessionId!, pmk: _pmk!);

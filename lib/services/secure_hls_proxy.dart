@@ -9,15 +9,7 @@ import 'package:thirds/blake3.dart' as blake3;
 
 import 'bulletproofs_ffi.dart';
 
-/// AES-256-GCM 加密/解密工具类
-///
-/// 提供统一的加密解密接口，确保与 Rust 后端完全一致
 class AesGcmCrypto {
-  /// AES-256-GCM 解密
-  ///
-  /// [ciphertextWithTag] - 密文 + 16字节认证标签
-  /// [key] - 32字节密钥
-  /// [nonce] - 12字节随机数
   static Uint8List decrypt({
     required Uint8List ciphertextWithTag,
     required Uint8List key,
@@ -45,12 +37,6 @@ class AesGcmCrypto {
     return cipher.process(ciphertextWithTag);
   }
 
-  /// AES-256-GCM 加密
-  ///
-  /// [plaintext] - 明文
-  /// [key] - 32字节密钥
-  /// [nonce] - 12字节随机数（可选，不提供则自动生成）
-  /// 返回: [12字节nonce][密文][16字节tag]
   static Uint8List encrypt({
     required Uint8List plaintext,
     required Uint8List key,
@@ -91,20 +77,11 @@ class AesGcmCrypto {
   }
 }
 
-/// HKDF-Blake3 密钥派生
-///
-/// 与 Rust 后端 HkdfBlake3 实现完全一致
 class HkdfBlake3 {
   final Uint8List _prk;
 
   HkdfBlake3._(this._prk);
-
-  /// 使用 session_id 派生 salt 创建 HKDF 实例
-  ///
-  /// Salt 派生: salt = blake3("hls-session-salt:" + session_id)
-  /// PRK 派生: prk = blake3(salt + ikm)
   factory HkdfBlake3.withSessionSalt(String sessionId, Uint8List ikm) {
-    // 派生 salt: blake3("hls-session-salt:" + session_id)
     final saltInput = 'hls-session-salt:$sessionId';
     final saltInputBytes = utf8.encode(saltInput);
     final salt = Uint8List.fromList(blake3.blake3(saltInputBytes, 32));
@@ -113,12 +90,21 @@ class HkdfBlake3 {
     final prkInput = Uint8List.fromList([...salt, ...ikm]);
     final prk = Uint8List.fromList(blake3.blake3(prkInput, 32));
 
+    debugPrint('[HkdfBlake3] Session ID: $sessionId');
+    debugPrint(
+        '[HkdfBlake3] Salt (first 8 bytes): ${_bytesToHex(salt.sublist(0, 8))}');
+    debugPrint(
+        '[HkdfBlake3] IKM (first 8 bytes): ${_bytesToHex(ikm.sublist(0, 8))}');
+    debugPrint(
+        '[HkdfBlake3] PRK (first 8 bytes): ${_bytesToHex(prk.sublist(0, 8))}');
+
     return HkdfBlake3._(prk);
   }
 
-  /// 扩展 PRK 派生输出密钥材料
-  ///
-  /// T(i) = blake3(PRK + T(i-1) + info + counter)
+  static String _bytesToHex(Uint8List bytes) {
+    return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  }
+
   Uint8List expand(String info, int length) {
     final infoBytes = Uint8List.fromList(utf8.encode(info));
     final output = <int>[];
@@ -141,14 +127,13 @@ class HkdfBlake3 {
       counter++;
     }
 
-    return Uint8List.fromList(output.sublist(0, length));
+    final result = Uint8List.fromList(output.sublist(0, length));
+    debugPrint(
+        '[HkdfBlake3] Expand info: "$info", output (first 8 bytes): ${_bytesToHex(result.sublist(0, 8))}');
+    return result;
   }
 }
 
-/// HLS 加密器
-///
-/// 使用 HKDF-Blake3 从 PMK 和 session_id 派生加密密钥
-/// 使用 AES-256-GCM 进行加密/解密
 class HlsEncryptor {
   final Uint8List _encryptionKey;
   final String sessionId;
@@ -160,10 +145,6 @@ class HlsEncryptor {
     required Uint8List encryptionKey,
   }) : _encryptionKey = encryptionKey;
 
-  /// 创建 HLS 加密器
-  ///
-  /// [sessionId] - HLS 会话 ID（用于派生 salt）
-  /// [pmk] - 从 SAE 握手获得的 PMK（32字节）
   factory HlsEncryptor({
     required String sessionId,
     required Uint8List pmk,
@@ -172,9 +153,15 @@ class HlsEncryptor {
       throw ArgumentError('PMK must be 32 bytes, got ${pmk.length}');
     }
 
-    // 使用 session_id 派生 salt 的 HKDF
+    debugPrint('[HlsEncryptor] Creating encryptor for session: $sessionId');
+    debugPrint(
+        '[HlsEncryptor] PMK (first 8 bytes): ${pmk.sublist(0, 8).map((b) => b.toRadixString(16).padLeft(2, '0')).join()}');
+
     final hkdf = HkdfBlake3.withSessionSalt(sessionId, pmk);
     final encryptionKey = hkdf.expand('hls-master-key', 32);
+
+    debugPrint(
+        '[HlsEncryptor] Encryption key (first 8 bytes): ${encryptionKey.sublist(0, 8).map((b) => b.toRadixString(16).padLeft(2, '0')).join()}');
 
     return HlsEncryptor._(
       sessionId: sessionId,
@@ -183,14 +170,8 @@ class HlsEncryptor {
     );
   }
 
-  /// 获取加密密钥（用于调试）
   Uint8List get encryptionKey => Uint8List.fromList(_encryptionKey);
-
-  /// 解密视频段
-  ///
-  /// [encryptedData] - 加密数据，格式: [12字节nonce][密文+16字节tag]
   Uint8List decryptSegment(Uint8List encryptedData) {
-    // 最小有效大小: 12 (nonce) + 16 (tag) + 1 (至少1字节数据)
     if (encryptedData.length < 29) {
       throw ArgumentError(
         'Encrypted data too short: ${encryptedData.length} bytes (need at least 29)',
@@ -200,6 +181,11 @@ class HlsEncryptor {
     final nonce = encryptedData.sublist(0, 12);
     final ciphertextWithTag = encryptedData.sublist(12);
 
+    debugPrint(
+        '[HlsEncryptor] Decrypting segment: ${encryptedData.length} bytes');
+    debugPrint(
+        '[HlsEncryptor] Nonce: ${nonce.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}');
+
     return AesGcmCrypto.decrypt(
       ciphertextWithTag: ciphertextWithTag,
       key: _encryptionKey,
@@ -207,10 +193,6 @@ class HlsEncryptor {
     );
   }
 
-  /// 加密视频段
-  ///
-  /// [plaintext] - 明文数据
-  /// 返回: [12字节nonce][密文+16字节tag]
   Uint8List encryptSegment(Uint8List plaintext) {
     return AesGcmCrypto.encrypt(
       plaintext: plaintext,
@@ -218,18 +200,12 @@ class HlsEncryptor {
     );
   }
 
-  /// 派生段密钥
-  ///
-  /// [segmentIndex] - 段索引
   Uint8List deriveSegmentKey(int segmentIndex) {
     final hkdf = HkdfBlake3.withSessionSalt(sessionId, pmk);
     return hkdf.expand('hls-segment-$segmentIndex', 32);
   }
 }
 
-/// 安全 HLS 代理服务器
-///
-/// 在本地启动 HTTP 服务器，拦截 HLS 请求，解密视频段后返回给播放器
 class SecureHlsProxyServer {
   HttpServer? _server;
   int? _port;
@@ -246,7 +222,6 @@ class SecureHlsProxyServer {
 
   final Map<String, Completer<Uint8List>> _pendingRequests = {};
 
-  // 预加载队列
   final Set<String> _prefetchQueue = {};
   bool _isPrefetching = false;
 
@@ -262,7 +237,6 @@ class SecureHlsProxyServer {
     this.onSegmentLoaded,
   });
 
-  /// 初始化加密器
   void _initialize() {
     if (_initialized) return;
 
@@ -329,9 +303,7 @@ class SecureHlsProxyServer {
     String nonce,
     String segmentName,
   ) {
-    // message = "session_id:timestamp:nonce:segment_name"
     final message = '$sessionId:$timestamp:$nonce:$segmentName';
-    // signature = blake3(pmk + message)
     final input = Uint8List.fromList([...pmk, ...utf8.encode(message)]);
     final hash = blake3.blake3(input, 32);
     return _bytesToHex(Uint8List.fromList(hash));
@@ -417,7 +389,6 @@ class SecureHlsProxyServer {
     try {
       debugPrint('[SecureHLS Proxy] Fetching segment: $segmentName');
 
-      // Check cache first
       if (_segmentCache.containsKey(segmentName)) {
         debugPrint('[SecureHLS Proxy] Cache hit for $segmentName');
         final cachedData = _segmentCache[segmentName]!;
@@ -425,7 +396,6 @@ class SecureHlsProxyServer {
         return;
       }
 
-      // Check if there's already a pending request for this segment
       if (_pendingRequests.containsKey(segmentName)) {
         debugPrint(
             '[SecureHLS Proxy] Waiting for pending request: $segmentName');
@@ -440,7 +410,6 @@ class SecureHlsProxyServer {
         return;
       }
 
-      // Create a new pending request
       final completer = Completer<Uint8List>();
       _pendingRequests[segmentName] = completer;
 
@@ -638,6 +607,10 @@ class SecureHlsProxyServer {
       return decrypted;
     } catch (e) {
       debugPrint('[SecureHLS Proxy] ❌ Decryption failed: $e');
+      debugPrint(
+          '[SecureHLS Proxy] Encrypted data length: ${encryptedData.length}');
+      debugPrint(
+          '[SecureHLS Proxy] First 32 bytes: ${_bytesToHex(encryptedData.sublist(0, 32.clamp(0, encryptedData.length)))}');
       rethrow;
     }
   }

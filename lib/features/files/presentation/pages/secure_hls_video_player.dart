@@ -134,7 +134,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           '[SecureHLS] Auth token: ${_authToken != null ? "present (${_authToken!.length} chars)" : "null"}');
       debugPrint('[SecureHLS] User ID: $_userId');
       debugPrint(
-          '[SecureHLS] Password hash: ${_userPassword != null ? "present (${_userPassword!.length} chars): ${_userPassword!.substring(0, 16)}..." : "null"}');
+          '[SecureHLS] Password hash: ${_userPassword != null ? "present (${_userPassword!.length} chars)" : "null"}');
 
       if (_authToken == null || _authToken!.isEmpty) {
         if (mounted && !_isDisposed) {
@@ -180,6 +180,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       _hlsSessionId = sessionId;
       _pmk = pmk;
 
+      debugPrint('[SecureHLS] Session ID: $_hlsSessionId');
+      debugPrint('[SecureHLS] PMK obtained: ${pmk.length} bytes');
+
       setState(() {
         _loadingStatus = '正在启动安全代理...';
         _loadingProgress = 0.4;
@@ -221,19 +224,19 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
       try {
         await _videoController!.initialize().timeout(
-          const Duration(seconds: 180), // 增加超时时间
+          const Duration(seconds: 180),
           onTimeout: () {
             throw TimeoutException('视频加载超时，请检查网络连接');
           },
         );
       } catch (e) {
         debugPrint('[SecureHLS] Video initialization error: $e');
-        // Check if it's a decryption error
         final errorStr = e.toString().toLowerCase();
         if (errorStr.contains('source') ||
             errorStr.contains('decrypt') ||
             errorStr.contains('crypto') ||
-            errorStr.contains('tag')) {
+            errorStr.contains('tag') ||
+            errorStr.contains('mac')) {
           throw Exception('解密失败，密钥可能不匹配。请重新登录后再试。');
         }
         rethrow;
@@ -257,7 +260,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         placeholder: Container(color: Colors.black),
         autoInitialize: true,
         progressIndicatorDelay: Duration.zero,
-        // 增加缓冲设置
         hideControlsTimer: const Duration(seconds: 3),
         additionalOptions: (context) => [
           OptionItem(
@@ -299,8 +301,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         } else if (errorStr.contains('timeout')) {
           errorMessage = '连接超时，请检查网络连接';
         } else if (errorStr.contains('decrypt') ||
-            errorStr.contains('crypto')) {
-          errorMessage = '解密失败，密钥可能不匹配';
+            errorStr.contains('crypto') ||
+            errorStr.contains('mac')) {
+          errorMessage = '解密失败，密钥可能不匹配。请重新登录后再试。';
         } else if (errorStr.contains('network') ||
             errorStr.contains('connection')) {
           errorMessage = '网络错误，请检查服务器连接';
@@ -432,10 +435,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
             const SizedBox(width: 8),
             Text(
               title,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 14,
-              ),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
             ),
           ],
         ),
@@ -510,7 +510,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     _statsUpdateTimer?.cancel();
     _statsUpdateTimer = null;
 
-    // Stop video controller first
     try {
       _videoController?.removeListener(_onVideoControllerUpdate);
       await _videoController?.pause();
@@ -518,7 +517,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       debugPrint('[SecureHLS] Error pausing video: $e');
     }
 
-    // Dispose chewie controller
     try {
       _chewieController?.dispose();
     } catch (e) {
@@ -526,7 +524,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     }
     _chewieController = null;
 
-    // Dispose video controller
     try {
       _videoController?.dispose();
     } catch (e) {
@@ -534,7 +531,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     }
     _videoController = null;
 
-    // Stop proxy server
     if (_proxyServer != null) {
       try {
         await _proxyServer!.stop();
@@ -544,7 +540,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       _proxyServer = null;
     }
 
-    // Stop HLS session on server
     if (_hlsSessionId != null && _authToken != null) {
       try {
         await http.post(
@@ -727,17 +722,14 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
                   onTap: _showSecurityInfoDialog,
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     margin: const EdgeInsets.symmetric(horizontal: 4),
                     decoration: BoxDecoration(
                       color: Colors.green.withValues(alpha: 0.3),
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
-                        color: Colors.green.withValues(alpha: 0.5),
-                      ),
+                          color: Colors.green.withValues(alpha: 0.5)),
                     ),
                     child: const Row(
                       mainAxisSize: MainAxisSize.min,

@@ -133,7 +133,6 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
       ),
       body: Column(
         children: [
-          // 状态显示
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(16),
