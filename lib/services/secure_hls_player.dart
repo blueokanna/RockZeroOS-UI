@@ -177,7 +177,6 @@ class SecureHlsPlayer {
       sessionId: _sessionId!,
       pmk: _pmk!,
       jwtToken: jwtToken,
-      bulletproofsService: _bulletproofsService,
     );
 
     // 启动代理并获取本地播放列表 URL

@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:thirds/blake3.dart' as blake3;
 
 import 'sae_client_curve25519.dart';
+import 'secure_hls_proxy.dart';
 
 class SaeHandshakeService {
   final String baseUrl;
@@ -15,34 +16,20 @@ class SaeHandshakeService {
     required this.jwtToken,
   });
 
+  /// Performs SAE handshake and returns (sessionId, pmk)
+  /// Throws exception if handshake fails or key verification fails
   Future<(String, Uint8List)> performHandshake({
     required String filePath,
     required String password,
     required String userId,
   }) async {
     try {
-      debugPrint('[SAE Handshake] Starting for file: $filePath');
-      debugPrint('[SAE Handshake] User ID: $userId');
-      debugPrint('[SAE Handshake] Password length: ${password.length}');
-      debugPrint(
-          '[SAE Handshake] Password (first 16 chars): ${password.substring(0, 16.clamp(0, password.length))}...');
-
       // Generate device IDs matching Rust implementation exactly
       final deviceIdSelf = _generateClientDeviceId(userId);
       final deviceIdPeer = _generateServerDeviceId();
 
-      debugPrint(
-          '[SAE Handshake] Client device ID (first 8 bytes): ${_bytesToHex(deviceIdSelf.sublist(0, 8))}');
-      debugPrint(
-          '[SAE Handshake] Server device ID (first 8 bytes): ${_bytesToHex(deviceIdPeer.sublist(0, 8))}');
-
       // Create SAE client with password bytes
-      // 注意：password 已经是 blake3(原始密码) 的十六进制字符串
       final passwordBytes = Uint8List.fromList(utf8.encode(password));
-      debugPrint(
-          '[SAE Handshake] Password bytes length: ${passwordBytes.length}');
-      debugPrint(
-          '[SAE Handshake] Password bytes (first 16): ${_bytesToHex(passwordBytes.sublist(0, 16.clamp(0, passwordBytes.length)))}');
 
       final saeClient = SaeClientCurve25519(
         password: passwordBytes,
@@ -51,41 +38,33 @@ class SaeHandshakeService {
       );
 
       final clientCommit = saeClient.generateCommit();
-      debugPrint('[SAE Handshake] Generated client commit');
 
       // Step 1: Initialize SAE handshake
       final initResponse = await _initSaeHandshake(filePath);
       final tempSessionId = initResponse['temp_session_id'] as String;
-      debugPrint('[SAE Handshake] Initialized, temp session: $tempSessionId');
 
       // Step 2: Send client commit and receive server commit
       final serverCommitResponse = await _sendClientCommit(
         tempSessionId: tempSessionId,
         clientCommit: clientCommit,
       );
-      debugPrint('[SAE Handshake] Received server commit');
 
       final serverCommit =
           serverCommitResponse['server_commit'] as Map<String, dynamic>;
       saeClient.processCommit(serverCommit);
-      debugPrint('[SAE Handshake] Processed server commit');
 
       // Step 3: Generate and send client confirm
       final clientConfirm = saeClient.generateConfirm();
-      debugPrint('[SAE Handshake] Generated client confirm');
 
       // Step 4: Send client confirm and receive server confirm
       final serverConfirmResponse = await _sendClientConfirm(
         tempSessionId: tempSessionId,
         clientConfirm: clientConfirm,
       );
-      debugPrint('[SAE Handshake] Received server confirm');
 
       final serverConfirm =
           serverConfirmResponse['server_confirm'] as Map<String, dynamic>;
       saeClient.verifyConfirm(serverConfirm);
-      debugPrint(
-          '[SAE Handshake] Verified server confirm - SAE authenticated!');
 
       // Step 5: Create HLS session
       final sessionResponse = await _createHlsSession(
@@ -94,41 +73,67 @@ class SaeHandshakeService {
       );
 
       final sessionId = sessionResponse['session_id'] as String;
-      debugPrint('[SAE Handshake] ✅ SAE Handshake Complete!');
-      debugPrint('[SAE Handshake] Session ID: $sessionId');
-
-      // Get the derived PMK
       final pmk = saeClient.getPmk();
-      debugPrint(
-          '[SAE Handshake] PMK (first 8 bytes): ${_bytesToHex(pmk.sublist(0, 8))}');
+
+      // Step 6: Verify key derivation matches server
+      final serverKeyVerification =
+          sessionResponse['key_verification'] as String?;
+      if (serverKeyVerification != null) {
+        final clientKeyVerification = _computeKeyVerification(sessionId, pmk);
+        if (clientKeyVerification != serverKeyVerification) {
+          debugPrint('[SAE] Key verification mismatch!');
+          debugPrint('[SAE] Server: $serverKeyVerification');
+          debugPrint('[SAE] Client: $clientKeyVerification');
+          throw Exception(
+              'Key derivation mismatch - encryption keys do not match');
+        }
+        debugPrint('[SAE] Key verification successful');
+      }
 
       return (sessionId, pmk);
     } catch (e, stack) {
-      debugPrint('[SAE Handshake] Error: $e');
-      debugPrint('[SAE Handshake] Stack: $stack');
+      debugPrint('[SAE] Error: $e');
+      debugPrint('[SAE] Stack: $stack');
       rethrow;
     }
   }
 
+  /// Compute key verification hash to match server
+  String _computeKeyVerification(String sessionId, Uint8List pmk) {
+    // Derive encryption key using same HKDF as proxy
+    final hkdf = HkdfBlake3.withSessionSalt(sessionId, pmk);
+    final info = Uint8List.fromList(utf8.encode('hls-master-key'));
+    final encryptionKey = hkdf.expand(info, 32);
+
+    // Compute verification hash: blake3(encryption_key + session_id)
+    final input = Uint8List.fromList([
+      ...encryptionKey,
+      ...utf8.encode(sessionId),
+    ]);
+    final hash = blake3.blake3(input, 32);
+
+    // Return first 16 bytes as hex
+    return hash
+        .sublist(0, 16)
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+  }
+
   Future<Map<String, dynamic>> _initSaeHandshake(String filePath) async {
     final url = Uri.parse('$baseUrl/api/v1/secure-hls/sae/init');
-
     final response = await http.post(
       url,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $jwtToken',
       },
-      body: jsonEncode({
-        'file_path': filePath,
-      }),
+      body: jsonEncode({'file_path': filePath}),
     );
 
     if (response.statusCode != 200) {
-      throw Exception(
-          'SAE init failed: ${response.statusCode} - ${response.body}');
+      final body = response.body;
+      throw Exception('SAE init failed: ${response.statusCode} - $body');
     }
-
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
@@ -137,7 +142,6 @@ class SaeHandshakeService {
     required Map<String, dynamic> clientCommit,
   }) async {
     final url = Uri.parse('$baseUrl/api/v1/secure-hls/sae/commit');
-
     final response = await http.post(
       url,
       headers: {
@@ -151,10 +155,9 @@ class SaeHandshakeService {
     );
 
     if (response.statusCode != 200) {
-      throw Exception(
-          'SAE commit failed: ${response.statusCode} - ${response.body}');
+      final body = response.body;
+      throw Exception('SAE commit failed: ${response.statusCode} - $body');
     }
-
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
@@ -163,7 +166,6 @@ class SaeHandshakeService {
     required Map<String, dynamic> clientConfirm,
   }) async {
     final url = Uri.parse('$baseUrl/api/v1/secure-hls/sae/confirm');
-
     final response = await http.post(
       url,
       headers: {
@@ -177,10 +179,9 @@ class SaeHandshakeService {
     );
 
     if (response.statusCode != 200) {
-      throw Exception(
-          'SAE confirm failed: ${response.statusCode} - ${response.body}');
+      final body = response.body;
+      throw Exception('SAE confirm failed: ${response.statusCode} - $body');
     }
-
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
@@ -189,7 +190,6 @@ class SaeHandshakeService {
     required String filePath,
   }) async {
     final url = Uri.parse('$baseUrl/api/v1/secure-hls/session/create');
-
     final response = await http.post(
       url,
       headers: {
@@ -203,29 +203,22 @@ class SaeHandshakeService {
     );
 
     if (response.statusCode != 200) {
-      throw Exception(
-          'Create session failed: ${response.statusCode} - ${response.body}');
+      final body = response.body;
+      throw Exception('Create session failed: ${response.statusCode} - $body');
     }
-
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
-  /// Generate server device ID matching Rust implementation:
-  /// `let server_id = blake3::hash(b"rockzero-server-device-id").into();`
+  /// Generate server device ID: blake3("rockzero-server-device-id")
   Uint8List _generateServerDeviceId() {
     const serverIdString = 'rockzero-server-device-id';
     final hash = blake3.blake3(utf8.encode(serverIdString), 32);
     return Uint8List.fromList(hash);
   }
 
-  /// Generate client device ID matching Rust implementation:
-  /// `let client_id = blake3::hash(user_id.as_bytes()).into();`
+  /// Generate client device ID: blake3(user_id)
   Uint8List _generateClientDeviceId(String userId) {
     final hash = blake3.blake3(utf8.encode(userId), 32);
     return Uint8List.fromList(hash);
-  }
-
-  String _bytesToHex(Uint8List bytes) {
-    return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 }

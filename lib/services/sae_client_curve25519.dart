@@ -288,6 +288,7 @@ class SaeClientCurve25519 {
 
     final info =
         Uint8List.fromList([...utf8.encode('SAE KCK and PMK'), ...valueBytes]);
+
     final kckPmk = _hkdfBlake3Expand(keyseed, info, 64);
 
     _kck = Uint8List.fromList(kckPmk.sublist(0, 32));
