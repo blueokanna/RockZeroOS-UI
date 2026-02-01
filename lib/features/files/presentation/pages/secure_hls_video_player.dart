@@ -1,15 +1,15 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:chewie/chewie.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../../core/widgets/shell_scaffold.dart';
@@ -67,15 +67,16 @@ class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
 }
 
 class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
-  VideoPlayerController? _videoController;
-  ChewieController? _chewieController;
+  Player? _player;
+  VideoController? _videoController;
   SecureHlsProxyServer? _proxyServer;
 
   bool _isLoading = true;
   bool _isInitializing = false;
-  String _loadingStatus = '初始化...';
+  String _loadingStatus = 'Initialization...';
   double _loadingProgress = 0;
   String? _error;
+  String? _errorDetails;
   String? _authToken;
   String? _hlsSessionId;
   String? _userId;
@@ -85,9 +86,16 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   bool _isDownloading = false;
   double _downloadProgress = 0;
   bool _isDisposed = false;
+  bool _showControls = true;
+  Timer? _hideControlsTimer;
 
   final SecureStreamStats _stats = SecureStreamStats();
   Timer? _statsUpdateTimer;
+
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  bool _isPlaying = false;
+  bool _isBuffering = false;
 
   @override
   void initState() {
@@ -100,7 +108,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (!_isInitializing && _videoController == null && _error == null) {
+    if (!_isInitializing && _player == null && _error == null) {
       _isInitializing = true;
       _initPlayer();
     }
@@ -115,6 +123,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         _loadingStatus = '正在获取凭据...';
         _loadingProgress = 0.1;
         _error = null;
+        _errorDetails = null;
       });
 
       const storage = FlutterSecureStorage();
@@ -155,6 +164,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       );
 
       final filePath = widget.filePath ?? '';
+      debugPrint('[SecureHLS] Starting handshake for file: $filePath');
+
       final (sessionId, pmk) = await handshakeService.performHandshake(
         filePath: filePath,
         password: _userPassword!,
@@ -165,6 +176,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
       _hlsSessionId = sessionId;
       _pmk = pmk;
+      debugPrint('[SecureHLS] Handshake complete, session: $sessionId');
 
       setState(() {
         _loadingStatus = '正在启动安全代理...';
@@ -180,67 +192,77 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       );
 
       final proxyPlaylistUrl = await _proxyServer!.start();
+      debugPrint('[SecureHLS] Proxy started, playlist URL: $proxyPlaylistUrl');
 
       if (_isDisposed) return;
 
       setState(() {
         _loadingStatus = '正在初始化播放器...';
-        _loadingProgress = 0.7;
+        _loadingProgress = 0.6;
       });
 
-      // 使用 video_player 创建控制器
-      _videoController = VideoPlayerController.networkUrl(
-        Uri.parse(proxyPlaylistUrl),
-        httpHeaders: {
-          'User-Agent': 'RockZeroOS/1.0',
-        },
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      _player = Player(
+        configuration: const PlayerConfiguration(
+          bufferSize: 32 * 1024 * 1024,
+        ),
       );
 
-      await _videoController!.initialize();
+      _videoController = VideoController(_player!);
+
+      _player!.stream.playing.listen((playing) {
+        if (mounted && !_isDisposed) {
+          setState(() => _isPlaying = playing);
+        }
+      });
+
+      _player!.stream.position.listen((position) {
+        if (mounted && !_isDisposed) {
+          setState(() => _position = position);
+        }
+      });
+
+      _player!.stream.duration.listen((duration) {
+        if (mounted && !_isDisposed) {
+          setState(() => _duration = duration);
+        }
+      });
+
+      _player!.stream.buffering.listen((buffering) {
+        if (mounted && !_isDisposed) {
+          setState(() => _isBuffering = buffering);
+        }
+      });
+
+      _player!.stream.error.listen((error) {
+        if (error.isNotEmpty && mounted && !_isDisposed) {
+          debugPrint('[SecureHLS] Player error: $error');
+        }
+      });
+
+      setState(() {
+        _loadingStatus = '正在加载视频...';
+        _loadingProgress = 0.8;
+      });
+
+      await _player!.open(
+        Media(proxyPlaylistUrl),
+        play: true,
+      );
 
       if (_isDisposed) {
-        _videoController?.dispose();
+        await _player?.dispose();
         return;
       }
 
-      // 创建 Chewie 控制器
-      _chewieController = ChewieController(
-        videoPlayerController: _videoController!,
-        autoPlay: true,
-        looping: false,
-        allowFullScreen: true,
-        allowMuting: true,
-        showControls: true,
-        showControlsOnInitialize: true,
-        placeholder: Container(color: Colors.black),
-        autoInitialize: true,
-        errorBuilder: (context, errorMessage) {
-          return Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.error, color: Colors.white54, size: 48),
-                const SizedBox(height: 16),
-                Text(
-                  '播放错误: $errorMessage',
-                  style: const TextStyle(color: Colors.white54),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          );
-        },
-        materialProgressColors: ChewieProgressColors(
-          playedColor: Colors.green,
-          handleColor: Colors.greenAccent,
-          backgroundColor: Colors.grey.shade800,
-          bufferedColor: Colors.grey.shade600,
-        ),
-      );
+      debugPrint('[SecureHLS] Video playback started');
 
       _statsUpdateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (mounted && !_isDisposed) setState(() {});
       });
+
+      _startHideControlsTimer();
 
       if (mounted && !_isDisposed) {
         setState(() {
@@ -252,9 +274,10 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       debugPrint('[SecureHLS] Error: $e');
       debugPrint('[SecureHLS] Stack: $stack');
       if (mounted && !_isDisposed) {
-        String errorMessage = _parseErrorMessage(e.toString());
+        final (errorMessage, errorDetails) = _parseErrorMessage(e.toString());
         setState(() {
           _error = errorMessage;
+          _errorDetails = errorDetails;
           _isLoading = false;
         });
       }
@@ -263,31 +286,51 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     }
   }
 
-  String _parseErrorMessage(String errorStr) {
+  void _startHideControlsTimer() {
+    _hideControlsTimer?.cancel();
+    _hideControlsTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && !_isDisposed && _isPlaying) {
+        setState(() => _showControls = false);
+      }
+    });
+  }
+
+  void _onTapVideo() {
+    setState(() => _showControls = !_showControls);
+    if (_showControls) {
+      _startHideControlsTimer();
+    }
+  }
+
+  (String, String?) _parseErrorMessage(String errorStr) {
     final lower = errorStr.toLowerCase();
+
     if (lower.contains('key derivation mismatch') ||
         lower.contains('encryption keys do not match')) {
-      return '密钥派生不匹配，请重新登录后再试。如果问题持续，请联系管理员。';
+      return ('密钥派生不匹配', '请重新登录后再试。如果问题持续，请联系管理员。');
     } else if (lower.contains('sae') || lower.contains('handshake')) {
-      return 'SAE安全握手失败，请检查密码是否正确';
-    } else if (lower.contains('timeout')) {
-      return '连接超时，请检查网络连接';
+      return ('SAE安全握手失败', '请检查密码是否正确，或重新登录。');
+    } else if (lower.contains('timeout') || lower.contains('超时')) {
+      return ('连接超时', '请检查网络连接和服务器状态。');
     } else if (lower.contains('decrypt') ||
         lower.contains('crypto') ||
         lower.contains('mac') ||
         lower.contains('tag')) {
-      return '解密失败，密钥可能不匹配。请重新登录后再试。';
-    } else if (lower.contains('network') || lower.contains('connection')) {
-      return '网络错误，请检查服务器连接';
+      return ('解密失败', '密钥可能不匹配，请重新登录后再试。');
+    } else if (lower.contains('network') ||
+        lower.contains('connection') ||
+        lower.contains('socket')) {
+      return ('网络错误', '请检查网络连接和服务器状态。');
     } else if (lower.contains('401') || lower.contains('unauthorized')) {
-      return '认证失败，请重新登录';
+      return ('认证失败', '请重新登录。');
     } else if (lower.contains('404') || lower.contains('not found')) {
-      return '文件不存在或已被删除';
+      return ('文件不存在', '文件可能已被删除或移动。');
     } else if (lower.contains('platformexception') ||
-        lower.contains('video_player')) {
-      return '视频格式不支持或播放器初始化失败';
+        lower.contains('video_player') ||
+        lower.contains('初始化失败')) {
+      return ('播放器初始化失败', '视频格式可能不支持，或服务器转码失败。\n\n详细信息: $errorStr');
     }
-    return '播放失败: $errorStr';
+    return ('播放失败', errorStr);
   }
 
   void _onSegmentLoaded(int bytes, bool decrypted) {
@@ -385,19 +428,15 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   Future<void> _cleanupAll() async {
     _statsUpdateTimer?.cancel();
     _statsUpdateTimer = null;
+    _hideControlsTimer?.cancel();
+    _hideControlsTimer = null;
 
     try {
-      _chewieController?.dispose();
+      await _player?.dispose();
     } catch (e) {
-      debugPrint('[SecureHLS] Error disposing chewie: $e');
+      debugPrint('[SecureHLS] Error disposing player: $e');
     }
-    _chewieController = null;
-
-    try {
-      await _videoController?.dispose();
-    } catch (e) {
-      debugPrint('[SecureHLS] Error disposing video controller: $e');
-    }
+    _player = null;
     _videoController = null;
 
     if (_proxyServer != null) {
@@ -553,6 +592,50 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     }
   }
 
+  void _togglePlayPause() {
+    if (_player == null) return;
+    if (_isPlaying) {
+      _player!.pause();
+    } else {
+      _player!.play();
+      _startHideControlsTimer();
+    }
+  }
+
+  void _seekTo(Duration position) {
+    _player?.seek(position);
+  }
+
+  void _seekForward() {
+    final newPosition = _position + const Duration(seconds: 10);
+    if (newPosition < _duration) {
+      _seekTo(newPosition);
+    } else {
+      _seekTo(_duration);
+    }
+  }
+
+  void _seekBackward() {
+    final newPosition = _position - const Duration(seconds: 10);
+    if (newPosition > Duration.zero) {
+      _seekTo(newPosition);
+    } else {
+      _seekTo(Duration.zero);
+    }
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final hours = twoDigits(duration.inHours);
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+
+    if (duration.inHours > 0) {
+      return '$hours:$minutes:$seconds';
+    }
+    return '$minutes:$seconds';
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -565,64 +648,176 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         body: Stack(
           fit: StackFit.expand,
           children: [
-            // 视频播放器
-            if (_chewieController != null && !_isLoading && _error == null)
-              Chewie(controller: _chewieController!),
-
-            // 顶部工具栏（覆盖在 Chewie 上）
-            if (_chewieController != null && !_isLoading && _error == null)
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: Container(
-                  padding: EdgeInsets.only(
-                    top: MediaQuery.of(context).padding.top,
-                    left: 8,
-                    right: 8,
-                  ),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Colors.black54, Colors.transparent],
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.arrow_back, color: Colors.white),
-                        onPressed: () {
-                          _exitFullscreen();
-                          Navigator.pop(context);
-                        },
-                      ),
-                      Expanded(
-                        child: Text(
-                          widget.fileName,
-                          style: const TextStyle(
-                              color: Colors.white, fontSize: 16),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      _buildSecureBadge(),
-                      IconButton(
-                        icon: const Icon(Icons.download, color: Colors.white),
-                        onPressed: _downloadFile,
-                      ),
-                    ],
-                  ),
+            if (_videoController != null && !_isLoading && _error == null)
+              GestureDetector(
+                onTap: _onTapVideo,
+                child: Video(
+                  controller: _videoController!,
+                  controls: NoVideoControls,
                 ),
               ),
-
-            // 加载中
+            if (_videoController != null && !_isLoading && _error == null)
+              _buildCustomControls(),
+            if (_isBuffering && !_isLoading)
+              const Center(
+                child: CircularProgressIndicator(color: Colors.white),
+              ),
             if (_isLoading) _buildLoading(),
-
-            // 错误
             if (_error != null && !_isLoading) _buildError(),
-
-            // 下载进度
             if (_isDownloading) _buildDownloadProgress(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCustomControls() {
+    return AnimatedOpacity(
+      opacity: _showControls ? 1.0 : 0.0,
+      duration: const Duration(milliseconds: 300),
+      child: IgnorePointer(
+        ignoring: !_showControls,
+        child: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.black54,
+                Colors.transparent,
+                Colors.transparent,
+                Colors.black54,
+              ],
+              stops: [0.0, 0.2, 0.8, 1.0],
+            ),
+          ),
+          child: Column(
+            children: [
+              _buildTopBar(),
+              const Spacer(),
+              _buildCenterControls(),
+              const Spacer(),
+              _buildBottomBar(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopBar() {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.arrow_back, color: Colors.white),
+              onPressed: () {
+                _exitFullscreen();
+                Navigator.pop(context);
+              },
+            ),
+            Expanded(
+              child: Text(
+                widget.fileName,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            _buildSecureBadge(),
+            IconButton(
+              icon: const Icon(Icons.download, color: Colors.white),
+              onPressed: _downloadFile,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCenterControls() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        IconButton(
+          iconSize: 48,
+          icon: const Icon(Icons.replay_10, color: Colors.white),
+          onPressed: _seekBackward,
+        ),
+        const SizedBox(width: 32),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.black38,
+            borderRadius: BorderRadius.circular(40),
+          ),
+          child: IconButton(
+            iconSize: 64,
+            icon: Icon(
+              _isPlaying ? Icons.pause : Icons.play_arrow,
+              color: Colors.white,
+            ),
+            onPressed: _togglePlayPause,
+          ),
+        ),
+        const SizedBox(width: 32),
+        IconButton(
+          iconSize: 48,
+          icon: const Icon(Icons.forward_10, color: Colors.white),
+          onPressed: _seekForward,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBottomBar() {
+    final progress = _duration.inMilliseconds > 0
+        ? _position.inMilliseconds / _duration.inMilliseconds
+        : 0.0;
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 4,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+                activeTrackColor: Colors.green,
+                inactiveTrackColor: Colors.white24,
+                thumbColor: Colors.green,
+                overlayColor: Colors.green.withAlpha(32),
+              ),
+              child: Slider(
+                value: progress.clamp(0.0, 1.0),
+                onChanged: (value) {
+                  final newPosition = Duration(
+                    milliseconds: (value * _duration.inMilliseconds).round(),
+                  );
+                  _seekTo(newPosition);
+                },
+              ),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _formatDuration(_position),
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                Text(
+                  _formatDuration(_duration),
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -752,9 +947,26 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           children: [
             const Icon(Icons.error_outline, color: Colors.white54, size: 64),
             const SizedBox(height: 16),
-            Text(_error!,
-                style: const TextStyle(color: Colors.white54),
-                textAlign: TextAlign.center),
+            Text(
+              _error!,
+              style: const TextStyle(color: Colors.white, fontSize: 18),
+              textAlign: TextAlign.center,
+            ),
+            if (_errorDetails != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white10,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _errorDetails!,
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
             const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: _retry,

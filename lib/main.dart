@@ -10,9 +10,13 @@ import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
 import 'core/services/device_discovery_service.dart';
 import 'core/services/wallpaper_service.dart';
+import 'core/services/media_kit_initializer.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 使用自定义初始化器，支持本地库加载
+  await MediaKitInitializer.initialize();
 
   if (kReleaseMode) {
     debugPrintRebuildDirtyWidgets = false;

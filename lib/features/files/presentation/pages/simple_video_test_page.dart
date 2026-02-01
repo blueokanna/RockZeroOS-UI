@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:video_player/video_player.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 class SimpleVideoTestPage extends StatefulWidget {
   final String videoUrl;
@@ -17,11 +18,13 @@ class SimpleVideoTestPage extends StatefulWidget {
 }
 
 class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
-  VideoPlayerController? _controller;
+  Player? _player;
+  VideoController? _controller;
   String _status = '准备初始化...';
   String _details = '';
   bool _isLoading = true;
   String? _error;
+  bool _isPlaying = false;
 
   @override
   void initState() {
@@ -31,7 +34,7 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
 
   @override
   void dispose() {
-    _controller?.dispose();
+    _player?.dispose();
     super.dispose();
   }
 
@@ -47,50 +50,38 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
       _log('开始初始化');
       _log('URL: ${widget.videoUrl}');
 
-      final headers = <String, String>{};
-      if (widget.authToken != null) {
-        headers['Authorization'] = 'Bearer ${widget.authToken}';
-        _log('添加认证头');
-      }
-
-      _log('创建VideoPlayerController...');
-      _controller = VideoPlayerController.networkUrl(
-        Uri.parse(widget.videoUrl),
-        httpHeaders: headers,
-        videoPlayerOptions: VideoPlayerOptions(
-          mixWithOthers: false,
-          allowBackgroundPlayback: false,
-          webOptions: const VideoPlayerWebOptions(
-            controls: VideoPlayerWebOptionsControls.disabled(),
-          ),
+      _log('创建Player...');
+      _player = Player(
+        configuration: const PlayerConfiguration(
+          bufferSize: 32 * 1024 * 1024,
         ),
       );
 
-      _log('调用initialize()...');
-      await _controller!.initialize().timeout(
-        const Duration(seconds: 30),
-        onTimeout: () {
-          _log('❌ 超时！');
-          throw TimeoutException('初始化超时');
-        },
+      _controller = VideoController(_player!);
+
+      _player!.stream.playing.listen((playing) {
+        if (mounted) {
+          setState(() => _isPlaying = playing);
+        }
+      });
+
+      _player!.stream.error.listen((error) {
+        if (error.isNotEmpty && mounted) {
+          _log('❌ 播放错误: $error');
+        }
+      });
+
+      _log('打开媒体...');
+      await _player!.open(
+        Media(
+          widget.videoUrl,
+          httpHeaders: widget.authToken != null
+              ? {'Authorization': 'Bearer ${widget.authToken}'}
+              : null,
+        ),
+        play: true,
       );
 
-      _log('✅ initialize()完成');
-      _log('isInitialized: ${_controller!.value.isInitialized}');
-      _log('hasError: ${_controller!.value.hasError}');
-      _log('size: ${_controller!.value.size}');
-      _log('duration: ${_controller!.value.duration}');
-
-      if (!_controller!.value.isInitialized) {
-        throw Exception('视频未正确初始化');
-      }
-
-      if (_controller!.value.hasError) {
-        throw Exception(_controller!.value.errorDescription ?? '未知错误');
-      }
-
-      _log('调用play()...');
-      await _controller!.play();
       _log('✅ 播放开始');
 
       setState(() {
@@ -124,7 +115,8 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () {
-              _controller?.dispose();
+              _player?.dispose();
+              _player = null;
               _controller = null;
               _initVideo();
             },
@@ -161,15 +153,11 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
               ],
             ),
           ),
-
-          // 视频播放器
-          if (_controller != null && _controller!.value.isInitialized)
+          if (_controller != null && !_isLoading && _error == null)
             Expanded(
-              child: Center(
-                child: AspectRatio(
-                  aspectRatio: _controller!.value.aspectRatio,
-                  child: VideoPlayer(_controller!),
-                ),
+              child: Video(
+                controller: _controller!,
+                controls: AdaptiveVideoControls,
               ),
             )
           else if (_isLoading)
@@ -184,8 +172,6 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
                 child: Icon(Icons.error, size: 64, color: Colors.red),
               ),
             ),
-
-          // 详细日志
           Expanded(
             child: Container(
               width: double.infinity,
@@ -202,9 +188,7 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
               ),
             ),
           ),
-
-          // 控制按钮
-          if (_controller != null && _controller!.value.isInitialized)
+          if (_controller != null && !_isLoading && _error == null)
             Container(
               padding: const EdgeInsets.all(16),
               child: Row(
@@ -212,29 +196,24 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
                 children: [
                   IconButton(
                     icon: Icon(
-                      _controller!.value.isPlaying
-                          ? Icons.pause
-                          : Icons.play_arrow,
+                      _isPlaying ? Icons.pause : Icons.play_arrow,
                     ),
                     onPressed: () {
-                      setState(() {
-                        if (_controller!.value.isPlaying) {
-                          _controller!.pause();
-                          _log('暂停');
-                        } else {
-                          _controller!.play();
-                          _log('播放');
-                        }
-                      });
+                      if (_isPlaying) {
+                        _player?.pause();
+                        _log('暂停');
+                      } else {
+                        _player?.play();
+                        _log('播放');
+                      }
                     },
                   ),
                   IconButton(
                     icon: const Icon(Icons.stop),
                     onPressed: () {
-                      _controller!.pause();
-                      _controller!.seekTo(Duration.zero);
+                      _player?.pause();
+                      _player?.seek(Duration.zero);
                       _log('停止');
-                      setState(() {});
                     },
                   ),
                 ],

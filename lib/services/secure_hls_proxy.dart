@@ -7,9 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:pointycastle/export.dart';
 import 'package:thirds/blake3.dart' as blake3;
 
-/// AES-256-GCM 加密/解密工具类
 class AesGcmCrypto {
-  /// AES-256-GCM 解密
   static Uint8List decrypt({
     required Uint8List ciphertextWithTag,
     required Uint8List key,
@@ -38,19 +36,16 @@ class AesGcmCrypto {
   }
 }
 
-/// HKDF-Blake3 密钥派生 - 与 Rust session.rs 完全一致
 class HkdfBlake3 {
   final Uint8List _prk;
 
   HkdfBlake3._(this._prk);
 
   factory HkdfBlake3.withSessionSalt(String sessionId, Uint8List ikm) {
-    // Step 1: salt = blake3("hls-session-salt:" + session_id)
     final saltInput = 'hls-session-salt:$sessionId';
     final saltInputBytes = Uint8List.fromList(utf8.encode(saltInput));
     final salt = Uint8List.fromList(blake3.blake3(saltInputBytes, 32));
 
-    // Step 2: prk = blake3(salt + ikm)
     final prkInput = Uint8List(32 + ikm.length);
     prkInput.setRange(0, 32, salt);
     prkInput.setRange(32, 32 + ikm.length, ikm);
@@ -59,7 +54,6 @@ class HkdfBlake3 {
     return HkdfBlake3._(prk);
   }
 
-  /// Expand PRK - 与 Rust session.rs 完全一致
   Uint8List expand(Uint8List info, int length) {
     final output = Uint8List(length);
     var t = Uint8List(0);
@@ -67,7 +61,6 @@ class HkdfBlake3 {
     var offset = 0;
 
     while (offset < length) {
-      // input = PRK + T(i-1) + info + counter
       final inputLen = 32 + t.length + info.length + 1;
       final input = Uint8List(inputLen);
       var pos = 0;
@@ -96,7 +89,6 @@ class HkdfBlake3 {
   }
 }
 
-/// HLS 加密器
 class HlsEncryptor {
   final Uint8List _encryptionKey;
   final String sessionId;
@@ -129,7 +121,6 @@ class HlsEncryptor {
 
   Uint8List get encryptionKey => Uint8List.fromList(_encryptionKey);
 
-  /// 解密视频段 - 格式: [12字节nonce][密文+16字节tag]
   Uint8List decryptSegment(Uint8List encryptedData) {
     if (encryptedData.length < 29) {
       throw ArgumentError('Data too short: ${encryptedData.length} bytes');
@@ -151,7 +142,6 @@ class HlsEncryptor {
   }
 }
 
-/// 安全 HLS 代理服务器
 class SecureHlsProxyServer {
   HttpServer? _server;
   int? _port;
@@ -171,6 +161,9 @@ class SecureHlsProxyServer {
   late final HlsEncryptor _encryptor;
   bool _initialized = false;
 
+  // 缓存的播放列表内容
+  String? _cachedPlaylist;
+
   SecureHlsProxyServer({
     required this.baseUrl,
     required this.sessionId,
@@ -188,10 +181,15 @@ class SecureHlsProxyServer {
 
   Future<String> start() async {
     _initialize();
-    _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+
+    // 绑定到所有接口，而不仅仅是 loopback
+    _server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
     _port = _server!.port;
-    debugPrint('[Proxy] Started on http://127.0.0.1:$_port');
+    debugPrint('[Proxy] Started on http://0.0.0.0:$_port');
+
     _server!.listen(_handleRequest);
+
+    // 返回 localhost URL
     return 'http://127.0.0.1:$_port/playlist.m3u8';
   }
 
@@ -204,6 +202,7 @@ class SecureHlsProxyServer {
     _prefetchQueue.clear();
     _isPrefetching = false;
     _initialized = false;
+    _cachedPlaylist = null;
     debugPrint('[Proxy] Stopped');
   }
 
@@ -223,11 +222,23 @@ class SecureHlsProxyServer {
   }
 
   Future<void> _handleRequest(HttpRequest request) async {
+    // 添加 CORS 头
+    request.response.headers.add('Access-Control-Allow-Origin', '*');
+    request.response.headers
+        .add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    request.response.headers.add('Access-Control-Allow-Headers', '*');
+
+    if (request.method == 'OPTIONS') {
+      request.response.statusCode = HttpStatus.ok;
+      await request.response.close();
+      return;
+    }
+
     try {
       final path = request.uri.path;
       debugPrint('[Proxy] ${request.method} $path');
 
-      if (path == '/playlist.m3u8') {
+      if (path == '/playlist.m3u8' || path == '/master.m3u8') {
         await _handlePlaylistRequest(request);
       } else if (path.endsWith('.ts')) {
         await _handleSegmentRequest(request, path);
@@ -249,8 +260,26 @@ class SecureHlsProxyServer {
   Future<void> _handlePlaylistRequest(HttpRequest request) async {
     HttpClient? client;
     try {
+      // 如果有缓存的播放列表，直接返回
+      if (_cachedPlaylist != null) {
+        request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType =
+            ContentType('application', 'vnd.apple.mpegurl', charset: 'utf-8');
+        request.response.headers.add('Cache-Control', 'no-cache, no-store');
+        request.response.headers.add('Pragma', 'no-cache');
+        request.response.write(_cachedPlaylist);
+        await request.response.close();
+        debugPrint('[Proxy] Playlist served from cache');
+        return;
+      }
+
       final playlistUrl = '$baseUrl/api/v1/secure-hls/$sessionId/playlist.m3u8';
-      client = HttpClient()..connectionTimeout = const Duration(seconds: 30);
+      debugPrint('[Proxy] Fetching playlist from: $playlistUrl');
+
+      client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 30)
+        ..badCertificateCallback = (cert, host, port) => true; // 允许自签名证书
+
       final req = await client.getUrl(Uri.parse(playlistUrl));
       if (jwtToken.isNotEmpty) {
         req.headers.add('Authorization', 'Bearer $jwtToken');
@@ -259,16 +288,24 @@ class SecureHlsProxyServer {
 
       if (response.statusCode == 200) {
         final content = await response.transform(utf8.decoder).join();
+        debugPrint('[Proxy] Original playlist:\n$content');
+
+        // 修改播放列表中的 segment URL 为本地代理 URL
+        // 使用相对路径而不是绝对路径
         final modifiedContent = content.replaceAllMapped(
           RegExp(r'(segment_\d+\.ts)'),
-          (match) => 'http://127.0.0.1:$_port/${match.group(1)}',
+          (match) => match.group(1)!, // 保持相对路径
         );
+
+        _cachedPlaylist = modifiedContent;
+
         request.response.statusCode = HttpStatus.ok;
         request.response.headers.contentType =
             ContentType('application', 'vnd.apple.mpegurl', charset: 'utf-8');
-        request.response.headers.add('Cache-Control', 'no-cache');
+        request.response.headers.add('Cache-Control', 'no-cache, no-store');
+        request.response.headers.add('Pragma', 'no-cache');
         request.response.write(modifiedContent);
-        debugPrint('[Proxy] Playlist served');
+        debugPrint('[Proxy] Playlist served:\n$modifiedContent');
       } else {
         final errorBody = await response.transform(utf8.decoder).join();
         debugPrint(
@@ -276,8 +313,8 @@ class SecureHlsProxyServer {
         request.response.statusCode = response.statusCode;
         request.response.write('Failed: $errorBody');
       }
-    } catch (e) {
-      debugPrint('[Proxy] Playlist error: $e');
+    } catch (e, stack) {
+      debugPrint('[Proxy] Playlist error: $e\n$stack');
       request.response.statusCode = HttpStatus.internalServerError;
       request.response.write('Error: $e');
     } finally {
@@ -287,12 +324,14 @@ class SecureHlsProxyServer {
   }
 
   Future<void> _handleSegmentRequest(HttpRequest request, String path) async {
-    final segmentName = path.substring(1);
+    final segmentName = path.startsWith('/') ? path.substring(1) : path;
+    debugPrint('[Proxy] Handling segment request: $segmentName');
+
     try {
       // Check cache
       if (_segmentCache.containsKey(segmentName)) {
         debugPrint('[Proxy] Cache hit: $segmentName');
-        _serveSegment(request, _segmentCache[segmentName]!, segmentName);
+        await _serveSegment(request, _segmentCache[segmentName]!, segmentName);
         return;
       }
 
@@ -300,11 +339,14 @@ class SecureHlsProxyServer {
       if (_pendingRequests.containsKey(segmentName)) {
         debugPrint('[Proxy] Waiting for pending: $segmentName');
         try {
-          final data = await _pendingRequests[segmentName]!.future;
-          _serveSegment(request, data, segmentName);
+          final data = await _pendingRequests[segmentName]!
+              .future
+              .timeout(const Duration(seconds: 60));
+          await _serveSegment(request, data, segmentName);
         } catch (e) {
+          debugPrint('[Proxy] Pending request failed: $e');
           request.response.statusCode = HttpStatus.serviceUnavailable;
-          request.response.write('Failed');
+          request.response.write('Failed to load segment');
           await request.response.close();
         }
         return;
@@ -317,10 +359,10 @@ class SecureHlsProxyServer {
         final decryptedData = await _fetchAndDecryptSegment(segmentName);
         _cacheSegment(segmentName, decryptedData);
         completer.complete(decryptedData);
-        _serveSegment(request, decryptedData, segmentName);
-      } catch (e) {
+        await _serveSegment(request, decryptedData, segmentName);
+      } catch (e, stack) {
         completer.completeError(e);
-        debugPrint('[Proxy] Segment failed: $e');
+        debugPrint('[Proxy] Segment failed: $e\n$stack');
         request.response.statusCode = HttpStatus.serviceUnavailable;
         request.response.write('Failed: $e');
         await request.response.close();
@@ -340,61 +382,72 @@ class SecureHlsProxyServer {
   Future<Uint8List> _fetchAndDecryptSegment(String segmentName) async {
     Exception? lastError;
     for (int attempt = 1; attempt <= 3; attempt++) {
+      HttpClient? client;
       try {
         final params = _generateSecureParams(segmentName);
         final segmentUrl =
             Uri.parse('$baseUrl/api/v1/secure-hls/$sessionId/$segmentName')
                 .replace(queryParameters: params);
 
-        final client = HttpClient()
-          ..connectionTimeout = const Duration(seconds: 60);
-        try {
-          final req = await client.postUrl(segmentUrl);
-          req.headers.contentType = ContentType.json;
-          if (jwtToken.isNotEmpty) {
-            req.headers.add('Authorization', 'Bearer $jwtToken');
+        debugPrint('[Proxy] Fetching segment from: $segmentUrl');
+
+        client = HttpClient()
+          ..connectionTimeout = const Duration(seconds: 60)
+          ..badCertificateCallback = (cert, host, port) => true;
+
+        final req = await client.postUrl(segmentUrl);
+        req.headers.contentType = ContentType.json;
+        if (jwtToken.isNotEmpty) {
+          req.headers.add('Authorization', 'Bearer $jwtToken');
+        }
+        req.write(jsonEncode({}));
+
+        final response = await req.close();
+        if (response.statusCode == 200) {
+          final encryptedData = await response.fold<List<int>>(
+            [],
+            (prev, chunk) => prev..addAll(chunk),
+          );
+          debugPrint(
+              '[Proxy] Received ${encryptedData.length} bytes for $segmentName');
+
+          if (encryptedData.length < 100) {
+            throw Exception(
+                'Invalid segment: only ${encryptedData.length} bytes received');
           }
-          req.write(jsonEncode({}));
 
-          final response = await req.close();
-          if (response.statusCode == 200) {
-            final encryptedData = await response.fold<List<int>>(
-              [],
-              (prev, chunk) => prev..addAll(chunk),
-            );
-            debugPrint(
-                '[Proxy] Received ${encryptedData.length} bytes for $segmentName');
-
-            if (encryptedData.length < 100) {
-              throw Exception('Invalid segment: ${encryptedData.length} bytes');
-            }
-
-            return _encryptor.decryptSegment(Uint8List.fromList(encryptedData));
-          } else {
-            final errorBody = await response.transform(utf8.decoder).join();
-            throw Exception('Server ${response.statusCode}: $errorBody');
-          }
-        } finally {
-          client.close();
+          final decrypted =
+              _encryptor.decryptSegment(Uint8List.fromList(encryptedData));
+          debugPrint(
+              '[Proxy] Decrypted ${decrypted.length} bytes for $segmentName');
+          return decrypted;
+        } else {
+          final errorBody = await response.transform(utf8.decoder).join();
+          throw Exception('Server returned ${response.statusCode}: $errorBody');
         }
       } catch (e) {
         lastError = e is Exception ? e : Exception(e.toString());
-        debugPrint('[Proxy] Attempt $attempt failed: $e');
+        debugPrint('[Proxy] Attempt $attempt failed for $segmentName: $e');
         if (attempt < 3) {
-          await Future.delayed(Duration(milliseconds: 300 * attempt));
+          await Future.delayed(Duration(milliseconds: 500 * attempt));
         }
+      } finally {
+        client?.close();
       }
     }
-    throw lastError ?? Exception('Failed after 3 attempts');
+    throw lastError ?? Exception('Failed to fetch segment after 3 attempts');
   }
 
-  void _serveSegment(HttpRequest request, Uint8List data, String segmentName) {
+  Future<void> _serveSegment(
+      HttpRequest request, Uint8List data, String segmentName) async {
     request.response.statusCode = HttpStatus.ok;
     request.response.headers.contentType = ContentType('video', 'mp2t');
     request.response.headers.contentLength = data.length;
-    request.response.headers.add('Cache-Control', 'no-cache');
+    request.response.headers.add('Cache-Control', 'no-cache, no-store');
+    request.response.headers.add('Pragma', 'no-cache');
+    request.response.headers.add('Accept-Ranges', 'bytes');
     request.response.add(data);
-    request.response.close();
+    await request.response.close();
     onSegmentLoaded?.call(data.length, true);
     debugPrint('[Proxy] ✅ Served $segmentName (${data.length} bytes)');
     _triggerPrefetch(segmentName);

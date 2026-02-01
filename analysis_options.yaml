@@ -2,25 +2,20 @@ include: package:flutter_lints/flutter.yaml
 
 analyzer:
   language:
-    # 关闭严格的类型检查以避免大量类型推断错误
     strict-casts: false
     strict-inference: false
     strict-raw-types: false
 
 linter:
   rules:
-    # 必须使用花括号 - 这是正确的做法，提高代码可读性
     curly_braces_in_flow_control_structures: true
-    
-    # 修复 spread 中不必要的 toList
+
     unnecessary_to_list_in_spreads: true
-    
-    # 其他推荐规则
+
     avoid_print: true
     avoid_unnecessary_containers: true
     prefer_single_quotes: true
     sort_child_properties_last: true
-    
-    # 关闭一些过于严格的规则
+
     prefer_const_constructors: false
     prefer_const_literals_to_create_immutables: false

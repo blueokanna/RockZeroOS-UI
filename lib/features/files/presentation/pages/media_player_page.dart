@@ -6,22 +6,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:http/http.dart' as http;
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:video_player/video_player.dart';
-import 'package:http/http.dart' as http;
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/shell_scaffold.dart';
 
-/// Loop mode for media playback
 enum LoopMode { off, one, all, shuffle }
 
-/// Orientation lock mode
 enum OrientationLockMode { auto, portrait, landscapeLeft, landscapeRight }
 
-/// Media player page with full controls, orientation lock, and proper fullscreen
 class MediaPlayerPage extends ConsumerStatefulWidget {
   final String mediaUrl;
   final String fileName;
@@ -44,7 +42,8 @@ class MediaPlayerPage extends ConsumerStatefulWidget {
 
 class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
     with WidgetsBindingObserver {
-  VideoPlayerController? _videoController;
+  Player? _player;
+  VideoController? _videoController;
   bool _isInitialized = false;
   bool _isLoading = true;
   String? _error;
@@ -58,8 +57,8 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
   Duration _duration = Duration.zero;
   String? _authToken;
   OrientationLockMode _orientationLock = OrientationLockMode.auto;
-  bool _isLandscape = false;
   bool _isBuffering = false;
+  bool _isPlaying = false;
 
   @override
   void initState() {
@@ -68,17 +67,13 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
     _enterFullScreen();
     _loadTokenAndInitialize();
     _startHideControlsTimer();
-    // Enable wakelock to prevent screen from turning off during video playback
     WakelockPlus.enable();
   }
 
   void _enterFullScreen() {
-    SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.immersiveSticky,
-      overlays: [],
-    );
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky,
+        overlays: []);
     _applyOrientationLock();
-    // Hide bottom navigation bar
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         ref.read(bottomNavVisibleProvider.notifier).hide();
@@ -100,14 +95,12 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
         SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
         break;
       case OrientationLockMode.landscapeLeft:
-        SystemChrome.setPreferredOrientations([
-          DeviceOrientation.landscapeLeft,
-        ]);
+        SystemChrome.setPreferredOrientations(
+            [DeviceOrientation.landscapeLeft]);
         break;
       case OrientationLockMode.landscapeRight:
-        SystemChrome.setPreferredOrientations([
-          DeviceOrientation.landscapeRight,
-        ]);
+        SystemChrome.setPreferredOrientations(
+            [DeviceOrientation.landscapeRight]);
         break;
     }
   }
@@ -115,10 +108,10 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
   void _cycleOrientationLock() {
     setState(() {
       final orientation = MediaQuery.of(context).orientation;
-      _isLandscape = orientation == Orientation.landscape;
+      final isLandscape = orientation == Orientation.landscape;
       switch (_orientationLock) {
         case OrientationLockMode.auto:
-          _orientationLock = _isLandscape
+          _orientationLock = isLandscape
               ? OrientationLockMode.landscapeLeft
               : OrientationLockMode.portrait;
           break;
@@ -132,9 +125,8 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
   }
 
   void _showOrientationLockToast() {
-    final message = _orientationLock == OrientationLockMode.auto
-        ? 'Rotation unlocked'
-        : 'Rotation locked';
+    final message =
+        _orientationLock == OrientationLockMode.auto ? '旋转已解锁' : '旋转已锁定';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -159,27 +151,16 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
     );
   }
 
-  IconData _getOrientationLockIcon() {
-    return _orientationLock == OrientationLockMode.auto
-        ? Icons.screen_rotation_rounded
-        : Icons.screen_lock_rotation_rounded;
-  }
-
   void _exitFullScreen() {
-    SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.edgeToEdge,
-      overlays: SystemUiOverlay.values,
-    );
-    // Allow all orientations after exiting video player
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge,
+        overlays: SystemUiOverlay.values);
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
       DeviceOrientation.portraitDown,
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
-    // Show bottom navigation bar again
     ref.read(bottomNavVisibleProvider.notifier).show();
-    // Disable wakelock
     WakelockPlus.disable();
   }
 
@@ -187,7 +168,7 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _hideControlsTimer?.cancel();
-    _videoController?.dispose();
+    _player?.dispose();
     _exitFullScreen();
     super.dispose();
   }
@@ -195,7 +176,7 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
-      _videoController?.pause();
+      _player?.pause();
     } else if (state == AppLifecycleState.resumed) {
       _enterFullScreen();
     }
@@ -212,287 +193,103 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
       _isLoading = true;
       _error = null;
     });
-    try {
-      final headers = <String, String>{
-        'Accept': '*/*',
-        'Accept-Ranges': 'bytes',
-        'Connection': 'keep-alive',
-      };
 
+    try {
+      debugPrint('[MediaPlayer] Initializing player for: ${widget.mediaUrl}');
+
+      _player = Player(
+        configuration: const PlayerConfiguration(
+          bufferSize: 32 * 1024 * 1024,
+        ),
+      );
+
+      _videoController = VideoController(_player!);
+
+      _player!.stream.playing.listen((playing) {
+        if (mounted) setState(() => _isPlaying = playing);
+      });
+
+      _player!.stream.position.listen((position) {
+        if (mounted) setState(() => _position = position);
+      });
+
+      _player!.stream.duration.listen((duration) {
+        if (mounted) setState(() => _duration = duration);
+      });
+
+      _player!.stream.buffering.listen((buffering) {
+        if (mounted) setState(() => _isBuffering = buffering);
+      });
+
+      _player!.stream.error.listen((error) {
+        if (error.isNotEmpty && mounted) {
+          debugPrint('[MediaPlayer] Error: $error');
+          setState(() => _error = error);
+        }
+      });
+
+      _player!.stream.completed.listen((completed) {
+        if (completed && mounted) {
+          _handlePlaybackComplete();
+        }
+      });
+
+      final headers = <String, String>{};
       if (_authToken != null && _authToken!.isNotEmpty) {
         headers['Authorization'] = 'Bearer $_authToken';
       }
 
-      debugPrint('[MediaPlayer] ========== Initialization Start ==========');
-      debugPrint('[MediaPlayer] URL: ${widget.mediaUrl}');
-      debugPrint('[MediaPlayer] File: ${widget.fileName}');
-      debugPrint(
-          '[MediaPlayer] Auth token present: ${_authToken != null && _authToken!.isNotEmpty}');
-
-      // Check file type for special handling
-      final fileName = widget.fileName.toLowerCase();
-      final isMkv = fileName.endsWith('.mkv');
-      final isLargeFileFormat = isMkv ||
-          fileName.endsWith('.avi') ||
-          fileName.endsWith('.mov') ||
-          fileName.endsWith('.m2ts') ||
-          fileName.endsWith('.ts') ||
-          fileName.endsWith('.webm');
-
-      debugPrint('[MediaPlayer] File type: ${fileName.split('.').last}');
-      debugPrint('[MediaPlayer] Is large format: $isLargeFileFormat');
-
-      // Dispose previous controller if exists
-      if (_videoController != null) {
-        _videoController!.removeListener(_onVideoUpdate);
-        await _videoController!.dispose();
-        _videoController = null;
-      }
-
-      _videoController = VideoPlayerController.networkUrl(
-        Uri.parse(widget.mediaUrl),
-        httpHeaders: headers,
-        videoPlayerOptions: VideoPlayerOptions(
-          mixWithOthers: false,
-          allowBackgroundPlayback: false,
-          webOptions: const VideoPlayerWebOptions(
-            allowContextMenu: false,
-            allowRemotePlayback: true,
-            controls: VideoPlayerWebOptionsControls.disabled(),
-          ),
-        ),
-        // For container formats that may have complex audio, use 'other' format hint
-        formatHint: isLargeFileFormat ? VideoFormat.other : null,
+      await _player!.open(
+        Media(widget.mediaUrl, httpHeaders: headers),
+        play: true,
       );
 
-      debugPrint(
-          '[MediaPlayer] Controller created, starting initialization...');
-
-      // Initialize with extended timeout for large files (20GB+)
-      try {
-        await _videoController!.initialize().timeout(
-          const Duration(seconds: 60),
-          onTimeout: () {
-            debugPrint('[MediaPlayer] ❌ Initialization TIMEOUT');
-            throw TimeoutException(
-                'Video initialization timed out. The file may be very large or the connection is slow. Please try again.');
-          },
-        );
-
-        debugPrint('[MediaPlayer] Initialize() completed');
-        debugPrint(
-            '[MediaPlayer] Is initialized: ${_videoController!.value.isInitialized}');
-        debugPrint(
-            '[MediaPlayer] Has error: ${_videoController!.value.hasError}');
-        debugPrint('[MediaPlayer] Size: ${_videoController!.value.size}');
-        debugPrint(
-            '[MediaPlayer] Duration: ${_videoController!.value.duration}');
-        debugPrint(
-            '[MediaPlayer] Aspect ratio: ${_videoController!.value.aspectRatio}');
-
-        // Verify video is truly initialized
-        if (!_videoController!.value.isInitialized) {
-          debugPrint('[MediaPlayer] ❌ Video NOT initialized properly');
-          throw Exception('Video failed to initialize properly');
-        }
-
-        // Check for errors
-        if (_videoController!.value.hasError) {
-          final errorDesc =
-              _videoController!.value.errorDescription ?? 'Unknown video error';
-          debugPrint('[MediaPlayer] ❌ Video has error: $errorDesc');
-          throw Exception(errorDesc);
-        }
-      } catch (e) {
-        debugPrint('[MediaPlayer] ❌ Initialization exception: $e');
-        debugPrint('[MediaPlayer] Exception type: ${e.runtimeType}');
-        rethrow;
-      }
-
-      debugPrint('[MediaPlayer] Adding listener...');
-      _videoController!.addListener(_onVideoUpdate);
-
-      debugPrint('[MediaPlayer] Setting looping: ${_loopMode == LoopMode.one}');
-      await _videoController!.setLooping(_loopMode == LoopMode.one);
-
-      debugPrint('[MediaPlayer] Setting volume: $_volume');
-      await _videoController!.setVolume(_volume);
-
-      // Start playback - the player will buffer as needed
-      debugPrint('[MediaPlayer] Starting playback...');
-      await _videoController!.play();
-      debugPrint('[MediaPlayer] Play() called');
+      await _player!.setVolume(_volume * 100);
 
       if (mounted) {
         setState(() {
           _isInitialized = true;
           _isLoading = false;
-          _duration = _videoController!.value.duration;
         });
       }
 
-      debugPrint('[MediaPlayer] ✅ Initialization SUCCESS');
-      debugPrint('[MediaPlayer] ========== Initialization End ==========');
-    } catch (e, stackTrace) {
-      debugPrint('[MediaPlayer] ❌❌❌ FATAL ERROR ❌❌❌');
+      debugPrint('[MediaPlayer] Player initialized successfully');
+    } catch (e, stack) {
       debugPrint('[MediaPlayer] Error: $e');
-      debugPrint('[MediaPlayer] Error type: ${e.runtimeType}');
-      debugPrint('[MediaPlayer] Stack trace: $stackTrace');
+      debugPrint('[MediaPlayer] Stack: $stack');
 
       if (mounted) {
-        String errorMessage = 'Failed to load media: $e';
-        final errorStr = e.toString().toLowerCase();
-
-        // Provide more user-friendly error messages
-        if (errorStr.contains('source error') || errorStr.contains('x0.i')) {
-          errorMessage = '❌ Video source loading failed\n\n'
-              'Debug info:\n'
-              'URL: ${widget.mediaUrl}\n'
-              'File: ${widget.fileName}\n'
-              'Error: $e\n\n'
-              'Possible causes:\n'
-              '• Video encoding format not supported\n'
-              '• Network connection interrupted or timed out\n'
-              '• Server response error\n'
-              '• CORS configuration issue (Web platform)\n'
-              '• Video file corrupted\n\n'
-              'Suggestions:\n'
-              '1. Open browser developer tools (F12)\n'
-              '2. Check Network tab requests\n'
-              '3. Confirm video URL returns 200 status\n'
-              '4. Check Content-Type is correct\n'
-              '5. Try opening video URL directly in browser';
-        } else if (errorStr.contains('timeout')) {
-          errorMessage = '⏱️ Video loading timeout\n\n'
-              'File: ${widget.fileName}\n\n'
-              '请检查：\n'
-              '• 网络连接是否稳定\n'
-              '• 文件是否过大\n'
-              '• 服务器是否响应正常';
-        } else if (errorStr.contains('network') ||
-            errorStr.contains('connection')) {
-          errorMessage = '🌐 网络连接失败\n\n'
-              'URL: ${widget.mediaUrl}\n\n'
-              '请检查：\n'
-              '• 网络连接\n'
-              '• 服务器是否运行\n'
-              '• 防火墙设置';
-        } else if (errorStr.contains('format') || errorStr.contains('codec')) {
-          errorMessage = '🎬 视频格式不支持\n\n'
-              '文件: ${widget.fileName}\n\n'
-              'Web平台仅支持：\n'
-              '• 视频：H.264 (AVC)\n'
-              '• 音频：AAC\n'
-              '• 容器：MP4\n\n'
-              '建议：使用HLS播放器或转换格式';
-        }
-
         setState(() {
-          _error = errorMessage;
+          _error = _parseError(e.toString());
           _isLoading = false;
         });
       }
-
-      debugPrint('[MediaPlayer] ========== Error End ==========');
     }
   }
 
-  void _onVideoUpdate() {
-    if (_videoController != null && mounted) {
-      final value = _videoController!.value;
-
-      // Check for audio desync after seeking
-      final newPosition = value.position;
-      final positionJump =
-          (_position.inMilliseconds - newPosition.inMilliseconds).abs();
-
-      setState(() {
-        _position = newPosition;
-        _duration = value.duration;
-        // Track buffering state for large files
-        _isBuffering = value.isBuffering;
-      });
-
-      // Handle errors
-      if (value.hasError) {
-        final errorDesc = value.errorDescription ?? 'Unknown error';
-        debugPrint('[MediaPlayer] Playback error: $errorDesc');
-
-        // Check if this is an audio sync issue after seek
-        if (errorDesc.toLowerCase().contains('audio') ||
-            errorDesc.toLowerCase().contains('sync')) {
-          debugPrint(
-              '[MediaPlayer] Audio sync issue detected, attempting recovery');
-          _recoverAudioSync();
-          return;
-        }
-
-        setState(() {
-          _error = errorDesc;
-        });
-      }
-
-      // Handle playback completion
-      if (value.position >= value.duration &&
-          value.duration > Duration.zero &&
-          !value.isPlaying) {
-        _handlePlaybackComplete();
-      }
-
-      // Detect potential audio desync (large position jump without seeking)
-      if (positionJump > 5000 && !_isBuffering) {
-        debugPrint(
-            '[MediaPlayer] Large position jump detected: ${positionJump}ms');
-      }
+  String _parseError(String error) {
+    final lower = error.toLowerCase();
+    if (lower.contains('timeout')) {
+      return '视频加载超时，请检查网络连接';
+    } else if (lower.contains('network') || lower.contains('connection')) {
+      return '网络连接失败，请检查网络';
+    } else if (lower.contains('format') || lower.contains('codec')) {
+      return '视频格式不支持';
     }
-  }
-
-  /// Attempt to recover audio sync after seek
-  Future<void> _recoverAudioSync() async {
-    if (_videoController == null || !_isInitialized) return;
-
-    debugPrint('[MediaPlayer] Attempting audio sync recovery');
-
-    final currentPosition = _videoController!.value.position;
-    final wasPlaying = _videoController!.value.isPlaying;
-
-    try {
-      // Pause briefly
-      await _videoController!.pause();
-      await Future.delayed(const Duration(milliseconds: 100));
-
-      // Seek to slightly before current position to force audio resync
-      final seekPosition = Duration(
-        milliseconds: (currentPosition.inMilliseconds - 500)
-            .clamp(0, _duration.inMilliseconds),
-      );
-      await _videoController!.seekTo(seekPosition);
-      await Future.delayed(const Duration(milliseconds: 100));
-
-      // Resume if was playing
-      if (wasPlaying && mounted) {
-        await _videoController!.play();
-      }
-
-      debugPrint('[MediaPlayer] Audio sync recovery completed');
-    } catch (e) {
-      debugPrint('[MediaPlayer] Audio sync recovery failed: $e');
-      // If recovery fails, try full reinitialization
-      _reinitializeAtPosition(currentPosition);
-    }
+    return '播放失败: $error';
   }
 
   void _handlePlaybackComplete() {
     if (_loopMode == LoopMode.one || _loopMode == LoopMode.all) {
-      _videoController?.seekTo(Duration.zero);
-      _videoController?.play();
+      _player?.seek(Duration.zero);
+      _player?.play();
     }
   }
 
   void _startHideControlsTimer() {
     _hideControlsTimer?.cancel();
     _hideControlsTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted && _videoController?.value.isPlaying == true) {
+      if (mounted && _isPlaying) {
         setState(() => _showControls = false);
       }
     });
@@ -504,135 +301,32 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
   }
 
   void _togglePlayPause() {
-    if (_videoController?.value.isPlaying == true) {
-      _videoController?.pause();
+    if (_isPlaying) {
+      _player?.pause();
     } else {
-      _videoController?.play();
+      _player?.play();
       _startHideControlsTimer();
     }
-    setState(() {});
   }
 
   void _seekTo(Duration position) {
-    if (_videoController == null || !_isInitialized) return;
-
-    // Clamp position to valid range
-    final clampedPosition = Duration(
-      milliseconds: position.inMilliseconds.clamp(0, _duration.inMilliseconds),
-    );
-
-    debugPrint('[MediaPlayer] Seeking to: ${clampedPosition.inSeconds}s');
-
-    // Pause before seeking to ensure clean state
-    final wasPlaying = _videoController?.value.isPlaying ?? false;
-
-    // Perform seek
-    _videoController?.seekTo(clampedPosition).then((_) {
-      // Resume playback if it was playing before
-      if (wasPlaying && mounted) {
-        _videoController?.play();
-      }
-      _startHideControlsTimer();
-    }).catchError((e) {
-      debugPrint('[MediaPlayer] Seek error: $e');
-      // Try to recover by reinitializing at the target position
-      if (mounted) {
-        _reinitializeAtPosition(clampedPosition);
-      }
-    });
-  }
-
-  /// Reinitialize player at a specific position (fallback for seek failures)
-  Future<void> _reinitializeAtPosition(Duration position) async {
-    debugPrint(
-        '[MediaPlayer] Reinitializing at position: ${position.inSeconds}s');
-
-    final wasPlaying = _videoController?.value.isPlaying ?? false;
-
-    // Dispose current controller
-    _videoController?.removeListener(_onVideoUpdate);
-    await _videoController?.dispose();
-    _videoController = null;
-
-    setState(() {
-      _isLoading = true;
-      _isInitialized = false;
-    });
-
-    try {
-      final headers = <String, String>{
-        'Accept': '*/*',
-        'Accept-Ranges': 'bytes',
-        'Connection': 'keep-alive',
-      };
-
-      if (_authToken != null && _authToken!.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $_authToken';
-      }
-
-      // Create new controller
-      _videoController = VideoPlayerController.networkUrl(
-        Uri.parse(widget.mediaUrl),
-        httpHeaders: headers,
-        videoPlayerOptions: VideoPlayerOptions(
-          mixWithOthers: false,
-          allowBackgroundPlayback: false,
-        ),
-      );
-
-      await _videoController!.initialize();
-      _videoController!.addListener(_onVideoUpdate);
-      await _videoController!.setLooping(_loopMode == LoopMode.one);
-      await _videoController!.setVolume(_volume);
-
-      // Seek to target position
-      await _videoController!.seekTo(position);
-
-      if (wasPlaying) {
-        await _videoController!.play();
-      }
-
-      if (mounted) {
-        setState(() {
-          _isInitialized = true;
-          _isLoading = false;
-          _duration = _videoController!.value.duration;
-        });
-      }
-    } catch (e) {
-      debugPrint('[MediaPlayer] Reinitialize failed: $e');
-      if (mounted) {
-        setState(() {
-          _error = 'Failed to seek: $e';
-          _isLoading = false;
-        });
-      }
-    }
+    _player?.seek(position);
+    _startHideControlsTimer();
   }
 
   void _seekForward() {
-    if (_videoController == null || !_isInitialized) return;
-
     final newPos = _position + const Duration(seconds: 10);
-    final clampedPos = newPos > _duration ? _duration : newPos;
-
-    debugPrint('[MediaPlayer] Seeking forward to: ${clampedPos.inSeconds}s');
-    _seekTo(clampedPos);
+    _seekTo(newPos > _duration ? _duration : newPos);
   }
 
   void _seekBackward() {
-    if (_videoController == null || !_isInitialized) return;
-
     final newPos = _position - const Duration(seconds: 10);
-    final clampedPos = newPos < Duration.zero ? Duration.zero : newPos;
-
-    debugPrint('[MediaPlayer] Seeking backward to: ${clampedPos.inSeconds}s');
-    _seekTo(clampedPos);
+    _seekTo(newPos < Duration.zero ? Duration.zero : newPos);
   }
 
   void _setVolume(double v) {
     setState(() => _volume = v);
-    _videoController?.setVolume(v);
+    _player?.setVolume(v * 100);
   }
 
   void _cycleLoopMode() {
@@ -640,7 +334,9 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
       _loopMode =
           LoopMode.values[(_loopMode.index + 1) % LoopMode.values.length];
     });
-    _videoController?.setLooping(_loopMode == LoopMode.one);
+    _player?.setPlaylistMode(
+      _loopMode == LoopMode.one ? PlaylistMode.single : PlaylistMode.none,
+    );
   }
 
   IconData _getLoopIcon() {
@@ -658,39 +354,32 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
 
   Future<void> _downloadFile() async {
     if (_isDownloading) return;
+
     if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
       final status = await Permission.storage.request();
-      if (!status.isGranted) {
-        if (Platform.isAndroid) {
-          final ms = await Permission.manageExternalStorage.request();
-          if (!ms.isGranted) {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Storage permission required')),
-              );
-            }
-            return;
-          }
-        } else {
+      if (!status.isGranted && Platform.isAndroid) {
+        final ms = await Permission.manageExternalStorage.request();
+        if (!ms.isGranted) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Storage permission required')),
+              const SnackBar(content: Text('需要存储权限')),
             );
           }
           return;
         }
       }
     }
+
     setState(() {
       _isDownloading = true;
       _downloadProgress = 0;
     });
+
     try {
       Directory? downloadDir;
       if (Platform.isAndroid) {
-        downloadDir = Directory(
-          '/storage/emulated/0/Download/RockZeroDownload',
-        );
+        downloadDir =
+            Directory('/storage/emulated/0/Download/RockZeroDownload');
       } else if (Platform.isIOS) {
         downloadDir = await getApplicationDocumentsDirectory();
         downloadDir = Directory('${downloadDir.path}/RockZeroDownload');
@@ -700,69 +389,58 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
           downloadDir = Directory('${downloadDir.path}/RockZeroDownload');
         }
       }
-      if (downloadDir == null) {
-        throw Exception('Could not find download directory');
-      }
+
+      if (downloadDir == null) throw Exception('无法获取下载目录');
       if (!await downloadDir.exists()) {
         await downloadDir.create(recursive: true);
       }
-      final filePath = '${downloadDir.path}/${widget.fileName}';
-      final file = File(filePath);
+
+      final file = File('${downloadDir.path}/${widget.fileName}');
       final request = http.Request('GET', Uri.parse(widget.mediaUrl));
       if (_authToken != null && _authToken!.isNotEmpty) {
         request.headers['Authorization'] = 'Bearer $_authToken';
       }
+
       final client = http.Client();
       final response = await client.send(request);
       final contentLength = response.contentLength ?? 0;
       final sink = file.openWrite();
       int received = 0;
+
       await for (final chunk in response.stream) {
         sink.add(chunk);
         received += chunk.length;
         if (contentLength > 0 && mounted) {
-          setState(() {
-            _downloadProgress = received / contentLength;
-          });
+          setState(() => _downloadProgress = received / contentLength);
         }
       }
+
       await sink.close();
       client.close();
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle, color: Colors.white),
-                const SizedBox(width: 12),
-                Expanded(child: Text('Downloaded to ${downloadDir.path}')),
-              ],
-            ),
+            content: Text('已下载到 ${downloadDir.path}'),
             backgroundColor: Colors.green,
-            duration: const Duration(seconds: 3),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Download failed: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('下载失败: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isDownloading = false);
-      }
+      if (mounted) setState(() => _isDownloading = false);
     }
   }
 
   String _formatDuration(Duration d) {
-    final h = d.inHours,
-        m = d.inMinutes.remainder(60),
-        s = d.inSeconds.remainder(60);
+    final h = d.inHours;
+    final m = d.inMinutes.remainder(60);
+    final s = d.inSeconds.remainder(60);
     if (h > 0) {
       return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
     }
@@ -779,12 +457,10 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
       },
       child: Scaffold(
         backgroundColor: Colors.black,
-        // Remove system UI completely during video playback
         extendBody: true,
         extendBodyBehindAppBar: true,
         body: GestureDetector(
-          behavior: HitTestBehavior
-              .opaque, // Capture all taps, even on transparent areas
+          behavior: HitTestBehavior.opaque,
           onTap: _toggleControls,
           onDoubleTapDown: (d) {
             final w = MediaQuery.of(context).size.width;
@@ -794,7 +470,6 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
               _seekForward();
             }
           },
-          // Add horizontal drag for seeking
           onHorizontalDragEnd: (details) {
             if (details.primaryVelocity != null) {
               if (details.primaryVelocity! > 200) {
@@ -807,7 +482,6 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // Black background to ensure full coverage
               Container(color: Colors.black),
               Center(
                 child: _isLoading
@@ -827,49 +501,11 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
                     child: _buildControlsOverlay(cs),
                   ),
                 ),
-              if (_isDownloading)
-                Positioned(
-                  top: MediaQuery.of(context).padding.top + 60,
-                  left: 16,
-                  right: 16,
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.black87,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.download_rounded,
-                              color: Colors.white,
-                            ),
-                            const SizedBox(width: 12),
-                            const Expanded(
-                              child: Text(
-                                'Downloading...',
-                                style: TextStyle(color: Colors.white),
-                              ),
-                            ),
-                            Text(
-                              '${(_downloadProgress * 100).toInt()}%',
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        LinearProgressIndicator(
-                          value: _downloadProgress,
-                          backgroundColor: Colors.white24,
-                          valueColor: AlwaysStoppedAnimation(cs.primary),
-                        ),
-                      ],
-                    ),
-                  ),
+              if (_isBuffering && !_isLoading)
+                const Center(
+                  child: CircularProgressIndicator(color: Colors.white),
                 ),
+              if (_isDownloading) _buildDownloadProgress(cs),
             ],
           ),
         ),
@@ -878,79 +514,14 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
   }
 
   Widget _buildVideoPlayer() {
-    if (_videoController == null || !_videoController!.value.isInitialized) {
-      return const SizedBox.shrink();
-    }
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        AspectRatio(
-          aspectRatio: _videoController!.value.aspectRatio,
-          child: VideoPlayer(_videoController!),
-        ),
-        // Enhanced buffering indicator overlay with progress info
-        if (_isBuffering)
-          TweenAnimationBuilder<double>(
-            tween: Tween(begin: 0.0, end: 1.0),
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-            builder: (context, value, child) {
-              return Opacity(
-                opacity: value,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.7),
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.3),
-                        blurRadius: 20,
-                        spreadRadius: 5,
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox(
-                        width: 40,
-                        height: 40,
-                        child: CircularProgressIndicator(
-                          color: Colors.white,
-                          strokeWidth: 3,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Buffering...',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Large file streaming',
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.7),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-      ],
+    if (_videoController == null) return const SizedBox.shrink();
+    return Video(
+      controller: _videoController!,
+      controls: NoVideoControls,
     );
   }
 
   Widget _buildAudioPlayer() {
-    final cs = Theme.of(context).colorScheme;
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -958,40 +529,16 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
           width: 200,
           height: 200,
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [cs.primary, cs.tertiary],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: cs.primary.withValues(alpha: 0.4),
-                blurRadius: 30,
-                offset: const Offset(0, 10),
-              ),
-            ],
+            color: Colors.grey.shade800,
+            borderRadius: BorderRadius.circular(20),
           ),
-          child: const Icon(
-            Icons.audiotrack_rounded,
-            size: 80,
-            color: Colors.white,
-          ),
+          child: const Icon(Icons.music_note, size: 100, color: Colors.white54),
         ),
-        const SizedBox(height: 32),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Text(
-            widget.fileName,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
+        const SizedBox(height: 24),
+        Text(
+          widget.fileName,
+          style: const TextStyle(color: Colors.white, fontSize: 18),
+          textAlign: TextAlign.center,
         ),
       ],
     );
@@ -1003,18 +550,18 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.error_outline, color: Colors.white54, size: 64),
+          const Icon(Icons.error_outline, size: 64, color: Colors.red),
           const SizedBox(height: 16),
           Text(
-            _error ?? 'Unknown error',
-            style: const TextStyle(color: Colors.white54),
+            _error!,
+            style: const TextStyle(color: Colors.white),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 24),
           FilledButton.icon(
             onPressed: _initializePlayer,
             icon: const Icon(Icons.refresh),
-            label: const Text('Retry'),
+            label: const Text('重试'),
           ),
         ],
       ),
@@ -1031,212 +578,206 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
             Colors.black54,
             Colors.transparent,
             Colors.transparent,
-            Colors.black54,
+            Colors.black54
           ],
           stops: [0.0, 0.2, 0.8, 1.0],
         ),
       ),
-      child: SafeArea(
-        child: Column(
-          children: [
-            _buildTopBar(cs),
-            const Spacer(),
-            _buildCenterControls(),
-            const Spacer(),
-            _buildBottomControls(cs),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopBar(ColorScheme cs) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      child: Row(
+      child: Column(
         children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
-            onPressed: () {
-              _exitFullScreen();
-              Navigator.pop(context);
-            },
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              widget.fileName,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          IconButton(
-            icon: Icon(
-              _getOrientationLockIcon(),
-              color: _orientationLock == OrientationLockMode.auto
-                  ? Colors.white
-                  : cs.primary,
-            ),
-            onPressed: _cycleOrientationLock,
-            tooltip: _orientationLock == OrientationLockMode.auto
-                ? 'Lock rotation'
-                : 'Unlock rotation',
-          ),
-          IconButton(
-            icon: _isDownloading
-                ? SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: cs.primary,
-                    ),
-                  )
-                : const Icon(Icons.download_rounded, color: Colors.white),
-            onPressed: _isDownloading ? null : _downloadFile,
-          ),
+          _buildTopBar(cs),
+          const Spacer(),
+          _buildCenterControls(),
+          const Spacer(),
+          _buildBottomBar(cs),
         ],
       ),
     );
   }
 
+  Widget _buildTopBar(ColorScheme cs) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.arrow_back, color: Colors.white),
+              onPressed: () {
+                _exitFullScreen();
+                Navigator.pop(context);
+              },
+            ),
+            Expanded(
+              child: Text(
+                widget.fileName,
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            IconButton(
+              icon: Icon(
+                _orientationLock == OrientationLockMode.auto
+                    ? Icons.screen_rotation_rounded
+                    : Icons.screen_lock_rotation_rounded,
+                color: Colors.white,
+              ),
+              onPressed: _cycleOrientationLock,
+            ),
+            IconButton(
+              icon: const Icon(Icons.download, color: Colors.white),
+              onPressed: _downloadFile,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildCenterControls() {
-    final isPlaying = _videoController?.value.isPlaying ?? false;
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         IconButton(
-          iconSize: 40,
-          icon: const Icon(Icons.replay_10_rounded, color: Colors.white),
+          iconSize: 48,
+          icon: const Icon(Icons.replay_10, color: Colors.white),
           onPressed: _seekBackward,
         ),
-        const SizedBox(width: 24),
+        const SizedBox(width: 32),
         Container(
-          width: 72,
-          height: 72,
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.2),
-            shape: BoxShape.circle,
+            color: Colors.black38,
+            borderRadius: BorderRadius.circular(40),
           ),
           child: IconButton(
-            iconSize: 48,
+            iconSize: 64,
             icon: Icon(
-              isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+              _isPlaying ? Icons.pause : Icons.play_arrow,
               color: Colors.white,
             ),
             onPressed: _togglePlayPause,
           ),
         ),
-        const SizedBox(width: 24),
+        const SizedBox(width: 32),
         IconButton(
-          iconSize: 40,
-          icon: const Icon(Icons.forward_10_rounded, color: Colors.white),
+          iconSize: 48,
+          icon: const Icon(Icons.forward_10, color: Colors.white),
           onPressed: _seekForward,
         ),
       ],
     );
   }
 
-  Widget _buildBottomControls(ColorScheme cs) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Text(
-                _formatDuration(_position),
-                style: const TextStyle(color: Colors.white70, fontSize: 12),
+  Widget _buildBottomBar(ColorScheme cs) {
+    final progress = _duration.inMilliseconds > 0
+        ? _position.inMilliseconds / _duration.inMilliseconds
+        : 0.0;
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 4,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+                activeTrackColor: cs.primary,
+                inactiveTrackColor: Colors.white24,
+                thumbColor: cs.primary,
+                overlayColor: cs.primary.withAlpha(32),
               ),
-              Expanded(
-                child: SliderTheme(
-                  data: SliderTheme.of(context).copyWith(
-                    trackHeight: 4,
-                    thumbShape: const RoundSliderThumbShape(
-                      enabledThumbRadius: 6,
-                    ),
-                    overlayShape: const RoundSliderOverlayShape(
-                      overlayRadius: 14,
-                    ),
-                    activeTrackColor: cs.primary,
-                    inactiveTrackColor: Colors.white24,
-                    thumbColor: cs.primary,
-                    overlayColor: cs.primary.withValues(alpha: 0.2),
-                  ),
-                  child: Slider(
-                    value: _duration.inMilliseconds > 0
-                        ? (_position.inMilliseconds / _duration.inMilliseconds)
-                            .clamp(0.0, 1.0)
-                        : 0,
-                    onChanged: (v) {
-                      _seekTo(
-                        Duration(
-                          milliseconds: (v * _duration.inMilliseconds).round(),
-                        ),
-                      );
-                    },
-                  ),
+              child: Slider(
+                value: progress.clamp(0.0, 1.0),
+                onChanged: (value) {
+                  final newPosition = Duration(
+                    milliseconds: (value * _duration.inMilliseconds).round(),
+                  );
+                  _seekTo(newPosition);
+                },
+              ),
+            ),
+            Row(
+              children: [
+                Text(
+                  _formatDuration(_position),
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
                 ),
-              ),
-              Text(
-                _formatDuration(_duration),
-                style: const TextStyle(color: Colors.white70, fontSize: 12),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              IconButton(
-                icon: Icon(
-                  _getLoopIcon(),
-                  color:
-                      _loopMode == LoopMode.off ? Colors.white54 : cs.primary,
+                const Spacer(),
+                IconButton(
+                  icon: Icon(_getLoopIcon(), color: Colors.white70, size: 20),
+                  onPressed: _cycleLoopMode,
                 ),
-                onPressed: _cycleLoopMode,
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: Icon(
-                      _volume == 0
-                          ? Icons.volume_off_rounded
-                          : _volume < 0.5
-                              ? Icons.volume_down_rounded
-                              : Icons.volume_up_rounded,
-                      color: Colors.white,
-                    ),
-                    onPressed: () => _setVolume(_volume == 0 ? 1.0 : 0),
-                  ),
-                  SizedBox(
-                    width: 100,
-                    child: SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                        trackHeight: 3,
-                        thumbShape: const RoundSliderThumbShape(
-                          enabledThumbRadius: 5,
-                        ),
-                        activeTrackColor: Colors.white,
-                        inactiveTrackColor: Colors.white24,
-                        thumbColor: Colors.white,
+                SizedBox(
+                  width: 100,
+                  child: Row(
+                    children: [
+                      Icon(
+                        _volume == 0 ? Icons.volume_off : Icons.volume_up,
+                        color: Colors.white70,
+                        size: 20,
                       ),
-                      child: Slider(value: _volume, onChanged: _setVolume),
-                    ),
+                      Expanded(
+                        child: Slider(
+                          value: _volume,
+                          onChanged: _setVolume,
+                          activeColor: Colors.white70,
+                          inactiveColor: Colors.white24,
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              const SizedBox(width: 48),
-            ],
-          ),
-        ],
+                ),
+                const Spacer(),
+                Text(
+                  _formatDuration(_duration),
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDownloadProgress(ColorScheme cs) {
+    return Positioned(
+      top: MediaQuery.of(context).padding.top + 60,
+      left: 16,
+      right: 16,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.black87,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.download_rounded, color: Colors.white),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text('下载中...', style: TextStyle(color: Colors.white)),
+                ),
+                Text(
+                  '${(_downloadProgress * 100).toInt()}%',
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            LinearProgressIndicator(
+              value: _downloadProgress,
+              backgroundColor: Colors.white24,
+              valueColor: AlwaysStoppedAnimation(cs.primary),
+            ),
+          ],
+        ),
       ),
     );
   }
