@@ -1,16 +1,7 @@
-// ============================================================================
-// media_kit 本地库复制脚本
-// 
-// 此脚本负责从本地 assets 目录复制 media_kit 的 JAR 包到项目的 libs 目录
-// 避免从 GitHub 下载失败的问题
-// ============================================================================
-
 import java.io.File
 
-// 本地 assets 目录路径
-val localAssetsDir = File("D:/RustProject/RockZeroOS-Service/assets")
+val localAssetsDir = File("../../assets")
 
-// media_kit JAR 文件列表
 val mediaKitJars = listOf(
     "full-arm64-v8a.jar",
     "full-armeabi-v7a.jar",

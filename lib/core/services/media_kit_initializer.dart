@@ -7,8 +7,7 @@ import 'package:path_provider/path_provider.dart';
 class MediaKitInitializer {
   static bool _initialized = false;
 
-  static const String localAssetsPath =
-      r'D:\RustProject\RockZeroOS-Service\assets';
+  static const String _desktopAssetsPath = '../../assets';
 
   static Future<void> initialize() async {
     if (_initialized) {
@@ -55,14 +54,14 @@ class MediaKitInitializer {
   static Future<void> _initializeWindows() async {
     debugPrint('[MediaKit] Initializing for Windows...');
 
-    final ffmpegPath = '$localAssetsPath\\ffmpeg.exe';
+    final ffmpegPath = '$_desktopAssetsPath\\ffmpeg.exe';
     final ffmpegFile = File(ffmpegPath);
 
     if (await ffmpegFile.exists()) {
       debugPrint('[MediaKit] Found local ffmpeg: $ffmpegPath');
       final currentPath = Platform.environment['PATH'] ?? '';
-      if (!currentPath.contains(localAssetsPath)) {
-        debugPrint('[MediaKit] Local assets path: $localAssetsPath');
+      if (!currentPath.contains(_desktopAssetsPath)) {
+        debugPrint('[MediaKit] Local assets path: $_desktopAssetsPath');
       }
     } else {
       debugPrint('[MediaKit] Local ffmpeg not found, using system ffmpeg');
@@ -72,7 +71,8 @@ class MediaKitInitializer {
   static Future<void> _initializeLinux() async {
     debugPrint('[MediaKit] Initializing for Linux...');
 
-    final archivePath = '$localAssetsPath/ffmpeg-release-arm64-static.tar.xz';
+    final archivePath =
+        '$_desktopAssetsPath/ffmpeg-release-arm64-static.tar.xz';
     final archiveFile = File(archivePath);
 
     if (await archiveFile.exists()) {
@@ -91,16 +91,24 @@ class MediaKitInitializer {
         debugPrint('[MediaKit] ffmpeg binary ready: ${ffmpegBinary.path}');
       }
     } else {
-      debugPrint('[MediaKit] Local ffmpeg archive not found');
+      debugPrint('[MediaKit] Local ffmpeg archive not found at: $archivePath');
+      debugPrint('[MediaKit] Will use system ffmpeg if available');
     }
   }
 
   static Future<void> _initializeAndroid() async {
     debugPrint('[MediaKit] Initializing for Android...');
 
-    final appDir = await getApplicationSupportDirectory();
-    debugPrint('[MediaKit] App support directory: ${appDir.path}');
-    debugPrint('[MediaKit] Android native libraries will be loaded from APK');
+    try {
+      final appDir = await getApplicationSupportDirectory();
+      debugPrint('[MediaKit] App support directory: ${appDir.path}');
+    } catch (e) {
+      debugPrint('[MediaKit] Could not get app directory: $e');
+    }
+
+    debugPrint(
+        '[MediaKit] Android native libraries (.so) will be loaded from APK');
+    debugPrint('[MediaKit] Libraries location: lib/<abi>/ inside APK');
   }
 
   static Future<void> _initializeMacOS() async {
@@ -143,20 +151,36 @@ class MediaKitInitializer {
   }
 
   static bool get isInitialized => _initialized;
+
   static Future<String?> getFfmpegPath() async {
+    // Android 和 iOS 不使用 FFmpeg 可执行文件
+    if (Platform.isAndroid || Platform.isIOS) {
+      debugPrint('[MediaKit] FFmpeg path not applicable for mobile platforms');
+      return null;
+    }
+
+    // Windows 桌面
     if (Platform.isWindows) {
-      final ffmpegPath = '$localAssetsPath\\ffmpeg.exe';
-      if (await File(ffmpegPath).exists()) {
-        return ffmpegPath;
-      }
-    } else if (Platform.isLinux) {
-      final appDir = await getApplicationSupportDirectory();
-      final ffmpegPath = '${appDir.path}/ffmpeg/ffmpeg';
+      final ffmpegPath = '$_desktopAssetsPath\\ffmpeg.exe';
       if (await File(ffmpegPath).exists()) {
         return ffmpegPath;
       }
     }
 
+    // Linux 桌面
+    else if (Platform.isLinux) {
+      try {
+        final appDir = await getApplicationSupportDirectory();
+        final ffmpegPath = '${appDir.path}/ffmpeg/ffmpeg';
+        if (await File(ffmpegPath).exists()) {
+          return ffmpegPath;
+        }
+      } catch (e) {
+        debugPrint('[MediaKit] Error accessing app directory: $e');
+      }
+    }
+
+    // 尝试查找系统 FFmpeg
     try {
       final result = await Process.run(
         Platform.isWindows ? 'where' : 'which',
@@ -165,7 +189,9 @@ class MediaKitInitializer {
       if (result.exitCode == 0) {
         return result.stdout.toString().trim().split('\n').first;
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[MediaKit] Error finding system ffmpeg: $e');
+    }
 
     return null;
   }

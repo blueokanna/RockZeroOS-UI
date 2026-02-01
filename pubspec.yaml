@@ -27,10 +27,10 @@ dependencies:
   # Cryptography
   pointycastle: ^3.9.1
   crypto: ^3.0.6
-  edwards25519: ^1.0.5  # Edwards25519 曲线运算（与 Rust curve25519_dalek 兼容）
-  hashlib: ^2.3.0       # SHA3-256, Blake2b, HMAC 等
-  thirds: ^0.2.0-alpha.1  # Blake3 支持
-  ffi: ^2.1.3  # FFI for Rust native library binding
+  edwards25519: ^1.0.5 # Edwards25519 曲线运算（与 Rust curve25519_dalek 兼容）
+  hashlib: ^2.3.0 # SHA3-256, Blake2b, HMAC 等
+  thirds: ^0.2.0-alpha.1 # Blake3 支持
+  ffi: ^2.1.3 # FFI for Rust native library binding
 
   # Local Storage & Security
   flutter_secure_storage: ^10.0.0
@@ -46,25 +46,13 @@ dependencies:
   network_info_plus: ^7.0.0
   connectivity_plus: ^7.0.0
 
-
-  # Media & Video/Audio - Using media_kit for better HLS support
-  # 注意：Android 平台使用本地 JAR 包（位于 D:\RustProject\RockZeroOS-Service\assets）
-  # 避免从 GitHub 下载失败的问题
-  # 
-  # 本地 JAR 包通过 android/app/build.gradle.kts 中的 copyMediaKitLibs 任务自动复制
-  # 支持的架构：arm64-v8a, armeabi-v7a, x86, x86_64
   media_kit: ^1.2.6
   media_kit_video: ^2.0.1
   media_kit_libs_video: ^1.0.7
-  # Android 平台库 - 使用本地 JAR 包
-  media_kit_libs_android_video: ^1.3.6
-  # Windows 平台库
-  media_kit_libs_windows_video: ^1.0.9
-  # Linux 平台库
-  media_kit_libs_linux: ^1.1.3
-  # macOS 平台库
+  media_kit_libs_android_video: ^1.3.8
+  media_kit_libs_windows_video: ^1.0.11
+  media_kit_libs_linux: ^1.2.1
   media_kit_libs_macos_video: ^1.1.4
-  # iOS 平台库
   media_kit_libs_ios_video: ^1.1.4
   just_audio: ^0.10.5
   photo_view: ^0.15.0

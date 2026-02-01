@@ -1,4 +1,4 @@
-package com.example.rockzero
+package com.blue.rockzero
 
 import android.content.Context
 import android.media.MediaCodecInfo
@@ -19,14 +19,12 @@ object VideoPlayerOptimizer {
             val types = codecInfo.supportedTypes
             for (type in types) {
                 if (type.equals(mimeType, ignoreCase = true)) {
-                    // Check if it's hardware accelerated
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         if (codecInfo.isHardwareAccelerated) {
                             Log.d(TAG, "Hardware decoder found for $mimeType: ${codecInfo.name}")
                             return true
                         }
                     } else {
-                        // For older Android versions, assume hardware if not software
                         if (!codecInfo.name.startsWith("OMX.google.")) {
                             Log.d(TAG, "Hardware decoder found for $mimeType: ${codecInfo.name}")
                             return true
@@ -98,19 +96,16 @@ object VideoPlayerOptimizer {
     fun getDeviceCapabilities(context: Context): Map<String, Any> {
         val capabilities = mutableMapOf<String, Any>()
         
-        // Video codecs
         capabilities["h264_hw"] = hasHardwareDecoder("video/avc")
         capabilities["h265_hw"] = hasHardwareDecoder("video/hevc")
         capabilities["vp9_hw"] = hasHardwareDecoder("video/x-vnd.on2.vp9")
         capabilities["av1_hw"] = hasHardwareDecoder("video/av01")
         
-        // Audio codecs
         capabilities["aac_hw"] = hasHardwareDecoder("audio/mp4a-latm")
         capabilities["opus_hw"] = hasHardwareDecoder("audio/opus")
         capabilities["dts_supported"] = isDtsSupported()
         capabilities["ac3_supported"] = isAc3Supported()
         
-        // Device info
         capabilities["android_version"] = Build.VERSION.SDK_INT
         capabilities["device_model"] = Build.MODEL
         capabilities["manufacturer"] = Build.MANUFACTURER

@@ -1,4 +1,4 @@
-package com.example.rockzero
+package com.blue.rockzero
 
 import android.app.Activity
 import android.content.Context
@@ -131,21 +131,17 @@ class MainActivity : FlutterFragmentActivity() {
         val biometricManager = BiometricManager.from(this)
         val types = mutableListOf<String>()
         
-        // Check for strong biometrics (fingerprint, face, iris)
         if (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) 
             == BiometricManager.BIOMETRIC_SUCCESS) {
             types.add("strong")
-            // On most devices, strong biometric is fingerprint
             types.add("fingerprint")
         }
         
-        // Check for weak biometrics
         if (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK) 
             == BiometricManager.BIOMETRIC_SUCCESS) {
             if (!types.contains("weak")) types.add("weak")
         }
         
-        // Check for face unlock on supported devices
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val pm = packageManager
             if (pm.hasSystemFeature("android.hardware.biometrics.face")) {
@@ -194,7 +190,6 @@ class MainActivity : FlutterFragmentActivity() {
                 
                 override fun onAuthenticationFailed() {
                     super.onAuthenticationFailed()
-                    // Don't return false here, let user retry
                 }
             })
         
@@ -239,7 +234,6 @@ class MainActivity : FlutterFragmentActivity() {
                 val userDisplayName = call.argument<String>("userDisplayName") ?: ""
                 val authenticatorAttachment = call.argument<String>("authenticatorAttachment") ?: "platform"
                 val requireResidentKey = call.argument<Boolean>("requireResidentKey") ?: false
-                val userVerification = call.argument<String>("userVerification") ?: "preferred"
                 
                 val options = PublicKeyCredentialCreationOptions.Builder()
                     .setRp(PublicKeyCredentialRpEntity(rpId, rpName, null))
@@ -282,7 +276,6 @@ class MainActivity : FlutterFragmentActivity() {
                 }
                 
                 if (pendingIntent != null) {
-                    // Store result callback for activity result
                     pendingFido2Result = result
                     pendingFido2Operation = "register"
                     startIntentSenderForResult(
@@ -305,7 +298,6 @@ class MainActivity : FlutterFragmentActivity() {
                 val challenge = call.argument<String>("challenge") ?: ""
                 val rpId = call.argument<String>("rpId") ?: ""
                 val allowCredentials = call.argument<List<String>>("allowCredentials") ?: emptyList()
-                val userVerification = call.argument<String>("userVerification") ?: "preferred"
                 val timeout = call.argument<Int>("timeout") ?: 60000
                 
                 val options = PublicKeyCredentialRequestOptions.Builder()

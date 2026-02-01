@@ -4,7 +4,8 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-val localAssetsDir = file("D:/RustProject/RockZeroOS-Service/assets")
+// 根目录的 assets 文件夹（从 android/app/ 往上 3 层到项目根目录）
+val localAssetsDir = file("../../../assets")
 
 val mediaKitJars = mapOf(
     "arm64-v8a" to "full-arm64-v8a.jar",
@@ -14,6 +15,150 @@ val mediaKitJars = mapOf(
 )
 
 val jniLibsDir = file("${projectDir}/src/main/jniLibs")
+
+// 在配置阶段设置本地 JAR 文件
+fun setupMediaKitLocalJars() {
+    val pubCacheDir = if (System.getProperty("os.name").lowercase().contains("win")) {
+        file(System.getenv("LOCALAPPDATA") + "/Pub/Cache/hosted/pub.dev")
+    } else {
+        file(System.getProperty("user.home") + "/.pub-cache/hosted/pub.dev")
+    }
+    
+    val mediaKitPluginDirs = pubCacheDir.listFiles()?.filter { 
+        it.isDirectory && it.name.startsWith("media_kit_libs_android_video-") 
+    } ?: emptyList()
+    
+    if (mediaKitPluginDirs.isEmpty()) {
+        println("[media_kit] Plugin not found in pub cache")
+        return
+    }
+    
+    val jarFiles = listOf(
+        "full-arm64-v8a.jar",
+        "full-armeabi-v7a.jar",
+        "full-x86.jar",
+        "full-x86_64.jar"
+    )
+    
+    // 检查本地文件是否都存在
+    val allLocalFilesExist = jarFiles.all { file("${localAssetsDir}/${it}").exists() }
+    if (!allLocalFilesExist) {
+        println("[media_kit] Local JAR files not found in ${localAssetsDir.absolutePath}")
+        return
+    }
+    
+    println("[media_kit] Using local JAR files from ${localAssetsDir.absolutePath}")
+    
+    mediaKitPluginDirs.forEach { pluginDir ->
+        val pluginBuildGradle = file("${pluginDir}/android/build.gradle")
+        
+        // 完全重写插件的 build.gradle，使用本地文件
+        if (pluginBuildGradle.exists()) {
+            val content = pluginBuildGradle.readText()
+            
+            if (!content.contains("// ROCKZERO_PATCHED_V2")) {
+                println("[media_kit] Patching plugin build.gradle...")
+                
+                val localPath = localAssetsDir.absolutePath.replace("\\", "/")
+                
+                val newBuildGradle = """
+// ROCKZERO_PATCHED_V2: Using local JAR files from $localPath
+import java.io.File
+import java.nio.file.Files
+
+group 'com.alexmercerind.media_kit_libs_android_video'
+version '1.0'
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.13.0'
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: 'com.android.library'
+
+android {
+    if (project.android.hasProperty("namespace")) {
+        namespace 'com.alexmercerind.media_kit_libs_android_video'
+    }
+    compileSdkVersion 36
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    defaultConfig {
+        minSdkVersion 16
+    }
+    dependencies {
+        implementation fileTree(dir: "${'$'}buildDir/output", include: "*.jar")
+    }
+}
+
+task downloadDependencies {
+    doFirst {
+        def localAssetsPath = "$localPath"
+        def outputDir = file("${'$'}buildDir/output")
+        
+        if (!outputDir.exists()) {
+            outputDir.mkdirs()
+        }
+        
+        def jarFiles = [
+            "full-arm64-v8a.jar",
+            "full-armeabi-v7a.jar",
+            "full-x86.jar",
+            "full-x86_64.jar"
+        ]
+        
+        println "=== media_kit: Using local JAR files ==="
+        println "Source: ${'$'}localAssetsPath"
+        println "Target: ${'$'}outputDir"
+        
+        jarFiles.each { jarName ->
+            def sourceFile = new File(localAssetsPath, jarName)
+            def destFile = new File(outputDir, jarName)
+            
+            if (sourceFile.exists()) {
+                if (!destFile.exists() || sourceFile.lastModified() > destFile.lastModified()) {
+                    Files.copy(sourceFile.toPath(), destFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                    println "  [COPIED] ${'$'}jarName"
+                } else {
+                    println "  [SKIPPED] ${'$'}jarName (up-to-date)"
+                }
+            } else {
+                println "  [MISSING] ${'$'}jarName"
+            }
+        }
+        println "=== Done ==="
+    }
+}
+
+assemble.dependsOn(downloadDependencies)
+"""
+                
+                pluginBuildGradle.writeText(newBuildGradle)
+                println("[media_kit] Plugin patched successfully!")
+            } else {
+                println("[media_kit] Plugin already patched (v2)")
+            }
+        }
+    }
+}
+
+// 在配置阶段立即执行
+setupMediaKitLocalJars()
+
 tasks.register("extractMediaKitLibs") {
     doLast {
         println("=== Extracting media_kit native libraries ===")
@@ -81,7 +226,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.rockzero"
+        applicationId = "com.blue.rockzero"
         minSdk = 24
         targetSdk = 35
         versionCode = flutter.versionCode
