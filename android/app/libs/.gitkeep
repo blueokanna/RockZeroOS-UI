@@ -1,6 +1,0 @@
-# This directory contains local media_kit native libraries
-# Place the following JAR files here:
-# - full-arm64-v8a.jar
-# - full-armeabi-v7a.jar
-# - full-x86.jar
-# - full-x86_64.jar
