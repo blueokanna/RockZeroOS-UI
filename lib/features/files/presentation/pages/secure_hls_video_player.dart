@@ -17,32 +17,37 @@ import '../../../../services/sae_handshake_service.dart';
 import '../../../../services/secure_hls_proxy.dart';
 
 class SecureStreamStats {
-  int bytesReceived = 0;
-  int segmentsLoaded = 0;
-  int segmentsDecrypted = 0;
+  ProxyStreamStats? _proxyStats;
   DateTime? sessionStartTime;
   String encryptionMethod = 'AES-256-GCM';
   String keyExchange = 'SAE (WPA3)';
 
-  String get formattedBytesReceived => _formatBytes(bytesReceived);
+  void setProxyStats(ProxyStreamStats stats) => _proxyStats = stats;
+
+  int get networkBytesReceived => _proxyStats?.networkBytesReceived ?? 0;
+  int get decryptedBytesTotal => _proxyStats?.decryptedBytesTotal ?? 0;
+  int get segmentsLoadedFromNetwork =>
+      _proxyStats?.segmentsLoadedFromNetwork ?? 0;
+  int get segmentsServedFromCache => _proxyStats?.segmentsServedFromCache ?? 0;
+  int get segmentsDecrypted => _proxyStats?.segmentsDecrypted ?? 0;
+  int get failedRequests => _proxyStats?.failedRequests ?? 0;
+  double get cacheHitRate => _proxyStats?.cacheHitRate ?? 0;
+
+  String get formattedNetworkBytes => _formatBytes(networkBytesReceived);
+  String get formattedDecryptedBytes => _formatBytes(decryptedBytesTotal);
+
   String get sessionDuration {
     if (sessionStartTime == null) return '0s';
-    final duration = DateTime.now().difference(sessionStartTime!);
-    if (duration.inHours > 0) {
-      return '${duration.inHours}h ${duration.inMinutes % 60}m';
-    } else if (duration.inMinutes > 0) {
-      return '${duration.inMinutes}m ${duration.inSeconds % 60}s';
-    }
-    return '${duration.inSeconds}s';
+    final d = DateTime.now().difference(sessionStartTime!);
+    if (d.inHours > 0) return '${d.inHours}h ${d.inMinutes % 60}m';
+    if (d.inMinutes > 0) return '${d.inMinutes}m ${d.inSeconds % 60}s';
+    return '${d.inSeconds}s';
   }
 
   String _formatBytes(int bytes) {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
-    }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
   }
 }
 
@@ -58,25 +63,24 @@ class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
     this.fileId,
     required this.fileName,
     required this.baseUrl,
-  }) : assert(filePath != null || fileId != null,
-            'Either filePath or fileId is required');
+  }) : assert(filePath != null || fileId != null);
 
   @override
   ConsumerState<SecureHlsVideoPlayer> createState() =>
       _SecureHlsVideoPlayerState();
 }
 
-class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
+class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
+    with WidgetsBindingObserver {
   Player? _player;
   VideoController? _videoController;
   SecureHlsProxyServer? _proxyServer;
 
   bool _isLoading = true;
   bool _isInitializing = false;
-  String _loadingStatus = 'Initialization...';
+  String _loadingStatus = '初始化中...';
   double _loadingProgress = 0;
   String? _error;
-  String? _errorDetails;
   String? _authToken;
   String? _hlsSessionId;
   String? _userId;
@@ -88,21 +92,32 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   bool _isDisposed = false;
   bool _showControls = true;
   Timer? _hideControlsTimer;
+  Timer? _uiUpdateTimer;
 
   final SecureStreamStats _stats = SecureStreamStats();
-  Timer? _statsUpdateTimer;
 
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _isPlaying = false;
   bool _isBuffering = false;
+  bool _isSeeking = false;
+
+  final List<StreamSubscription> _subscriptions = [];
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _enterFullscreen();
     WakelockPlus.enable();
     _stats.sessionStartTime = DateTime.now();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _player?.pause();
+    }
   }
 
   @override
@@ -118,13 +133,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     if (_isDisposed) return;
 
     try {
-      setState(() {
-        _isLoading = true;
-        _loadingStatus = '正在获取凭据...';
-        _loadingProgress = 0.1;
-        _error = null;
-        _errorDetails = null;
-      });
+      _updateLoading('正在获取凭据...', 0.1);
 
       const storage = FlutterSecureStorage();
       _authToken = await storage.read(key: 'access_token');
@@ -132,39 +141,22 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       _userPassword = await storage.read(key: 'user_password_hash');
 
       if (_authToken == null || _authToken!.isEmpty) {
-        if (mounted && !_isDisposed) {
-          setState(() {
-            _error = '未登录，请先登录';
-            _isLoading = false;
-          });
-        }
+        _setError('未登录，请先登录');
         return;
       }
-
       if (_userId == null || _userPassword == null) {
-        if (mounted && !_isDisposed) {
-          setState(() {
-            _error = '无法获取用户凭据，请重新登录';
-            _isLoading = false;
-          });
-        }
+        _setError('无法获取用户凭据，请重新登录');
         return;
       }
-
       if (_isDisposed) return;
 
-      setState(() {
-        _loadingStatus = '正在建立SAE安全握手...';
-        _loadingProgress = 0.2;
-      });
+      _updateLoading('正在建立安全连接...', 0.2);
 
       final handshakeService = SaeHandshakeService(
         baseUrl: widget.baseUrl,
         jwtToken: _authToken!,
       );
-
       final filePath = widget.filePath ?? '';
-      debugPrint('[SecureHLS] Starting handshake for file: $filePath');
 
       final (sessionId, pmk) = await handshakeService.performHandshake(
         filePath: filePath,
@@ -173,92 +165,61 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       );
 
       if (_isDisposed) return;
-
       _hlsSessionId = sessionId;
       _pmk = pmk;
-      debugPrint('[SecureHLS] Handshake complete, session: $sessionId');
 
-      setState(() {
-        _loadingStatus = '正在启动安全代理...';
-        _loadingProgress = 0.4;
-      });
+      _updateLoading('正在启动安全代理...', 0.4);
 
       _proxyServer = SecureHlsProxyServer(
         baseUrl: widget.baseUrl,
         sessionId: _hlsSessionId!,
         pmk: _pmk!,
         jwtToken: _authToken ?? '',
-        onSegmentLoaded: _onSegmentLoaded,
       );
+      _stats.setProxyStats(_proxyServer!.stats);
 
       final proxyPlaylistUrl = await _proxyServer!.start();
-      debugPrint('[SecureHLS] Proxy started, playlist URL: $proxyPlaylistUrl');
-
       if (_isDisposed) return;
 
-      setState(() {
-        _loadingStatus = '正在初始化播放器...';
-        _loadingProgress = 0.6;
-      });
-
-      await Future.delayed(const Duration(milliseconds: 300));
+      _updateLoading('正在初始化播放器...', 0.6);
 
       _player = Player(
         configuration: const PlayerConfiguration(
-          bufferSize: 32 * 1024 * 1024,
+          bufferSize: 64 * 1024 * 1024,
         ),
       );
 
-      _videoController = VideoController(_player!);
-
-      _player!.stream.playing.listen((playing) {
-        if (mounted && !_isDisposed) {
-          setState(() => _isPlaying = playing);
-        }
-      });
-
-      _player!.stream.position.listen((position) {
-        if (mounted && !_isDisposed) {
-          setState(() => _position = position);
-        }
-      });
-
-      _player!.stream.duration.listen((duration) {
-        if (mounted && !_isDisposed) {
-          setState(() => _duration = duration);
-        }
-      });
-
-      _player!.stream.buffering.listen((buffering) {
-        if (mounted && !_isDisposed) {
-          setState(() => _isBuffering = buffering);
-        }
-      });
-
-      _player!.stream.error.listen((error) {
-        if (error.isNotEmpty && mounted && !_isDisposed) {
-          debugPrint('[SecureHLS] Player error: $error');
-        }
-      });
-
-      setState(() {
-        _loadingStatus = '正在加载视频...';
-        _loadingProgress = 0.8;
-      });
-
-      await _player!.open(
-        Media(proxyPlaylistUrl),
-        play: true,
+      _videoController = VideoController(
+        _player!,
+        configuration: const VideoControllerConfiguration(
+          enableHardwareAcceleration: true,
+        ),
       );
 
-      if (_isDisposed) {
-        await _player?.dispose();
-        return;
-      }
+      _subscriptions.add(_player!.stream.playing.listen((p) {
+        _isPlaying = p;
+        if (mounted && !_isDisposed) setState(() {});
+      }));
 
-      debugPrint('[SecureHLS] Video playback started');
+      _subscriptions.add(_player!.stream.position.listen((p) {
+        if (!_isSeeking) _position = p;
+      }));
 
-      _statsUpdateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _subscriptions.add(_player!.stream.duration.listen((d) {
+        _duration = d;
+      }));
+
+      _subscriptions.add(_player!.stream.buffering.listen((b) {
+        _isBuffering = b;
+        if (mounted && !_isDisposed) setState(() {});
+      }));
+
+      _updateLoading('正在加载视频...', 0.8);
+
+      await _player!.open(Media(proxyPlaylistUrl), play: true);
+      if (_isDisposed) return;
+
+      _uiUpdateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (mounted && !_isDisposed) setState(() {});
       });
 
@@ -270,25 +231,62 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           _loadingProgress = 1.0;
         });
       }
-    } catch (e, stack) {
-      debugPrint('[SecureHLS] Error: $e');
-      debugPrint('[SecureHLS] Stack: $stack');
-      if (mounted && !_isDisposed) {
-        final (errorMessage, errorDetails) = _parseErrorMessage(e.toString());
-        setState(() {
-          _error = errorMessage;
-          _errorDetails = errorDetails;
-          _isLoading = false;
-        });
-      }
+    } catch (e) {
+      _setError(_parseError(e.toString()));
     } finally {
       _isInitializing = false;
     }
   }
 
+  void _updateLoading(String status, double progress) {
+    if (mounted && !_isDisposed) {
+      setState(() {
+        _loadingStatus = status;
+        _loadingProgress = progress;
+      });
+    }
+  }
+
+  void _setError(String error) {
+    if (mounted && !_isDisposed) {
+      setState(() {
+        _error = error;
+        _isLoading = false;
+      });
+    }
+  }
+
+  String _parseError(String e) {
+    final lower = e.toLowerCase();
+    if (lower.contains('key') || lower.contains('decrypt')) {
+      return '密钥错误，请重新登录';
+    }
+    if (lower.contains('sae') ||
+        lower.contains('handshake') ||
+        lower.contains('verification')) {
+      return 'SAE安全握手失败，请检查密码是否正确';
+    }
+    if (lower.contains('timeout')) {
+      return '连接超时，请检查网络';
+    }
+    if (lower.contains('network') || lower.contains('connection')) {
+      return '网络错误，请检查连接';
+    }
+    if (lower.contains('401') || lower.contains('unauthorized')) {
+      return '认证失败，请重新登录';
+    }
+    if (lower.contains('404') || lower.contains('not found')) {
+      return '文件不存在';
+    }
+    if (lower.contains('500')) {
+      return '服务器错误，请稍后重试';
+    }
+    return '播放失败，请重试';
+  }
+
   void _startHideControlsTimer() {
     _hideControlsTimer?.cancel();
-    _hideControlsTimer = Timer(const Duration(seconds: 3), () {
+    _hideControlsTimer = Timer(const Duration(seconds: 4), () {
       if (mounted && !_isDisposed && _isPlaying) {
         setState(() => _showControls = false);
       }
@@ -297,54 +295,51 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
   void _onTapVideo() {
     setState(() => _showControls = !_showControls);
-    if (_showControls) {
+    if (_showControls) _startHideControlsTimer();
+  }
+
+  void _togglePlayPause() {
+    if (_player == null) return;
+    if (_isPlaying) {
+      _player!.pause();
+    } else {
+      _player!.play();
       _startHideControlsTimer();
     }
   }
 
-  (String, String?) _parseErrorMessage(String errorStr) {
-    final lower = errorStr.toLowerCase();
-
-    if (lower.contains('key derivation mismatch') ||
-        lower.contains('encryption keys do not match')) {
-      return ('密钥派生不匹配', '请重新登录后再试。如果问题持续，请联系管理员。');
-    } else if (lower.contains('sae') || lower.contains('handshake')) {
-      return ('SAE安全握手失败', '请检查密码是否正确，或重新登录。');
-    } else if (lower.contains('timeout') || lower.contains('超时')) {
-      return ('连接超时', '请检查网络连接和服务器状态。');
-    } else if (lower.contains('decrypt') ||
-        lower.contains('crypto') ||
-        lower.contains('mac') ||
-        lower.contains('tag')) {
-      return ('解密失败', '密钥可能不匹配，请重新登录后再试。');
-    } else if (lower.contains('network') ||
-        lower.contains('connection') ||
-        lower.contains('socket')) {
-      return ('网络错误', '请检查网络连接和服务器状态。');
-    } else if (lower.contains('401') || lower.contains('unauthorized')) {
-      return ('认证失败', '请重新登录。');
-    } else if (lower.contains('404') || lower.contains('not found')) {
-      return ('文件不存在', '文件可能已被删除或移动。');
-    } else if (lower.contains('platformexception') ||
-        lower.contains('video_player') ||
-        lower.contains('初始化失败')) {
-      return ('播放器初始化失败', '视频格式可能不支持，或服务器转码失败。\n\n详细信息: $errorStr');
-    }
-    return ('播放失败', errorStr);
+  void _seekTo(Duration position) {
+    if (_player == null) return;
+    _isSeeking = true;
+    _position = position;
+    _player!.seek(position).then((_) {
+      Future.delayed(
+          const Duration(milliseconds: 300), () => _isSeeking = false);
+    });
   }
 
-  void _onSegmentLoaded(int bytes, bool decrypted) {
-    _stats.bytesReceived += bytes;
-    _stats.segmentsLoaded++;
-    if (decrypted) {
-      _stats.segmentsDecrypted++;
+  void _seekForward() {
+    final newPos = _position + const Duration(seconds: 10);
+    _seekTo(newPos < _duration ? newPos : _duration);
+  }
+
+  void _seekBackward() {
+    final newPos = _position - const Duration(seconds: 10);
+    _seekTo(newPos > Duration.zero ? newPos : Duration.zero);
+  }
+
+  String _formatDuration(Duration d) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    if (d.inHours > 0) {
+      return '${twoDigits(d.inHours)}:${twoDigits(d.inMinutes.remainder(60))}:${twoDigits(d.inSeconds.remainder(60))}';
     }
+    return '${twoDigits(d.inMinutes)}:${twoDigits(d.inSeconds.remainder(60))}';
   }
 
   void _showSecurityInfoDialog() {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: Row(
           children: [
             Icon(Icons.security, color: Colors.green.shade400),
@@ -357,56 +352,49 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildInfoSection('加密方式', Icons.lock, [
-                _buildInfoRow('算法', _stats.encryptionMethod),
-                _buildInfoRow('密钥交换', _stats.keyExchange),
-                _buildInfoRow('重放保护', '已启用'),
-                _buildInfoRow('请求签名', '已启用'),
+              _infoSection('加密方式', Icons.lock, [
+                _infoRow('算法', _stats.encryptionMethod),
+                _infoRow('密钥交换', _stats.keyExchange),
+                _infoRow('重放保护', '已启用'),
               ]),
               const Divider(height: 24),
-              _buildInfoSection('会话信息', Icons.vpn_key, [
-                _buildInfoRow('会话ID', _hlsSessionId?.substring(0, 8) ?? 'N/A'),
-                _buildInfoRow('会话时长', _stats.sessionDuration),
-              ]),
-              const Divider(height: 24),
-              _buildInfoSection('流量统计', Icons.data_usage, [
-                _buildInfoRow('接收数据', _stats.formattedBytesReceived),
-                _buildInfoRow('已加载片段', '${_stats.segmentsLoaded}'),
-                _buildInfoRow('已解密片段', '${_stats.segmentsDecrypted}'),
+              _infoSection('流量统计', Icons.data_usage, [
+                _infoRow('网络接收', _stats.formattedNetworkBytes),
+                _infoRow('解密数据', _stats.formattedDecryptedBytes),
+                _infoRow('网络加载', '${_stats.segmentsLoadedFromNetwork} 段'),
+                _infoRow('缓存命中', '${_stats.segmentsServedFromCache} 段'),
+                _infoRow('命中率',
+                    '${(_stats.cacheHitRate * 100).toStringAsFixed(1)}%'),
               ]),
             ],
           ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('关闭'),
-          ),
+              onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
         ],
       ),
     );
   }
 
-  Widget _buildInfoSection(String title, IconData icon, List<Widget> children) {
+  Widget _infoSection(String title, IconData icon, List<Widget> children) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Icon(icon, size: 18, color: Colors.grey),
-            const SizedBox(width: 8),
-            Text(title,
-                style:
-                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-          ],
-        ),
+        Row(children: [
+          Icon(icon, size: 18, color: Colors.grey),
+          const SizedBox(width: 8),
+          Text(title,
+              style:
+                  const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+        ]),
         const SizedBox(height: 8),
         ...children,
       ],
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
+  Widget _infoRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -420,43 +408,43 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   }
 
   Future<void> _retry() async {
-    await _cleanupAll();
+    setState(() {
+      _isLoading = true;
+      _error = null;
+      _loadingProgress = 0;
+      _loadingStatus = '正在重试...';
+    });
+    await _cleanup();
     _isInitializing = false;
     await _initPlayer();
   }
 
-  Future<void> _cleanupAll() async {
-    _statsUpdateTimer?.cancel();
-    _statsUpdateTimer = null;
+  Future<void> _cleanup() async {
+    _uiUpdateTimer?.cancel();
     _hideControlsTimer?.cancel();
-    _hideControlsTimer = null;
+    for (final sub in _subscriptions) {
+      await sub.cancel();
+    }
+    _subscriptions.clear();
 
     try {
       await _player?.dispose();
-    } catch (e) {
-      debugPrint('[SecureHLS] Error disposing player: $e');
-    }
+    } catch (_) {}
     _player = null;
     _videoController = null;
 
-    if (_proxyServer != null) {
-      try {
-        await _proxyServer!.stop();
-      } catch (e) {
-        debugPrint('[SecureHLS] Error stopping proxy: $e');
-      }
-      _proxyServer = null;
-    }
+    try {
+      await _proxyServer?.stop();
+    } catch (_) {}
+    _proxyServer = null;
 
     if (_hlsSessionId != null && _authToken != null) {
       try {
         await http.post(
           Uri.parse('${widget.baseUrl}/api/v1/secure-hls/$_hlsSessionId/stop'),
           headers: {'Authorization': 'Bearer $_authToken'},
-        ).timeout(const Duration(seconds: 5));
-      } catch (e) {
-        debugPrint('[SecureHLS] Failed to stop server session: $e');
-      }
+        ).timeout(const Duration(seconds: 3));
+      } catch (_) {}
     }
     _hlsSessionId = null;
     _pmk = null;
@@ -465,7 +453,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   @override
   void dispose() {
     _isDisposed = true;
-    _cleanupAll();
+    WidgetsBinding.instance.removeObserver(this);
+    _cleanup();
     _exitFullscreen();
     WakelockPlus.disable();
     super.dispose();
@@ -542,14 +531,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         await downloadDir.create(recursive: true);
       }
 
-      final String downloadUrl;
-      if (widget.filePath != null) {
-        downloadUrl =
-            '${widget.baseUrl}/api/v1/filemanager/download?path=${Uri.encodeComponent(widget.filePath!)}';
-      } else {
-        downloadUrl =
-            '${widget.baseUrl}/api/v1/files/${widget.fileId}/download';
-      }
+      final downloadUrl = widget.filePath != null
+          ? '${widget.baseUrl}/api/v1/filemanager/download?path=${Uri.encodeComponent(widget.filePath!)}'
+          : '${widget.baseUrl}/api/v1/files/${widget.fileId}/download';
 
       final file = File('${downloadDir.path}/${widget.fileName}');
       final request = http.Request('GET', Uri.parse(downloadUrl));
@@ -584,7 +568,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('下载失败: $e'), backgroundColor: Colors.red),
+          const SnackBar(content: Text('下载失败'), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -592,78 +576,44 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     }
   }
 
-  void _togglePlayPause() {
-    if (_player == null) return;
-    if (_isPlaying) {
-      _player!.pause();
-    } else {
-      _player!.play();
-      _startHideControlsTimer();
-    }
-  }
-
-  void _seekTo(Duration position) {
-    _player?.seek(position);
-  }
-
-  void _seekForward() {
-    final newPosition = _position + const Duration(seconds: 10);
-    if (newPosition < _duration) {
-      _seekTo(newPosition);
-    } else {
-      _seekTo(_duration);
-    }
-  }
-
-  void _seekBackward() {
-    final newPosition = _position - const Duration(seconds: 10);
-    if (newPosition > Duration.zero) {
-      _seekTo(newPosition);
-    } else {
-      _seekTo(Duration.zero);
-    }
-  }
-
-  String _formatDuration(Duration duration) {
-    String twoDigits(int n) => n.toString().padLeft(2, '0');
-    final hours = twoDigits(duration.inHours);
-    final minutes = twoDigits(duration.inMinutes.remainder(60));
-    final seconds = twoDigits(duration.inSeconds.remainder(60));
-
-    if (duration.inHours > 0) {
-      return '$hours:$minutes:$seconds';
-    }
-    return '$minutes:$seconds';
-  }
-
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: true,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) _exitFullscreen();
-      },
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: Stack(
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: GestureDetector(
+        onTap: _onTapVideo,
+        behavior: HitTestBehavior.opaque,
+        child: Stack(
           fit: StackFit.expand,
           children: [
+            // Video layer
             if (_videoController != null && !_isLoading && _error == null)
-              GestureDetector(
-                onTap: _onTapVideo,
+              Center(
                 child: Video(
                   controller: _videoController!,
-                  controls: NoVideoControls,
+                  fit: BoxFit.contain,
                 ),
               ),
-            if (_videoController != null && !_isLoading && _error == null)
-              _buildCustomControls(),
-            if (_isBuffering && !_isLoading)
-              const Center(
-                child: CircularProgressIndicator(color: Colors.white),
-              ),
+
+            // Loading overlay
             if (_isLoading) _buildLoading(),
-            if (_error != null && !_isLoading) _buildError(),
+
+            // Error overlay
+            if (_error != null) _buildError(),
+
+            // Buffering indicator
+            if (_isBuffering && !_isLoading && _error == null)
+              const Center(
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 3,
+                ),
+              ),
+
+            // Controls overlay
+            if (!_isLoading && _error == null) _buildControls(),
+
+            // Download progress
             if (_isDownloading) _buildDownloadProgress(),
           ],
         ),
@@ -671,24 +621,24 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     );
   }
 
-  Widget _buildCustomControls() {
+  Widget _buildControls() {
     return AnimatedOpacity(
       opacity: _showControls ? 1.0 : 0.0,
       duration: const Duration(milliseconds: 300),
       child: IgnorePointer(
         ignoring: !_showControls,
         child: Container(
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: [
-                Colors.black54,
+                Colors.black.withOpacity(0.7),
                 Colors.transparent,
                 Colors.transparent,
-                Colors.black54,
+                Colors.black.withOpacity(0.7),
               ],
-              stops: [0.0, 0.2, 0.8, 1.0],
+              stops: const [0.0, 0.2, 0.8, 1.0],
             ),
           ),
           child: Column(
@@ -708,31 +658,35 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   Widget _buildTopBar() {
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Row(
           children: [
             IconButton(
-              icon: const Icon(Icons.arrow_back, color: Colors.white),
-              onPressed: () {
-                _exitFullscreen();
-                Navigator.pop(context);
-              },
+              icon: const Icon(Icons.arrow_back, color: Colors.white, size: 28),
+              onPressed: () => Navigator.of(context).pop(),
             ),
+            const SizedBox(width: 12),
             Expanded(
               child: Text(
                 widget.fileName,
                 style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 16,
+                  fontSize: 18,
                   fontWeight: FontWeight.w500,
                 ),
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            _buildSecureBadge(),
             IconButton(
-              icon: const Icon(Icons.download, color: Colors.white),
+              icon: const Icon(Icons.security, color: Colors.green, size: 24),
+              onPressed: _showSecurityInfoDialog,
+              tooltip: '安全连接信息',
+            ),
+            IconButton(
+              icon: const Icon(Icons.download, color: Colors.white, size: 24),
               onPressed: _downloadFile,
+              tooltip: '下载视频',
             ),
           ],
         ),
@@ -745,29 +699,29 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         IconButton(
-          iconSize: 48,
-          icon: const Icon(Icons.replay_10, color: Colors.white),
+          icon: const Icon(Icons.replay_10, color: Colors.white, size: 40),
           onPressed: _seekBackward,
         ),
         const SizedBox(width: 32),
         Container(
+          width: 72,
+          height: 72,
           decoration: BoxDecoration(
-            color: Colors.black38,
-            borderRadius: BorderRadius.circular(40),
+            color: Colors.white.withOpacity(0.2),
+            shape: BoxShape.circle,
           ),
           child: IconButton(
-            iconSize: 64,
             icon: Icon(
               _isPlaying ? Icons.pause : Icons.play_arrow,
               color: Colors.white,
+              size: 48,
             ),
             onPressed: _togglePlayPause,
           ),
         ),
         const SizedBox(width: 32),
         IconButton(
-          iconSize: 48,
-          icon: const Icon(Icons.forward_10, color: Colors.white),
+          icon: const Icon(Icons.forward_10, color: Colors.white, size: 40),
           onPressed: _seekForward,
         ),
       ],
@@ -775,76 +729,80 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   }
 
   Widget _buildBottomBar() {
-    final progress = _duration.inMilliseconds > 0
-        ? _position.inMilliseconds / _duration.inMilliseconds
-        : 0.0;
-
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Progress bar
             SliderTheme(
               data: SliderTheme.of(context).copyWith(
                 trackHeight: 4,
                 thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
                 overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
-                activeTrackColor: Colors.green,
-                inactiveTrackColor: Colors.white24,
-                thumbColor: Colors.green,
-                overlayColor: Colors.green.withAlpha(32),
+                activeTrackColor: Colors.blue,
+                inactiveTrackColor: Colors.white.withOpacity(0.3),
+                thumbColor: Colors.blue,
+                overlayColor: Colors.blue.withOpacity(0.3),
               ),
               child: Slider(
-                value: progress.clamp(0.0, 1.0),
+                value: _duration.inMilliseconds > 0
+                    ? _position.inMilliseconds
+                        .toDouble()
+                        .clamp(0, _duration.inMilliseconds.toDouble())
+                    : 0,
+                min: 0,
+                max: _duration.inMilliseconds > 0
+                    ? _duration.inMilliseconds.toDouble()
+                    : 1,
                 onChanged: (value) {
-                  final newPosition = Duration(
-                    milliseconds: (value * _duration.inMilliseconds).round(),
-                  );
-                  _seekTo(newPosition);
+                  _seekTo(Duration(milliseconds: value.toInt()));
+                },
+                onChangeStart: (_) {
+                  _isSeeking = true;
+                  _hideControlsTimer?.cancel();
+                },
+                onChangeEnd: (_) {
+                  _isSeeking = false;
+                  _startHideControlsTimer();
                 },
               ),
             ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  _formatDuration(_position),
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-                Text(
-                  _formatDuration(_duration),
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-              ],
+            // Time display
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    _formatDuration(_position),
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  ),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.lock,
+                        color: Colors.green.shade400,
+                        size: 14,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'AES-256-GCM',
+                        style: TextStyle(
+                          color: Colors.green.shade400,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Text(
+                    _formatDuration(_duration),
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSecureBadge() {
-    return GestureDetector(
-      onTap: _showSecurityInfoDialog,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        margin: const EdgeInsets.symmetric(horizontal: 4),
-        decoration: BoxDecoration(
-          color: Colors.green.withAlpha(77),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.green.withAlpha(128)),
-        ),
-        child: const Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.lock, size: 14, color: Colors.green),
-            SizedBox(width: 4),
-            Text('SECURE',
-                style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.green,
-                    fontWeight: FontWeight.bold)),
           ],
         ),
       ),
@@ -852,56 +810,51 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   }
 
   Widget _buildLoading() {
-    return Center(
-      child: Container(
-        padding: const EdgeInsets.all(32),
-        margin: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: Colors.black87,
-          borderRadius: BorderRadius.circular(16),
-        ),
+    return Container(
+      color: Colors.black,
+      child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             SizedBox(
-              width: 60,
-              height: 60,
+              width: 80,
+              height: 80,
               child: CircularProgressIndicator(
                 value: _loadingProgress > 0 ? _loadingProgress : null,
-                color: Colors.green,
-                strokeWidth: 3,
+                strokeWidth: 4,
+                color: Colors.blue,
+                backgroundColor: Colors.white.withOpacity(0.2),
               ),
             ),
             const SizedBox(height: 24),
             Text(
               _loadingStatus,
-              style: const TextStyle(color: Colors.white, fontSize: 16),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: _loadingProgress,
-                backgroundColor: Colors.white24,
-                valueColor: const AlwaysStoppedAnimation<Color>(Colors.green),
-                minHeight: 6,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
             Text(
               '${(_loadingProgress * 100).toInt()}%',
-              style: const TextStyle(color: Colors.white70, fontSize: 14),
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.7),
+                fontSize: 14,
+              ),
             ),
             const SizedBox(height: 24),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
+            Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                _buildChip('SAE握手', _loadingProgress >= 0.3),
-                _buildChip('AES-256-GCM', _loadingProgress >= 0.4),
-                _buildChip('安全代理', _loadingProgress >= 0.5),
+                Icon(Icons.security, color: Colors.green.shade400, size: 16),
+                const SizedBox(width: 8),
+                Text(
+                  '正在建立安全加密连接...',
+                  style: TextStyle(
+                    color: Colors.green.shade400,
+                    fontSize: 13,
+                  ),
+                ),
               ],
             ),
           ],
@@ -910,78 +863,60 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     );
   }
 
-  Widget _buildChip(String label, bool active) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: active ? Colors.green.withAlpha(51) : Colors.grey.withAlpha(51),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color:
-              active ? Colors.green.withAlpha(128) : Colors.grey.withAlpha(77),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            active ? Icons.check_circle : Icons.hourglass_empty,
-            size: 12,
-            color: active ? Colors.green : Colors.grey,
-          ),
-          const SizedBox(width: 4),
-          Text(label,
-              style: TextStyle(
-                  fontSize: 11, color: active ? Colors.green : Colors.grey)),
-        ],
-      ),
-    );
-  }
-
   Widget _buildError() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, color: Colors.white54, size: 64),
-            const SizedBox(height: 16),
-            Text(
-              _error!,
-              style: const TextStyle(color: Colors.white, fontSize: 18),
-              textAlign: TextAlign.center,
-            ),
-            if (_errorDetails != null) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white10,
-                  borderRadius: BorderRadius.circular(8),
+    return Container(
+      color: Colors.black,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.error_outline,
+                color: Colors.red.shade400,
+                size: 64,
+              ),
+              const SizedBox(height: 24),
+              Text(
+                _error ?? '未知错误',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
                 ),
-                child: Text(
-                  _errorDetails!,
-                  style: const TextStyle(color: Colors.white54, fontSize: 12),
-                  textAlign: TextAlign.center,
-                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 32),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.arrow_back),
+                    label: const Text('返回'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: const BorderSide(color: Colors.white54),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 24, vertical: 12),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  ElevatedButton.icon(
+                    onPressed: _retry,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('重试'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 24, vertical: 12),
+                    ),
+                  ),
+                ],
               ),
             ],
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: _retry,
-              icon: const Icon(Icons.refresh),
-              label: const Text('重试'),
-            ),
-            const SizedBox(height: 16),
-            TextButton(
-              onPressed: () {
-                _exitFullscreen();
-                Navigator.pop(context);
-              },
-              child: const Text('返回'),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -989,31 +924,42 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
   Widget _buildDownloadProgress() {
     return Positioned(
-      top: MediaQuery.of(context).padding.top + 60,
-      left: 16,
-      right: 16,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-            color: Colors.black87, borderRadius: BorderRadius.circular(12)),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.download, color: Colors.white),
-                const SizedBox(width: 12),
-                const Expanded(
-                    child:
-                        Text('下载中...', style: TextStyle(color: Colors.white))),
-                Text('${(_downloadProgress * 100).toInt()}%',
-                    style: const TextStyle(color: Colors.white)),
-              ],
-            ),
-            const SizedBox(height: 8),
-            LinearProgressIndicator(
-                value: _downloadProgress, backgroundColor: Colors.white24),
-          ],
+      bottom: 100,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.8),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                '正在下载...',
+                style: TextStyle(color: Colors.white, fontSize: 14),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: 200,
+                child: LinearProgressIndicator(
+                  value: _downloadProgress,
+                  backgroundColor: Colors.white.withOpacity(0.2),
+                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '${(_downloadProgress * 100).toInt()}%',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.7),
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -13,78 +13,52 @@ class AesGcmCrypto {
     required Uint8List key,
     required Uint8List nonce,
   }) {
-    if (key.length != 32) {
-      throw ArgumentError('Key must be 32 bytes, got ${key.length}');
-    }
-    if (nonce.length != 12) {
-      throw ArgumentError('Nonce must be 12 bytes, got ${nonce.length}');
-    }
-    if (ciphertextWithTag.length < 16) {
-      throw ArgumentError('Ciphertext too short (must include 16-byte tag)');
-    }
+    if (key.length != 32) throw ArgumentError('Invalid key length');
+    if (nonce.length != 12) throw ArgumentError('Invalid nonce length');
+    if (ciphertextWithTag.length < 16) throw ArgumentError('Data too short');
 
     final cipher = GCMBlockCipher(AESEngine());
-    final params = AEADParameters(
-      KeyParameter(key),
-      128,
-      nonce,
-      Uint8List(0),
-    );
-
-    cipher.init(false, params);
+    cipher.init(
+        false, AEADParameters(KeyParameter(key), 128, nonce, Uint8List(0)));
     return cipher.process(ciphertextWithTag);
   }
 }
 
 class HkdfBlake3 {
   final Uint8List _prk;
-
   HkdfBlake3._(this._prk);
 
   factory HkdfBlake3.withSessionSalt(String sessionId, Uint8List ikm) {
     final saltInput = 'hls-session-salt:$sessionId';
-    final saltInputBytes = Uint8List.fromList(utf8.encode(saltInput));
-    final salt = Uint8List.fromList(blake3.blake3(saltInputBytes, 32));
-
+    final salt = Uint8List.fromList(blake3.blake3(utf8.encode(saltInput), 32));
     final prkInput = Uint8List(32 + ikm.length);
     prkInput.setRange(0, 32, salt);
     prkInput.setRange(32, 32 + ikm.length, ikm);
-    final prk = Uint8List.fromList(blake3.blake3(prkInput, 32));
-
-    return HkdfBlake3._(prk);
+    return HkdfBlake3._(Uint8List.fromList(blake3.blake3(prkInput, 32)));
   }
 
   Uint8List expand(Uint8List info, int length) {
+    if (length == 0) return Uint8List(0);
     final output = Uint8List(length);
     var t = Uint8List(0);
     var counter = 1;
     var offset = 0;
-
     while (offset < length) {
-      final inputLen = 32 + t.length + info.length + 1;
-      final input = Uint8List(inputLen);
+      final input = Uint8List(32 + t.length + info.length + 1);
       var pos = 0;
-
       input.setRange(pos, pos + 32, _prk);
       pos += 32;
-
       input.setRange(pos, pos + t.length, t);
       pos += t.length;
-
       input.setRange(pos, pos + info.length, info);
       pos += info.length;
-
       input[pos] = counter;
-
-      final hash = blake3.blake3(input, 32);
-      t = Uint8List.fromList(hash);
-
+      t = Uint8List.fromList(blake3.blake3(input, 32));
       final copyLen = (length - offset).clamp(0, 32);
       output.setRange(offset, offset + copyLen, t);
       offset += copyLen;
       counter++;
     }
-
     return output;
   }
 }
@@ -100,73 +74,101 @@ class HlsEncryptor {
     required Uint8List encryptionKey,
   }) : _encryptionKey = encryptionKey;
 
-  factory HlsEncryptor({
-    required String sessionId,
-    required Uint8List pmk,
-  }) {
-    if (pmk.length != 32) {
-      throw ArgumentError('PMK must be 32 bytes, got ${pmk.length}');
-    }
-
+  factory HlsEncryptor({required String sessionId, required Uint8List pmk}) {
+    if (pmk.length != 32) throw ArgumentError('Invalid PMK length');
     final hkdf = HkdfBlake3.withSessionSalt(sessionId, pmk);
-    final info = Uint8List.fromList(utf8.encode('hls-master-key'));
-    final encryptionKey = hkdf.expand(info, 32);
-
+    final encryptionKey =
+        hkdf.expand(Uint8List.fromList(utf8.encode('hls-master-key')), 32);
     return HlsEncryptor._(
-      sessionId: sessionId,
-      pmk: pmk,
-      encryptionKey: encryptionKey,
-    );
+        sessionId: sessionId, pmk: pmk, encryptionKey: encryptionKey);
   }
 
   Uint8List get encryptionKey => Uint8List.fromList(_encryptionKey);
 
   Uint8List decryptSegment(Uint8List encryptedData) {
-    if (encryptedData.length < 29) {
-      throw ArgumentError('Data too short: ${encryptedData.length} bytes');
-    }
-
+    if (encryptedData.length < 29) throw ArgumentError('Data too short');
     final nonce = encryptedData.sublist(0, 12);
     final ciphertextWithTag = encryptedData.sublist(12);
-
-    try {
-      return AesGcmCrypto.decrypt(
+    return AesGcmCrypto.decrypt(
         ciphertextWithTag: ciphertextWithTag,
         key: _encryptionKey,
-        nonce: nonce,
-      );
-    } catch (e) {
-      debugPrint('[Encryptor] Decrypt failed: $e');
-      rethrow;
-    }
+        nonce: nonce);
   }
 }
 
-/// 段落加载状态
-enum SegmentStatus {
-  pending,
-  loading,
-  loaded,
-  failed,
+class ProxyStreamStats {
+  int _networkBytesReceived = 0;
+  int _decryptedBytesTotal = 0;
+  int _segmentsLoadedFromNetwork = 0;
+  int _segmentsServedFromCache = 0;
+  int _segmentsDecrypted = 0;
+  int _failedRequests = 0;
+  int _totalSegments = 0;
+  DateTime? _startTime;
+
+  void reset() {
+    _networkBytesReceived = 0;
+    _decryptedBytesTotal = 0;
+    _segmentsLoadedFromNetwork = 0;
+    _segmentsServedFromCache = 0;
+    _segmentsDecrypted = 0;
+    _failedRequests = 0;
+    _startTime = DateTime.now();
+  }
+
+  void recordNetworkReceive(int bytes) => _networkBytesReceived += bytes;
+  void recordDecryption(int bytes) {
+    _decryptedBytesTotal += bytes;
+    _segmentsDecrypted++;
+  }
+
+  void recordNetworkLoad() => _segmentsLoadedFromNetwork++;
+  void recordCacheHit() => _segmentsServedFromCache++;
+  void recordFailure() => _failedRequests++;
+  void setTotalSegments(int total) => _totalSegments = total;
+
+  int get networkBytesReceived => _networkBytesReceived;
+  int get decryptedBytesTotal => _decryptedBytesTotal;
+  int get segmentsLoadedFromNetwork => _segmentsLoadedFromNetwork;
+  int get segmentsServedFromCache => _segmentsServedFromCache;
+  int get segmentsDecrypted => _segmentsDecrypted;
+  int get failedRequests => _failedRequests;
+  int get totalSegments => _totalSegments;
+
+  double get cacheHitRate {
+    final total = _segmentsLoadedFromNetwork + _segmentsServedFromCache;
+    return total == 0 ? 0 : _segmentsServedFromCache / total;
+  }
+
+  Duration get sessionDuration => _startTime == null
+      ? Duration.zero
+      : DateTime.now().difference(_startTime!);
 }
 
-/// 段落信息
-class SegmentInfo {
-  final String name;
-  SegmentStatus status;
-  Uint8List? data;
-  int retryCount;
-  DateTime? lastAttempt;
-  String? errorMessage;
+class _SegmentCache {
+  final Map<int, Uint8List> _cache = {};
+  static const int _maxSize = 30;
+  int _oldestIndex = 0;
 
-  SegmentInfo({
-    required this.name,
-    this.status = SegmentStatus.pending,
-    this.data,
-    this.retryCount = 0,
-    this.lastAttempt,
-    this.errorMessage,
-  });
+  Uint8List? get(int index) => _cache[index];
+
+  void put(int index, Uint8List data) {
+    _cache[index] = data;
+    while (_cache.length > _maxSize) {
+      _cache.remove(_oldestIndex);
+      _oldestIndex++;
+    }
+  }
+
+  bool contains(int index) => _cache.containsKey(index);
+  void updateOldest(int currentIndex) {
+    _oldestIndex = (currentIndex - 2).clamp(0, currentIndex);
+  }
+
+  void clear() {
+    _cache.clear();
+    _oldestIndex = 0;
+  }
 }
 
 class SecureHlsProxyServer {
@@ -177,35 +179,24 @@ class SecureHlsProxyServer {
   final Uint8List pmk;
   final String jwtToken;
   final void Function(int bytes, bool decrypted)? onSegmentLoaded;
-  final void Function(String segment, String error)? onSegmentError;
+
   final Random _random = Random.secure();
-
-  // 段落缓存和状态管理
-  final Map<String, SegmentInfo> _segments = {};
-  static const int _maxCacheSize = 50;
-
-  // 并发请求管理
-  final Map<String, Completer<Uint8List>> _pendingRequests = {};
-
-  // 预加载队列
-  final Set<String> _prefetchQueue = {};
-  bool _isPrefetching = false;
-  static const int _prefetchAhead = 5; // 预加载后续5个段落
-  static const int _maxConcurrentPrefetch = 2; // 最大并发预加载数
-  int _currentPrefetchCount = 0;
+  final _SegmentCache _cache = _SegmentCache();
+  final Map<int, Completer<Uint8List>> _pendingRequests = {};
+  final Set<int> _prefetchQueue = {};
 
   late final HlsEncryptor _encryptor;
   bool _initialized = false;
   bool _stopped = false;
-
-  // 缓存的播放列表内容
   String? _cachedPlaylist;
   int? _totalSegments;
+  int _lastRequestedSegment = -1;
 
-  // 重试配置
-  static const int _maxRetries = 3;
-  static const Duration _retryDelay = Duration(milliseconds: 500);
-  static const Duration _requestTimeout = Duration(seconds: 120);
+  final ProxyStreamStats stats = ProxyStreamStats();
+  HttpClient? _httpClient;
+
+  static const int _prefetchAhead = 5;
+  bool _isPrefetching = false;
 
   SecureHlsProxyServer({
     required this.baseUrl,
@@ -213,7 +204,6 @@ class SecureHlsProxyServer {
     required this.pmk,
     this.jwtToken = '',
     this.onSegmentLoaded,
-    this.onSegmentError,
   });
 
   void _initialize() {
@@ -221,50 +211,60 @@ class SecureHlsProxyServer {
     _encryptor = HlsEncryptor(sessionId: sessionId, pmk: pmk);
     _initialized = true;
     _stopped = false;
-    debugPrint('[Proxy] Initialized for session: $sessionId');
+    stats.reset();
+    _cache.clear();
+    _httpClient = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 30)
+      ..idleTimeout = const Duration(seconds: 60)
+      ..badCertificateCallback = (_, __, ___) => true;
   }
 
   Future<String> start() async {
     _initialize();
-
-    _server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
+    _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     _port = _server!.port;
-    debugPrint('[Proxy] Started on http://0.0.0.0:$_port');
-
-    _server!.listen(_handleRequest);
-
+    _server!.listen(_handleRequest, onError: (_) {});
     return 'http://127.0.0.1:$_port/playlist.m3u8';
   }
 
   Future<void> stop() async {
     _stopped = true;
-    await _server?.close(force: true);
-    _server = null;
-    _port = null;
-    _segments.clear();
+    for (final c in _pendingRequests.values) {
+      if (!c.isCompleted) {
+        c.completeError(Exception('Stopped'));
+      }
+    }
     _pendingRequests.clear();
     _prefetchQueue.clear();
-    _isPrefetching = false;
-    _currentPrefetchCount = 0;
+    _cache.clear();
+    await _server?.close(force: true);
+    _httpClient?.close(force: true);
+    _server = null;
+    _httpClient = null;
     _initialized = false;
     _cachedPlaylist = null;
-    _totalSegments = null;
-    debugPrint('[Proxy] Stopped');
   }
 
-  String _bytesToHex(Uint8List bytes) {
-    return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-  }
+  String _bytesToHex(Uint8List bytes) =>
+      bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 
   Map<String, String> _generateSecureParams(String segmentName) {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final nonce =
         base64Encode(List<int>.generate(16, (_) => _random.nextInt(256)));
     final message = '$sessionId:$timestamp:$nonce:$segmentName';
-    final input = Uint8List.fromList([...pmk, ...utf8.encode(message)]);
-    final hash = blake3.blake3(input, 32);
-    final signature = _bytesToHex(Uint8List.fromList(hash));
-    return {'ts': timestamp.toString(), 'nonce': nonce, 'sig': signature};
+    final hash = blake3.blake3(
+        Uint8List.fromList([...pmk, ...utf8.encode(message)]), 32);
+    return {
+      'ts': timestamp.toString(),
+      'nonce': nonce,
+      'sig': _bytesToHex(Uint8List.fromList(hash))
+    };
+  }
+
+  int _parseSegmentIndex(String name) {
+    final match = RegExp(r'segment_(\d+)\.ts').firstMatch(name);
+    return match != null ? int.tryParse(match.group(1) ?? '') ?? -1 : -1;
   }
 
   Future<void> _handleRequest(HttpRequest request) async {
@@ -274,12 +274,7 @@ class SecureHlsProxyServer {
       return;
     }
 
-    // CORS 头
     request.response.headers.add('Access-Control-Allow-Origin', '*');
-    request.response.headers
-        .add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    request.response.headers.add('Access-Control-Allow-Headers', '*');
-
     if (request.method == 'OPTIONS') {
       request.response.statusCode = HttpStatus.ok;
       await request.response.close();
@@ -288,320 +283,194 @@ class SecureHlsProxyServer {
 
     try {
       final path = request.uri.path;
-      debugPrint('[Proxy] ${request.method} $path');
-
-      if (path == '/playlist.m3u8' || path == '/master.m3u8') {
-        await _handlePlaylistRequest(request);
+      if (path.contains('playlist.m3u8')) {
+        await _handlePlaylist(request);
       } else if (path.endsWith('.ts')) {
-        await _handleSegmentRequest(request, path);
+        await _handleSegment(request, path);
       } else {
         request.response.statusCode = HttpStatus.notFound;
-        request.response.write('Not Found');
         await request.response.close();
       }
-    } catch (e, stack) {
-      debugPrint('[Proxy] Error: $e\n$stack');
+    } catch (_) {
       try {
         request.response.statusCode = HttpStatus.internalServerError;
-        request.response.write('Error: $e');
         await request.response.close();
       } catch (_) {}
     }
   }
 
-  Future<void> _handlePlaylistRequest(HttpRequest request) async {
-    HttpClient? client;
+  Future<void> _handlePlaylist(HttpRequest request) async {
     try {
-      // 如果有缓存的播放列表，直接返回
       if (_cachedPlaylist != null) {
-        request.response.statusCode = HttpStatus.ok;
-        request.response.headers.contentType =
-            ContentType('application', 'vnd.apple.mpegurl', charset: 'utf-8');
-        request.response.headers.add('Cache-Control', 'no-cache, no-store');
-        request.response.headers.add('Pragma', 'no-cache');
-        request.response.write(_cachedPlaylist);
-        await request.response.close();
-        debugPrint('[Proxy] Playlist served from cache');
-
-        // 开始预加载前几个段落
-        _startInitialPrefetch();
+        _servePlaylist(request, _cachedPlaylist!);
+        _startPrefetch(0);
         return;
       }
 
-      final playlistUrl = '$baseUrl/api/v1/secure-hls/$sessionId/playlist.m3u8';
-      debugPrint('[Proxy] Fetching playlist from: $playlistUrl');
-
-      client = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 30)
-        ..badCertificateCallback = (cert, host, port) => true;
-
-      final req = await client.getUrl(Uri.parse(playlistUrl));
+      final url = '$baseUrl/api/v1/secure-hls/$sessionId/playlist.m3u8';
+      final client = _httpClient ?? HttpClient();
+      final req = await client.getUrl(Uri.parse(url));
       if (jwtToken.isNotEmpty) {
         req.headers.add('Authorization', 'Bearer $jwtToken');
       }
-      final response = await req.close();
+      final response = await req.close().timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
         final content = await response.transform(utf8.decoder).join();
-        debugPrint('[Proxy] Original playlist received');
-
-        // 解析段落数量
-        final segmentMatches = RegExp(r'segment_(\d+)\.ts').allMatches(content);
-        _totalSegments = segmentMatches.length;
-        debugPrint('[Proxy] Total segments: $_totalSegments');
-
-        // 保持相对路径
-        final modifiedContent = content.replaceAllMapped(
-          RegExp(r'(segment_\d+\.ts)'),
-          (match) => match.group(1)!,
-        );
-
-        _cachedPlaylist = modifiedContent;
-
-        request.response.statusCode = HttpStatus.ok;
-        request.response.headers.contentType =
-            ContentType('application', 'vnd.apple.mpegurl', charset: 'utf-8');
-        request.response.headers.add('Cache-Control', 'no-cache, no-store');
-        request.response.headers.add('Pragma', 'no-cache');
-        request.response.write(modifiedContent);
-
-        // 开始预加载前几个段落
-        _startInitialPrefetch();
+        _totalSegments = RegExp(r'segment_\d+\.ts').allMatches(content).length;
+        stats.setTotalSegments(_totalSegments ?? 0);
+        _cachedPlaylist = content;
+        _servePlaylist(request, content);
+        _startPrefetch(0);
       } else {
-        final errorBody = await response.transform(utf8.decoder).join();
-        debugPrint(
-            '[Proxy] Playlist failed: ${response.statusCode} - $errorBody');
         request.response.statusCode = response.statusCode;
-        request.response.write('Failed: $errorBody');
+        await request.response.close();
       }
-    } catch (e, stack) {
-      debugPrint('[Proxy] Playlist error: $e\n$stack');
+    } catch (_) {
       request.response.statusCode = HttpStatus.internalServerError;
-      request.response.write('Error: $e');
-    } finally {
-      client?.close();
       await request.response.close();
     }
   }
 
-  void _startInitialPrefetch() {
-    // 预加载前几个段落
-    for (int i = 0; i < _prefetchAhead && i < (_totalSegments ?? 10); i++) {
-      final segmentName = 'segment_$i.ts';
-      if (!_segments.containsKey(segmentName)) {
-        _prefetchQueue.add(segmentName);
-      }
-    }
-    _processPrefetchQueue();
+  void _servePlaylist(HttpRequest request, String content) {
+    request.response.statusCode = HttpStatus.ok;
+    request.response.headers.contentType =
+        ContentType('application', 'vnd.apple.mpegurl', charset: 'utf-8');
+    request.response.headers.add('Cache-Control', 'no-cache');
+    request.response.write(content);
+    request.response.close();
   }
 
-  Future<void> _handleSegmentRequest(HttpRequest request, String path) async {
+  Future<void> _handleSegment(HttpRequest request, String path) async {
     final segmentName = path.startsWith('/') ? path.substring(1) : path;
-    debugPrint('[Proxy] Handling segment request: $segmentName');
+    final index = _parseSegmentIndex(segmentName);
+    if (index < 0) {
+      request.response.statusCode = HttpStatus.badRequest;
+      await request.response.close();
+      return;
+    }
+
+    _lastRequestedSegment = index;
+    _cache.updateOldest(index);
 
     try {
-      // 检查缓存
-      final segmentInfo = _segments[segmentName];
-      if (segmentInfo != null &&
-          segmentInfo.status == SegmentStatus.loaded &&
-          segmentInfo.data != null) {
-        debugPrint('[Proxy] Cache hit: $segmentName');
-        await _serveSegment(request, segmentInfo.data!, segmentName);
+      final cached = _cache.get(index);
+      if (cached != null) {
+        stats.recordCacheHit();
+        await _serveSegment(request, cached);
+        _startPrefetch(index);
         return;
       }
 
-      // 检查是否有正在进行的请求
-      if (_pendingRequests.containsKey(segmentName)) {
-        debugPrint('[Proxy] Waiting for pending: $segmentName');
+      if (_pendingRequests.containsKey(index)) {
         try {
-          final data = await _pendingRequests[segmentName]!
+          final data = await _pendingRequests[index]!
               .future
-              .timeout(_requestTimeout);
-          await _serveSegment(request, data, segmentName);
-        } catch (e) {
-          debugPrint('[Proxy] Pending request failed: $e');
-          await _serveError(request, 'Segment loading failed: $e');
+              .timeout(const Duration(seconds: 120));
+          await _serveSegment(request, data);
+        } catch (_) {
+          stats.recordFailure();
+          request.response.statusCode = HttpStatus.serviceUnavailable;
+          await request.response.close();
         }
         return;
       }
 
-      // 创建新请求
       final completer = Completer<Uint8List>();
-      _pendingRequests[segmentName] = completer;
-
-      // 更新段落状态
-      _segments[segmentName] = SegmentInfo(
-        name: segmentName,
-        status: SegmentStatus.loading,
-        lastAttempt: DateTime.now(),
-      );
+      _pendingRequests[index] = completer;
 
       try {
-        final decryptedData = await _fetchAndDecryptSegment(segmentName);
-
-        // 更新缓存
-        _segments[segmentName] = SegmentInfo(
-          name: segmentName,
-          status: SegmentStatus.loaded,
-          data: decryptedData,
-        );
-        _cleanupCache();
-
-        completer.complete(decryptedData);
-        await _serveSegment(request, decryptedData, segmentName);
-      } catch (e, stack) {
-        // 更新失败状态
-        final info = _segments[segmentName];
-        if (info != null) {
-          info.status = SegmentStatus.failed;
-          info.errorMessage = e.toString();
-          info.retryCount++;
+        final data = await _fetchSegment(segmentName);
+        _cache.put(index, data);
+        completer.complete(data);
+        await _serveSegment(request, data);
+        _startPrefetch(index);
+      } catch (_) {
+        stats.recordFailure();
+        if (!completer.isCompleted) {
+          completer.completeError(Exception('Fetch failed'));
         }
-
-        completer.completeError(e);
-        debugPrint('[Proxy] Segment failed: $e\n$stack');
-
-        onSegmentError?.call(segmentName, e.toString());
-        await _serveError(request, 'Failed to load segment: $e');
+        request.response.statusCode = HttpStatus.serviceUnavailable;
+        await request.response.close();
       } finally {
-        _pendingRequests.remove(segmentName);
+        _pendingRequests.remove(index);
       }
-    } catch (e, stack) {
-      debugPrint('[Proxy] Segment error: $e\n$stack');
-      await _serveError(request, 'Error: $e');
+    } catch (_) {
+      request.response.statusCode = HttpStatus.internalServerError;
+      await request.response.close();
     }
   }
 
-  Future<void> _serveError(HttpRequest request, String message) async {
-    try {
-      request.response.statusCode = HttpStatus.serviceUnavailable;
-      request.response.headers.contentType = ContentType.text;
-      request.response.write(message);
-      await request.response.close();
-    } catch (_) {}
-  }
-
-  Future<Uint8List> _fetchAndDecryptSegment(String segmentName) async {
+  Future<Uint8List> _fetchSegment(String segmentName) async {
+    const maxRetries = 3;
     Exception? lastError;
 
-    for (int attempt = 1; attempt <= _maxRetries; attempt++) {
-      if (_stopped) {
-        throw Exception('Proxy stopped');
-      }
+    for (int attempt = 1; attempt <= maxRetries; attempt++) {
+      if (_stopped) throw Exception('Stopped');
 
-      HttpClient? client;
       try {
         final params = _generateSecureParams(segmentName);
-        final segmentUrl =
+        final url =
             Uri.parse('$baseUrl/api/v1/secure-hls/$sessionId/$segmentName')
                 .replace(queryParameters: params);
 
-        debugPrint('[Proxy] Fetching segment (attempt $attempt): $segmentName');
-
-        client = HttpClient()
-          ..connectionTimeout = const Duration(seconds: 30)
-          ..idleTimeout = const Duration(seconds: 60)
-          ..badCertificateCallback = (cert, host, port) => true;
-
-        final req = await client.postUrl(segmentUrl);
+        final client = _httpClient ?? HttpClient();
+        final req = await client.postUrl(url);
         req.headers.contentType = ContentType.json;
         if (jwtToken.isNotEmpty) {
           req.headers.add('Authorization', 'Bearer $jwtToken');
         }
-        req.write(jsonEncode({}));
+        req.write('{}');
 
-        final response = await req.close().timeout(_requestTimeout);
+        final response =
+            await req.close().timeout(const Duration(seconds: 120));
 
         if (response.statusCode == 200) {
-          final encryptedData = await response.fold<List<int>>(
-            [],
-            (prev, chunk) => prev..addAll(chunk),
-          ).timeout(_requestTimeout);
+          final encrypted =
+              await response.fold<List<int>>([], (p, c) => p..addAll(c));
+          if (encrypted.length < 100) throw Exception('Invalid segment');
 
-          debugPrint(
-              '[Proxy] Received ${encryptedData.length} bytes for $segmentName');
-
-          if (encryptedData.length < 100) {
-            throw Exception(
-                'Invalid segment: only ${encryptedData.length} bytes received');
-          }
+          stats.recordNetworkReceive(encrypted.length);
+          stats.recordNetworkLoad();
 
           final decrypted =
-              _encryptor.decryptSegment(Uint8List.fromList(encryptedData));
-          debugPrint(
-              '[Proxy] Decrypted ${decrypted.length} bytes for $segmentName');
+              _encryptor.decryptSegment(Uint8List.fromList(encrypted));
+          stats.recordDecryption(decrypted.length);
+          onSegmentLoaded?.call(decrypted.length, true);
+
           return decrypted;
         } else {
-          final errorBody = await response.transform(utf8.decoder).join();
-          final errorMsg = 'Server returned ${response.statusCode}: $errorBody';
-          debugPrint('[Proxy] $errorMsg');
-
-          // 如果是 500 错误，可能是转码问题，等待更长时间再重试
-          if (response.statusCode == 500 && attempt < _maxRetries) {
-            debugPrint('[Proxy] Server error, waiting before retry...');
-            await Future.delayed(Duration(seconds: attempt * 2));
-          }
-
-          throw Exception(errorMsg);
+          throw Exception('Server error: ${response.statusCode}');
         }
-      } on TimeoutException {
-        lastError = Exception('Request timeout for $segmentName');
-        debugPrint('[Proxy] Timeout on attempt $attempt for $segmentName');
       } catch (e) {
-        lastError = e is Exception ? e : Exception(e.toString());
-        debugPrint('[Proxy] Attempt $attempt failed for $segmentName: $e');
-      } finally {
-        client?.close();
-      }
-
-      if (attempt < _maxRetries) {
-        await Future.delayed(_retryDelay * attempt);
+        lastError = e is Exception ? e : Exception('Unknown error');
+        if (attempt < maxRetries) {
+          await Future.delayed(Duration(milliseconds: 300 * attempt));
+        }
       }
     }
 
-    throw lastError ??
-        Exception('Failed to fetch segment after $_maxRetries attempts');
+    throw lastError ?? Exception('Fetch failed');
   }
 
-  Future<void> _serveSegment(
-      HttpRequest request, Uint8List data, String segmentName) async {
+  Future<void> _serveSegment(HttpRequest request, Uint8List data) async {
     request.response.statusCode = HttpStatus.ok;
     request.response.headers.contentType = ContentType('video', 'mp2t');
     request.response.headers.contentLength = data.length;
-    request.response.headers.add('Cache-Control', 'no-cache, no-store');
-    request.response.headers.add('Pragma', 'no-cache');
-    request.response.headers.add('Accept-Ranges', 'bytes');
+    request.response.headers.add('Cache-Control', 'no-cache');
     request.response.add(data);
     await request.response.close();
-
-    onSegmentLoaded?.call(data.length, true);
-    debugPrint('[Proxy] ✅ Served $segmentName (${data.length} bytes)');
-
-    // 触发预加载
-    _triggerPrefetch(segmentName);
   }
 
-  void _triggerPrefetch(String currentSegment) {
-    final match = RegExp(r'segment_(\d+)\.ts').firstMatch(currentSegment);
-    if (match == null) return;
+  void _startPrefetch(int currentIndex) {
+    if (_isPrefetching || _stopped) return;
 
-    final currentIndex = int.tryParse(match.group(1) ?? '');
-    if (currentIndex == null) return;
-
-    // 预加载后续段落
     for (int i = 1; i <= _prefetchAhead; i++) {
       final nextIndex = currentIndex + i;
       if (_totalSegments != null && nextIndex >= _totalSegments!) break;
-
-      final nextSegment = 'segment_$nextIndex.ts';
-      final info = _segments[nextSegment];
-
-      // 只预加载未加载且未失败的段落
-      if (info == null || (info.status == SegmentStatus.pending)) {
-        if (!_pendingRequests.containsKey(nextSegment) &&
-            !_prefetchQueue.contains(nextSegment)) {
-          _prefetchQueue.add(nextSegment);
-        }
+      if (!_cache.contains(nextIndex) &&
+          !_pendingRequests.containsKey(nextIndex)) {
+        _prefetchQueue.add(nextIndex);
       }
     }
 
@@ -610,36 +479,23 @@ class SecureHlsProxyServer {
 
   Future<void> _processPrefetchQueue() async {
     if (_isPrefetching || _prefetchQueue.isEmpty || _stopped) return;
-
     _isPrefetching = true;
 
     try {
       while (_prefetchQueue.isNotEmpty && !_stopped) {
-        // 限制并发预加载数
-        if (_currentPrefetchCount >= _maxConcurrentPrefetch) {
-          await Future.delayed(const Duration(milliseconds: 100));
+        final index = _prefetchQueue.first;
+        _prefetchQueue.remove(index);
+
+        if (_cache.contains(index) || _pendingRequests.containsKey(index)) {
           continue;
         }
+        if (index < _lastRequestedSegment - 1) continue;
 
-        final segmentName = _prefetchQueue.first;
-        _prefetchQueue.remove(segmentName);
+        try {
+          final data = await _fetchSegment('segment_$index.ts');
+          _cache.put(index, data);
+        } catch (_) {}
 
-        // 跳过已加载或正在加载的段落
-        final info = _segments[segmentName];
-        if (info != null && info.status == SegmentStatus.loaded) continue;
-        if (_pendingRequests.containsKey(segmentName)) continue;
-
-        _currentPrefetchCount++;
-
-        // 异步预加载，不阻塞
-        _prefetchSegment(segmentName).then((_) {
-          _currentPrefetchCount--;
-        }).catchError((e) {
-          _currentPrefetchCount--;
-          debugPrint('[Proxy] Prefetch error for $segmentName: $e');
-        });
-
-        // 短暂延迟，避免过于激进
         await Future.delayed(const Duration(milliseconds: 50));
       }
     } finally {
@@ -647,80 +503,17 @@ class SecureHlsProxyServer {
     }
   }
 
-  Future<void> _prefetchSegment(String segmentName) async {
-    if (_stopped) return;
+  int? get totalSegments => _totalSegments;
+  int get currentSegmentIndex => _lastRequestedSegment;
 
-    try {
-      debugPrint('[Proxy] Prefetching $segmentName');
-      final data = await _fetchAndDecryptSegment(segmentName);
-
-      _segments[segmentName] = SegmentInfo(
-        name: segmentName,
-        status: SegmentStatus.loaded,
-        data: data,
-      );
-      _cleanupCache();
-
-      debugPrint('[Proxy] ✅ Prefetched $segmentName (${data.length} bytes)');
-    } catch (e) {
-      debugPrint('[Proxy] Prefetch failed: $segmentName - $e');
-      // 预加载失败不影响播放，只记录状态
-      _segments[segmentName] = SegmentInfo(
-        name: segmentName,
-        status: SegmentStatus.failed,
-        errorMessage: e.toString(),
-        retryCount: 1,
-      );
+  int getBufferedSegmentsAhead() {
+    if (_lastRequestedSegment < 0) return 0;
+    int count = 0;
+    for (int i = _lastRequestedSegment + 1;
+        i <= _lastRequestedSegment + _prefetchAhead;
+        i++) {
+      if (_cache.contains(i)) count++;
     }
-  }
-
-  void _cleanupCache() {
-    if (_segments.length <= _maxCacheSize) return;
-
-    // 按段落索引排序，移除最旧的
-    final sortedKeys = _segments.keys.toList()
-      ..sort((a, b) {
-        final indexA = int.tryParse(a.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
-        final indexB = int.tryParse(b.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
-        return indexA.compareTo(indexB);
-      });
-
-    // 移除前面的段落（已播放过的）
-    final toRemove = sortedKeys.take(_segments.length - _maxCacheSize + 10);
-    for (final key in toRemove) {
-      _segments.remove(key);
-    }
-  }
-
-  // 获取缓存状态（用于调试）
-  Map<String, dynamic> getCacheStatus() {
-    int loaded = 0, loading = 0, failed = 0, pending = 0;
-
-    for (final info in _segments.values) {
-      switch (info.status) {
-        case SegmentStatus.loaded:
-          loaded++;
-          break;
-        case SegmentStatus.loading:
-          loading++;
-          break;
-        case SegmentStatus.failed:
-          failed++;
-          break;
-        case SegmentStatus.pending:
-          pending++;
-          break;
-      }
-    }
-
-    return {
-      'total': _totalSegments,
-      'cached': _segments.length,
-      'loaded': loaded,
-      'loading': loading,
-      'failed': failed,
-      'pending': pending,
-      'prefetchQueue': _prefetchQueue.length,
-    };
+    return count;
   }
 }
