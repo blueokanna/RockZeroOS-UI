@@ -680,21 +680,35 @@ class UsbDevice {
 class AppStoreItem {
   final String id;
   final String name;
-  @JsonKey(name: 'display_name')
+  @JsonKey(name: 'display_name', defaultValue: '')
   final String displayName;
+  @JsonKey(defaultValue: '')
   final String description;
+  @JsonKey(defaultValue: '')
   final String icon;
+  @JsonKey(defaultValue: 'Other')
   final String category;
-  @JsonKey(name: 'docker_image')
+  @JsonKey(name: 'docker_image', defaultValue: '')
   final String dockerImage;
-  @JsonKey(name: 'recommended_tag')
+  @JsonKey(name: 'recommended_tag', defaultValue: 'latest')
   final String recommendedTag;
-  @JsonKey(name: 'default_ports')
+  @JsonKey(name: 'default_ports', defaultValue: [])
   final List<PortMapping> defaultPorts;
-  @JsonKey(name: 'default_volumes')
+  @JsonKey(name: 'default_volumes', defaultValue: [])
   final List<VolumeMapping> defaultVolumes;
-  @JsonKey(name: 'required_env')
+  @JsonKey(name: 'required_env', defaultValue: [])
   final List<String> requiredEnv;
+  // 额外的元数据字段
+  @JsonKey(defaultValue: null)
+  final String? source;
+  @JsonKey(defaultValue: null)
+  final String? version;
+  @JsonKey(defaultValue: null)
+  final String? author;
+  @JsonKey(defaultValue: null)
+  final List<String>? architectures;
+  @JsonKey(defaultValue: null)
+  final bool? installed;
 
   AppStoreItem({
     required this.id,
@@ -708,6 +722,11 @@ class AppStoreItem {
     required this.defaultPorts,
     required this.defaultVolumes,
     required this.requiredEnv,
+    this.source,
+    this.version,
+    this.author,
+    this.architectures,
+    this.installed,
   });
 
   factory AppStoreItem.fromJson(Map<String, dynamic> json) =>

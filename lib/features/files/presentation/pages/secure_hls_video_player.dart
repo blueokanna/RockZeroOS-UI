@@ -185,7 +185,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
 
       _player = Player(
         configuration: const PlayerConfiguration(
-          bufferSize: 64 * 1024 * 1024,
+          bufferSize: 128 * 1024 * 1024,
         ),
       );
 
@@ -219,7 +219,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
       await _player!.open(Media(proxyPlaylistUrl), play: true);
       if (_isDisposed) return;
 
-      _uiUpdateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _uiUpdateTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
         if (mounted && !_isDisposed) setState(() {});
       });
 
@@ -258,29 +258,19 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
 
   String _parseError(String e) {
     final lower = e.toLowerCase();
-    if (lower.contains('key') || lower.contains('decrypt')) {
-      return '密钥错误，请重新登录';
-    }
+    if (lower.contains('key') || lower.contains('decrypt')) return '密钥错误，请重新登录';
     if (lower.contains('sae') ||
         lower.contains('handshake') ||
         lower.contains('verification')) {
       return 'SAE安全握手失败，请检查密码是否正确';
     }
-    if (lower.contains('timeout')) {
-      return '连接超时，请检查网络';
-    }
-    if (lower.contains('network') || lower.contains('connection')) {
+    if (lower.contains('timeout')) return '连接超时，请检查网络';
+    if (lower.contains('network') || lower.contains('connection'))
       return '网络错误，请检查连接';
-    }
-    if (lower.contains('401') || lower.contains('unauthorized')) {
+    if (lower.contains('401') || lower.contains('unauthorized'))
       return '认证失败，请重新登录';
-    }
-    if (lower.contains('404') || lower.contains('not found')) {
-      return '文件不存在';
-    }
-    if (lower.contains('500')) {
-      return '服务器错误，请稍后重试';
-    }
+    if (lower.contains('404') || lower.contains('not found')) return '文件不存在';
+    if (lower.contains('500')) return '服务器错误，请稍后重试';
     return '播放失败，请重试';
   }
 
@@ -309,12 +299,23 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
   }
 
   void _seekTo(Duration position) {
-    if (_player == null) return;
+    if (_player == null || _duration == Duration.zero) return;
+
+    final clampedPosition = Duration(
+      milliseconds: position.inMilliseconds.clamp(0, _duration.inMilliseconds),
+    );
+
     _isSeeking = true;
-    _position = position;
-    _player!.seek(position).then((_) {
-      Future.delayed(
-          const Duration(milliseconds: 300), () => _isSeeking = false);
+    _position = clampedPosition;
+    setState(() {});
+
+    final targetSegment = (clampedPosition.inSeconds / 6).floor();
+    _proxyServer?.prefetchAroundSegment(targetSegment);
+
+    _player!.seek(clampedPosition).then((_) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        _isSeeking = false;
+      });
     });
   }
 
@@ -450,12 +451,30 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
     _pmk = null;
   }
 
+  void _restoreNavigation() {
+    // 恢复系统 UI
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge,
+        overlays: SystemUiOverlay.values);
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    // 恢复底部导航栏
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ref.read(bottomNavVisibleProvider.notifier).show();
+      }
+    });
+  }
+
   @override
   void dispose() {
     _isDisposed = true;
     WidgetsBinding.instance.removeObserver(this);
     _cleanup();
-    _exitFullscreen();
+    _restoreNavigation();
     WakelockPlus.disable();
     super.dispose();
   }
@@ -473,20 +492,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
         ref.read(bottomNavVisibleProvider.notifier).hide();
       }
     });
-  }
-
-  void _exitFullscreen() {
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge,
-        overlays: SystemUiOverlay.values);
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
-    if (mounted) {
-      ref.read(bottomNavVisibleProvider.notifier).show();
-    }
   }
 
   Future<void> _downloadFile() async {
@@ -578,44 +583,38 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: GestureDetector(
-        onTap: _onTapVideo,
-        behavior: HitTestBehavior.opaque,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            // Video layer
-            if (_videoController != null && !_isLoading && _error == null)
-              Center(
-                child: Video(
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          _restoreNavigation();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: GestureDetector(
+          onTap: _onTapVideo,
+          behavior: HitTestBehavior.opaque,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (_videoController != null && !_isLoading && _error == null)
+                Video(
                   controller: _videoController!,
                   fit: BoxFit.contain,
+                  fill: Colors.black,
                 ),
-              ),
-
-            // Loading overlay
-            if (_isLoading) _buildLoading(),
-
-            // Error overlay
-            if (_error != null) _buildError(),
-
-            // Buffering indicator
-            if (_isBuffering && !_isLoading && _error == null)
-              const Center(
-                child: CircularProgressIndicator(
-                  color: Colors.white,
-                  strokeWidth: 3,
+              if (_isLoading) _buildLoading(),
+              if (_error != null) _buildError(),
+              if (_isBuffering && !_isLoading && _error == null)
+                const Center(
+                  child: CircularProgressIndicator(
+                      color: Colors.white, strokeWidth: 3),
                 ),
-              ),
-
-            // Controls overlay
-            if (!_isLoading && _error == null) _buildControls(),
-
-            // Download progress
-            if (_isDownloading) _buildDownloadProgress(),
-          ],
+              if (!_isLoading && _error == null) _buildControls(),
+              if (_isDownloading) _buildDownloadProgress(),
+            ],
+          ),
         ),
       ),
     );
@@ -628,17 +627,17 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
       child: IgnorePointer(
         ignoring: !_showControls,
         child: Container(
-          decoration: BoxDecoration(
+          decoration: const BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: [
-                Colors.black.withOpacity(0.7),
+                Color.fromRGBO(0, 0, 0, 0.7),
                 Colors.transparent,
                 Colors.transparent,
-                Colors.black.withOpacity(0.7),
+                Color.fromRGBO(0, 0, 0, 0.7),
               ],
-              stops: const [0.0, 0.2, 0.8, 1.0],
+              stops: [0.0, 0.2, 0.8, 1.0],
             ),
           ),
           child: Column(
@@ -663,17 +662,19 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
           children: [
             IconButton(
               icon: const Icon(Icons.arrow_back, color: Colors.white, size: 28),
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () {
+                _restoreNavigation();
+                Navigator.of(context).pop();
+              },
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
                 widget.fileName,
                 style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w500,
-                ),
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w500),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -706,8 +707,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
         Container(
           width: 72,
           height: 72,
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.2),
+          decoration: const BoxDecoration(
+            color: Color.fromRGBO(255, 255, 255, 0.2),
             shape: BoxShape.circle,
           ),
           child: IconButton(
@@ -735,16 +736,15 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Progress bar
             SliderTheme(
               data: SliderTheme.of(context).copyWith(
                 trackHeight: 4,
                 thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
                 overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
                 activeTrackColor: Colors.blue,
-                inactiveTrackColor: Colors.white.withOpacity(0.3),
+                inactiveTrackColor: const Color.fromRGBO(255, 255, 255, 0.3),
                 thumbColor: Colors.blue,
-                overlayColor: Colors.blue.withOpacity(0.3),
+                overlayColor: const Color.fromRGBO(33, 150, 243, 0.3),
               ),
               child: Slider(
                 value: _duration.inMilliseconds > 0
@@ -769,37 +769,26 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
                 },
               ),
             ),
-            // Time display
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    _formatDuration(_position),
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
-                  ),
+                  Text(_formatDuration(_position),
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 13)),
                   Row(
                     children: [
-                      Icon(
-                        Icons.lock,
-                        color: Colors.green.shade400,
-                        size: 14,
-                      ),
+                      Icon(Icons.lock, color: Colors.green.shade400, size: 14),
                       const SizedBox(width: 4),
-                      Text(
-                        'AES-256-GCM',
-                        style: TextStyle(
-                          color: Colors.green.shade400,
-                          fontSize: 11,
-                        ),
-                      ),
+                      Text('AES-256-GCM',
+                          style: TextStyle(
+                              color: Colors.green.shade400, fontSize: 11)),
                     ],
                   ),
-                  Text(
-                    _formatDuration(_duration),
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
-                  ),
+                  Text(_formatDuration(_duration),
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 13)),
                 ],
               ),
             ),
@@ -823,24 +812,17 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
                 value: _loadingProgress > 0 ? _loadingProgress : null,
                 strokeWidth: 4,
                 color: Colors.blue,
-                backgroundColor: Colors.white.withOpacity(0.2),
+                backgroundColor: const Color.fromRGBO(255, 255, 255, 0.2),
               ),
             ),
             const SizedBox(height: 24),
-            Text(
-              _loadingStatus,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-              ),
-            ),
+            Text(_loadingStatus,
+                style: const TextStyle(color: Colors.white, fontSize: 16)),
             const SizedBox(height: 8),
             Text(
               '${(_loadingProgress * 100).toInt()}%',
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.7),
-                fontSize: 14,
-              ),
+              style: const TextStyle(
+                  color: Color.fromRGBO(255, 255, 255, 0.7), fontSize: 14),
             ),
             const SizedBox(height: 24),
             Row(
@@ -848,13 +830,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
               children: [
                 Icon(Icons.security, color: Colors.green.shade400, size: 16),
                 const SizedBox(width: 8),
-                Text(
-                  '正在建立安全加密连接...',
-                  style: TextStyle(
-                    color: Colors.green.shade400,
-                    fontSize: 13,
-                  ),
-                ),
+                Text('正在建立安全加密连接...',
+                    style:
+                        TextStyle(color: Colors.green.shade400, fontSize: 13)),
               ],
             ),
           ],
@@ -872,18 +850,11 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                Icons.error_outline,
-                color: Colors.red.shade400,
-                size: 64,
-              ),
+              Icon(Icons.error_outline, color: Colors.red.shade400, size: 64),
               const SizedBox(height: 24),
               Text(
                 _error ?? '未知错误',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                ),
+                style: const TextStyle(color: Colors.white, fontSize: 16),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 32),
@@ -891,7 +862,10 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   OutlinedButton.icon(
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: () {
+                      _restoreNavigation();
+                      Navigator.of(context).pop();
+                    },
                     icon: const Icon(Icons.arrow_back),
                     label: const Text('返回'),
                     style: OutlinedButton.styleFrom(
@@ -931,32 +905,28 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
           decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.8),
+            color: const Color.fromRGBO(0, 0, 0, 0.8),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
-                '正在下载...',
-                style: TextStyle(color: Colors.white, fontSize: 14),
-              ),
+              const Text('正在下载...',
+                  style: TextStyle(color: Colors.white, fontSize: 14)),
               const SizedBox(height: 12),
               SizedBox(
                 width: 200,
                 child: LinearProgressIndicator(
                   value: _downloadProgress,
-                  backgroundColor: Colors.white.withOpacity(0.2),
+                  backgroundColor: const Color.fromRGBO(255, 255, 255, 0.2),
                   valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
                 ),
               ),
               const SizedBox(height: 8),
               Text(
                 '${(_downloadProgress * 100).toInt()}%',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.7),
-                  fontSize: 12,
-                ),
+                style: const TextStyle(
+                    color: Color.fromRGBO(255, 255, 255, 0.7), fontSize: 12),
               ),
             ],
           ),

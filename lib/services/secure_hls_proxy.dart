@@ -145,30 +145,44 @@ class ProxyStreamStats {
       : DateTime.now().difference(_startTime!);
 }
 
+/// 高性能段落缓存 - 支持 LRU 淘汰和快速查找
 class _SegmentCache {
   final Map<int, Uint8List> _cache = {};
-  static const int _maxSize = 30;
-  int _oldestIndex = 0;
+  final List<int> _accessOrder = [];
+  static const int _maxSize = 100; // 增大缓存到 100 个段落
 
-  Uint8List? get(int index) => _cache[index];
+  Uint8List? get(int index) {
+    if (_cache.containsKey(index)) {
+      // 更新访问顺序 (LRU)
+      _accessOrder.remove(index);
+      _accessOrder.add(index);
+      return _cache[index];
+    }
+    return null;
+  }
 
   void put(int index, Uint8List data) {
+    if (_cache.containsKey(index)) {
+      _accessOrder.remove(index);
+    }
     _cache[index] = data;
-    while (_cache.length > _maxSize) {
-      _cache.remove(_oldestIndex);
-      _oldestIndex++;
+    _accessOrder.add(index);
+
+    // LRU 淘汰
+    while (_cache.length > _maxSize && _accessOrder.isNotEmpty) {
+      final oldest = _accessOrder.removeAt(0);
+      _cache.remove(oldest);
     }
   }
 
   bool contains(int index) => _cache.containsKey(index);
-  void updateOldest(int currentIndex) {
-    _oldestIndex = (currentIndex - 2).clamp(0, currentIndex);
-  }
 
   void clear() {
     _cache.clear();
-    _oldestIndex = 0;
+    _accessOrder.clear();
   }
+
+  int get size => _cache.length;
 }
 
 class SecureHlsProxyServer {
@@ -184,6 +198,7 @@ class SecureHlsProxyServer {
   final _SegmentCache _cache = _SegmentCache();
   final Map<int, Completer<Uint8List>> _pendingRequests = {};
   final Set<int> _prefetchQueue = {};
+  final Set<int> _activePrefetches = {};
 
   late final HlsEncryptor _encryptor;
   bool _initialized = false;
@@ -195,7 +210,12 @@ class SecureHlsProxyServer {
   final ProxyStreamStats stats = ProxyStreamStats();
   HttpClient? _httpClient;
 
-  static const int _prefetchAhead = 5;
+  // 优化参数
+  static const int _prefetchAhead = 10; // 预取前方 10 个段落
+  static const int _prefetchBehind = 3; // 预取后方 3 个段落（用于回退）
+  static const int _maxConcurrentPrefetch = 4; // 最大并行预取数
+  static const Duration _requestTimeout = Duration(seconds: 60);
+
   bool _isPrefetching = false;
 
   SecureHlsProxyServer({
@@ -214,8 +234,9 @@ class SecureHlsProxyServer {
     stats.reset();
     _cache.clear();
     _httpClient = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 30)
-      ..idleTimeout = const Duration(seconds: 60)
+      ..connectionTimeout = const Duration(seconds: 15)
+      ..idleTimeout = const Duration(seconds: 120)
+      ..maxConnectionsPerHost = 8 // 增加并发连接数
       ..badCertificateCallback = (_, __, ___) => true;
   }
 
@@ -236,6 +257,7 @@ class SecureHlsProxyServer {
     }
     _pendingRequests.clear();
     _prefetchQueue.clear();
+    _activePrefetches.clear();
     _cache.clear();
     await _server?.close(force: true);
     _httpClient?.close(force: true);
@@ -351,9 +373,9 @@ class SecureHlsProxyServer {
     }
 
     _lastRequestedSegment = index;
-    _cache.updateOldest(index);
 
     try {
+      // 1. 检查缓存
       final cached = _cache.get(index);
       if (cached != null) {
         stats.recordCacheHit();
@@ -362,11 +384,11 @@ class SecureHlsProxyServer {
         return;
       }
 
+      // 2. 检查是否有正在进行的请求
       if (_pendingRequests.containsKey(index)) {
         try {
-          final data = await _pendingRequests[index]!
-              .future
-              .timeout(const Duration(seconds: 120));
+          final data =
+              await _pendingRequests[index]!.future.timeout(_requestTimeout);
           await _serveSegment(request, data);
         } catch (_) {
           stats.recordFailure();
@@ -376,6 +398,7 @@ class SecureHlsProxyServer {
         return;
       }
 
+      // 3. 发起新请求
       final completer = Completer<Uint8List>();
       _pendingRequests[index] = completer;
 
@@ -422,8 +445,7 @@ class SecureHlsProxyServer {
         }
         req.write('{}');
 
-        final response =
-            await req.close().timeout(const Duration(seconds: 120));
+        final response = await req.close().timeout(_requestTimeout);
 
         if (response.statusCode == 200) {
           final encrypted =
@@ -445,7 +467,7 @@ class SecureHlsProxyServer {
       } catch (e) {
         lastError = e is Exception ? e : Exception('Unknown error');
         if (attempt < maxRetries) {
-          await Future.delayed(Duration(milliseconds: 300 * attempt));
+          await Future.delayed(Duration(milliseconds: 200 * attempt));
         }
       }
     }
@@ -462,15 +484,50 @@ class SecureHlsProxyServer {
     await request.response.close();
   }
 
-  void _startPrefetch(int currentIndex) {
-    if (_isPrefetching || _stopped) return;
+  /// 预取指定位置周围的段落（用于 seek 操作）
+  void prefetchAroundSegment(int targetSegment) {
+    if (_stopped || _totalSegments == null) return;
 
+    // 清空当前预取队列，优先预取目标位置
+    _prefetchQueue.clear();
+
+    // 添加目标段落及其周围的段落
+    for (int i = -_prefetchBehind; i <= _prefetchAhead; i++) {
+      final index = targetSegment + i;
+      if (index >= 0 && index < _totalSegments!) {
+        if (!_cache.contains(index) &&
+            !_pendingRequests.containsKey(index) &&
+            !_activePrefetches.contains(index)) {
+          _prefetchQueue.add(index);
+        }
+      }
+    }
+
+    _processPrefetchQueue();
+  }
+
+  void _startPrefetch(int currentIndex) {
+    if (_stopped || _totalSegments == null) return;
+
+    // 预取前方段落
     for (int i = 1; i <= _prefetchAhead; i++) {
       final nextIndex = currentIndex + i;
-      if (_totalSegments != null && nextIndex >= _totalSegments!) break;
+      if (nextIndex >= _totalSegments!) break;
       if (!_cache.contains(nextIndex) &&
-          !_pendingRequests.containsKey(nextIndex)) {
+          !_pendingRequests.containsKey(nextIndex) &&
+          !_activePrefetches.contains(nextIndex)) {
         _prefetchQueue.add(nextIndex);
+      }
+    }
+
+    // 预取后方段落（用于回退）
+    for (int i = 1; i <= _prefetchBehind; i++) {
+      final prevIndex = currentIndex - i;
+      if (prevIndex < 0) break;
+      if (!_cache.contains(prevIndex) &&
+          !_pendingRequests.containsKey(prevIndex) &&
+          !_activePrefetches.contains(prevIndex)) {
+        _prefetchQueue.add(prevIndex);
       }
     }
 
@@ -482,24 +539,56 @@ class SecureHlsProxyServer {
     _isPrefetching = true;
 
     try {
+      // 并行预取多个段落
       while (_prefetchQueue.isNotEmpty && !_stopped) {
-        final index = _prefetchQueue.first;
-        _prefetchQueue.remove(index);
+        // 获取要预取的段落（最多 _maxConcurrentPrefetch 个）
+        final toFetch = <int>[];
+        while (toFetch.length < _maxConcurrentPrefetch &&
+            _prefetchQueue.isNotEmpty) {
+          final index = _prefetchQueue.first;
+          _prefetchQueue.remove(index);
 
-        if (_cache.contains(index) || _pendingRequests.containsKey(index)) {
-          continue;
+          if (_cache.contains(index) ||
+              _pendingRequests.containsKey(index) ||
+              _activePrefetches.contains(index)) {
+            continue;
+          }
+
+          // 跳过距离当前播放位置太远的段落
+          if (_lastRequestedSegment >= 0) {
+            final distance = (index - _lastRequestedSegment).abs();
+            if (distance > _prefetchAhead + 5) continue;
+          }
+
+          toFetch.add(index);
         }
-        if (index < _lastRequestedSegment - 1) continue;
 
-        try {
-          final data = await _fetchSegment('segment_$index.ts');
-          _cache.put(index, data);
-        } catch (_) {}
+        if (toFetch.isEmpty) break;
 
-        await Future.delayed(const Duration(milliseconds: 50));
+        // 并行获取
+        _activePrefetches.addAll(toFetch);
+        await Future.wait(
+          toFetch.map((index) => _prefetchSingleSegment(index)),
+          eagerError: false,
+        );
+        _activePrefetches.removeAll(toFetch);
+
+        // 短暂延迟，避免过度占用网络
+        await Future.delayed(const Duration(milliseconds: 20));
       }
     } finally {
       _isPrefetching = false;
+    }
+  }
+
+  Future<void> _prefetchSingleSegment(int index) async {
+    if (_stopped || _cache.contains(index)) return;
+
+    try {
+      final data = await _fetchSegment('segment_$index.ts');
+      _cache.put(index, data);
+    } catch (_) {
+      // 预取失败不影响播放
     }
   }
 

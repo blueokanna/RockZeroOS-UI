@@ -6,9 +6,11 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../services/audio_player_service.dart';
 import '../services/device_discovery_service.dart';
 import '../services/wallpaper_service.dart';
 import '../theme/app_theme.dart';
+import 'mini_audio_player.dart';
 
 class BottomNavVisibleNotifier extends Notifier<bool> {
   @override
@@ -140,6 +142,9 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
 
     Widget? bottomNav;
     if (!isMediumScreen && !isWideScreen) {
+      final audioState = ref.watch(audioPlayerServiceProvider);
+      final hasMiniPlayer = audioState.hasAudio;
+
       bottomNav = AnimatedSlide(
         duration: M3Durations.medium2,
         curve: M3Curves.emphasized,
@@ -149,7 +154,13 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
           curve: M3Curves.emphasized,
           opacity: bottomNavVisible ? 1.0 : 0.0,
           child: bottomNavVisible
-              ? _buildBottomNav(hasWallpaper, colorScheme)
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (hasMiniPlayer) const MiniAudioPlayer(),
+                    _buildBottomNav(hasWallpaper, colorScheme),
+                  ],
+                )
               : const SizedBox.shrink(),
         ),
       );

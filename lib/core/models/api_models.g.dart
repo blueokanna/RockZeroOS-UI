@@ -502,21 +502,31 @@ Map<String, dynamic> _$UsbDeviceToJson(UsbDevice instance) => <String, dynamic>{
 AppStoreItem _$AppStoreItemFromJson(Map<String, dynamic> json) => AppStoreItem(
       id: json['id'] as String,
       name: json['name'] as String,
-      displayName: json['display_name'] as String,
-      description: json['description'] as String,
-      icon: json['icon'] as String,
-      category: json['category'] as String,
-      dockerImage: json['docker_image'] as String,
-      recommendedTag: json['recommended_tag'] as String,
-      defaultPorts: (json['default_ports'] as List<dynamic>)
-          .map((e) => PortMapping.fromJson(e as Map<String, dynamic>))
+      displayName: json['display_name'] as String? ?? '',
+      description: json['description'] as String? ?? '',
+      icon: json['icon'] as String? ?? '',
+      category: json['category'] as String? ?? 'Other',
+      dockerImage: json['docker_image'] as String? ?? '',
+      recommendedTag: json['recommended_tag'] as String? ?? 'latest',
+      defaultPorts: (json['default_ports'] as List<dynamic>?)
+              ?.map((e) => PortMapping.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [],
+      defaultVolumes: (json['default_volumes'] as List<dynamic>?)
+              ?.map((e) => VolumeMapping.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [],
+      requiredEnv: (json['required_env'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          [],
+      source: json['source'] as String?,
+      version: json['version'] as String?,
+      author: json['author'] as String?,
+      architectures: (json['architectures'] as List<dynamic>?)
+          ?.map((e) => e as String)
           .toList(),
-      defaultVolumes: (json['default_volumes'] as List<dynamic>)
-          .map((e) => VolumeMapping.fromJson(e as Map<String, dynamic>))
-          .toList(),
-      requiredEnv: (json['required_env'] as List<dynamic>)
-          .map((e) => e as String)
-          .toList(),
+      installed: json['installed'] as bool?,
     );
 
 Map<String, dynamic> _$AppStoreItemToJson(AppStoreItem instance) =>
@@ -533,6 +543,12 @@ Map<String, dynamic> _$AppStoreItemToJson(AppStoreItem instance) =>
       'default_volumes':
           instance.defaultVolumes.map((e) => e.toJson()).toList(),
       'required_env': instance.requiredEnv,
+      if (instance.source != null) 'source': instance.source,
+      if (instance.version != null) 'version': instance.version,
+      if (instance.author != null) 'author': instance.author,
+      if (instance.architectures != null)
+        'architectures': instance.architectures,
+      if (instance.installed != null) 'installed': instance.installed,
     };
 
 DockerApp _$DockerAppFromJson(Map<String, dynamic> json) => DockerApp(
@@ -594,7 +610,7 @@ VolumeMapping _$VolumeMappingFromJson(Map<String, dynamic> json) =>
     VolumeMapping(
       containerPath: json['container_path'] as String,
       hostPath: json['host_path'] as String,
-      mode: json['mode'] as String,
+      mode: json['mode'] as String? ?? 'rw',
     );
 
 Map<String, dynamic> _$VolumeMappingToJson(VolumeMapping instance) =>
