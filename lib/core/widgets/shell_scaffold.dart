@@ -106,6 +106,8 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
     final wallpaperPath = ref.watch(customWallpaperPathProvider);
     final colorScheme = Theme.of(context).colorScheme;
 
+    final blurAmount = ref.watch(wallpaperBlurAmountProvider);
+
     final hasWallpaper = backgroundMode == BackgroundMode.customWallpaper &&
         wallpaperPath != null &&
         wallpaperPath.isNotEmpty;
@@ -182,9 +184,10 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
           // Glass overlay with blur
           ClipRect(
             child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+              filter: ImageFilter.blur(sigmaX: blurAmount, sigmaY: blurAmount),
               child: Container(
-                color: colorScheme.surface.withValues(alpha: 0.7),
+                color: colorScheme.surface.withValues(
+                    alpha: (0.3 + (blurAmount / 50.0) * 0.5).clamp(0.3, 0.8)),
               ),
             ),
           ),

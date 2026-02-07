@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -443,19 +444,131 @@ class SettingsPage extends ConsumerWidget {
                       ],
                     ),
 
-                    // Wallpaper preview
+                    // Wallpaper preview with live blur
                     if (customWallpaperPath != null) ...[
                       const SizedBox(height: 16),
-                      Container(
-                        height: 150,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          image: DecorationImage(
-                            image: FileImage(File(customWallpaperPath)),
-                            fit: BoxFit.cover,
-                          ),
-                        ),
+                      Builder(
+                        builder: (context) {
+                          final blurAmount =
+                              ref.watch(wallpaperBlurAmountProvider);
+                          return ClipRRect(
+                            borderRadius: BorderRadius.circular(16),
+                            child: SizedBox(
+                              height: 150,
+                              width: double.infinity,
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  Image.file(
+                                    File(customWallpaperPath),
+                                    fit: BoxFit.cover,
+                                  ),
+                                  BackdropFilter(
+                                    filter: ImageFilter.blur(
+                                      sigmaX: blurAmount,
+                                      sigmaY: blurAmount,
+                                    ),
+                                    child: Container(
+                                      color: colorScheme.surface.withValues(
+                                        alpha: (0.3 + (blurAmount / 50.0) * 0.5)
+                                            .clamp(0.3, 0.8),
+                                      ),
+                                    ),
+                                  ),
+                                  Center(
+                                    child: Text(
+                                      'Preview',
+                                      style: textTheme.titleMedium?.copyWith(
+                                        color: colorScheme.onSurface,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
                       ),
+
+                      // Blur amount slider
+                      const SizedBox(height: 20),
+                      Builder(
+                        builder: (context) {
+                          final blurAmount =
+                              ref.watch(wallpaperBlurAmountProvider);
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.blur_on_rounded,
+                                    size: 20,
+                                    color: colorScheme.primary,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Blur Intensity',
+                                    style: textTheme.titleSmall?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: colorScheme.primaryContainer,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      blurAmount.round().toString(),
+                                      style: textTheme.labelMedium?.copyWith(
+                                        color: colorScheme.onPrimaryContainer,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.blur_off_rounded,
+                                    size: 16,
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                                  Expanded(
+                                    child: Slider(
+                                      value: blurAmount,
+                                      min: 0,
+                                      max: 50,
+                                      divisions: 50,
+                                      label: blurAmount.round().toString(),
+                                      onChanged: (value) {
+                                        ref
+                                            .read(wallpaperBlurAmountProvider
+                                                .notifier)
+                                            .setBlurAmount(value);
+                                      },
+                                    ),
+                                  ),
+                                  Icon(
+                                    Icons.blur_on_rounded,
+                                    size: 16,
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                                ],
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+
                       if (wallpaperColor != null) ...[
                         const SizedBox(height: 12),
                         Row(

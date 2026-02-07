@@ -115,8 +115,16 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 允许后台继续播放音频（不暂停）
+    // 视频在后台时只需要音频继续播放，画面会自动暂停渲染
     if (state == AppLifecycleState.paused) {
-      _player?.pause();
+      // 不暂停播放器，让音频在后台继续
+      debugPrint('[VideoPlayer] App moved to background, audio continues');
+    } else if (state == AppLifecycleState.resumed) {
+      // 恢复时刷新UI
+      if (mounted && !_isDisposed) {
+        setState(() {});
+      }
     }
   }
 
@@ -183,16 +191,83 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
 
       _updateLoading('正在初始化播放器...', 0.6);
 
+      // Configure player with platform-specific hardware decoding
+      final Map<String, String> mpvOptions = {};
+      if (Platform.isAndroid) {
+        mpvOptions['hwdec'] = 'mediacodec';
+        mpvOptions['hwdec-codecs'] = 'h264,hevc,vp8,vp9,av1';
+        mpvOptions['demuxer-max-bytes'] = '150MiB'; // 4K segments are large
+        mpvOptions['demuxer-max-back-bytes'] = '64MiB';
+        mpvOptions['demuxer-readahead-secs'] = '120'; // 2分钟预读
+        mpvOptions['cache'] = 'yes';
+        mpvOptions['cache-secs'] = '120';
+        mpvOptions['cache-pause-initial'] = 'yes';
+        mpvOptions['cache-pause-wait'] = '3'; // 缓冲不足时暂停等待3秒
+        mpvOptions['hr-seek'] = 'yes';
+        mpvOptions['hr-seek-framedrop'] = 'yes';
+        mpvOptions['hr-seek-demuxer-offset'] = '0';
+        mpvOptions['demuxer-seekable-cache'] = 'yes';
+        mpvOptions['force-seekable'] = 'yes';
+        mpvOptions['network-timeout'] = '60';
+        mpvOptions['stream-buffer-size'] = '4MiB'; // 增大网络流缓冲
+        mpvOptions['video-sync'] = 'display-resample'; // 更平滑的帧同步
+        mpvOptions['interpolation'] = 'yes';
+      } else if (Platform.isIOS) {
+        mpvOptions['hwdec'] = 'videotoolbox';
+        mpvOptions['demuxer-max-bytes'] = '150MiB';
+        mpvOptions['demuxer-max-back-bytes'] = '64MiB';
+        mpvOptions['demuxer-readahead-secs'] = '120';
+        mpvOptions['cache'] = 'yes';
+        mpvOptions['cache-secs'] = '120';
+        mpvOptions['cache-pause-initial'] = 'yes';
+        mpvOptions['cache-pause-wait'] = '3';
+        mpvOptions['hr-seek'] = 'yes';
+        mpvOptions['hr-seek-framedrop'] = 'yes';
+        mpvOptions['hr-seek-demuxer-offset'] = '0';
+        mpvOptions['demuxer-seekable-cache'] = 'yes';
+        mpvOptions['force-seekable'] = 'yes';
+        mpvOptions['network-timeout'] = '60';
+        mpvOptions['stream-buffer-size'] = '4MiB';
+        mpvOptions['video-sync'] = 'display-resample';
+      } else {
+        mpvOptions['hwdec'] = 'auto-safe';
+        mpvOptions['demuxer-max-bytes'] = '256MiB'; // 桌面端更大缓冲
+        mpvOptions['demuxer-max-back-bytes'] = '128MiB';
+        mpvOptions['demuxer-readahead-secs'] = '180';
+        mpvOptions['cache'] = 'yes';
+        mpvOptions['cache-secs'] = '180';
+        mpvOptions['cache-pause-initial'] = 'yes';
+        mpvOptions['cache-pause-wait'] = '3';
+        mpvOptions['hr-seek'] = 'yes';
+        mpvOptions['demuxer-seekable-cache'] = 'yes';
+        mpvOptions['force-seekable'] = 'yes';
+        mpvOptions['network-timeout'] = '60';
+        mpvOptions['stream-buffer-size'] = '8MiB';
+        mpvOptions['video-sync'] = 'display-resample';
+      }
+
       _player = Player(
-        configuration: const PlayerConfiguration(
-          bufferSize: 128 * 1024 * 1024,
+        configuration: PlayerConfiguration(
+          bufferSize: 64 * 1024 * 1024, // 64MB — 4K segments are much larger
+          logLevel: MPVLogLevel.warn,
+          protocolWhitelist: const ['http', 'https', 'tcp', 'tls', 'file'],
         ),
       );
 
+      // Apply mpv options via the native player handle
+      final nativePlayer = _player!.platform;
+      if (nativePlayer is NativePlayer) {
+        for (final entry in mpvOptions.entries) {
+          await nativePlayer.setProperty(entry.key, entry.value);
+        }
+      }
+
       _videoController = VideoController(
         _player!,
-        configuration: const VideoControllerConfiguration(
+        configuration: VideoControllerConfiguration(
           enableHardwareAcceleration: true,
+          // Use hardware rendering on Android for zero-copy display
+          androidAttachSurfaceAfterVideoParameters: false,
         ),
       );
 
@@ -309,23 +384,27 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
     _position = clampedPosition;
     setState(() {});
 
+    // 预取目标段落周围的数据，确保随点随播
     final targetSegment = (clampedPosition.inSeconds / 6).floor();
     _proxyServer?.prefetchAroundSegment(targetSegment);
 
     _player!.seek(clampedPosition).then((_) {
-      Future.delayed(const Duration(milliseconds: 500), () {
-        _isSeeking = false;
+      // 短暂延迟后释放 seek 锁，让 position stream 接管
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted && !_isDisposed) {
+          _isSeeking = false;
+        }
       });
     });
   }
 
   void _seekForward() {
-    final newPos = _position + const Duration(seconds: 10);
+    final newPos = _position + const Duration(seconds: 15);
     _seekTo(newPos < _duration ? newPos : _duration);
   }
 
   void _seekBackward() {
-    final newPos = _position - const Duration(seconds: 10);
+    final newPos = _position - const Duration(seconds: 15);
     _seekTo(newPos > Duration.zero ? newPos : Duration.zero);
   }
 
@@ -603,6 +682,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
                   controller: _videoController!,
                   fit: BoxFit.contain,
                   fill: Colors.black,
+                  controls: NoVideoControls,
                 ),
               if (_isLoading) _buildLoading(),
               if (_error != null) _buildError(),
@@ -702,6 +782,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
         IconButton(
           icon: const Icon(Icons.replay_10, color: Colors.white, size: 40),
           onPressed: _seekBackward,
+          tooltip: '后退15秒',
         ),
         const SizedBox(width: 32),
         Container(
@@ -724,6 +805,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
         IconButton(
           icon: const Icon(Icons.forward_10, color: Colors.white, size: 40),
           onPressed: _seekForward,
+          tooltip: '快进15秒',
         ),
       ],
     );

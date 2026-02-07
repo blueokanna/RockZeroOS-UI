@@ -342,48 +342,93 @@ class AppStorageStatsCard extends ConsumerWidget {
       ),
     );
 
-    if (confirmed == true && context.mounted) {
-      try {
-        final api = ref.read(apiServiceProvider);
-        await api.cleanupHlsCache();
-        ref.invalidate(appStorageStatsProvider);
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('HLS cache cleaned successfully'),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-      } catch (e) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Failed to clean cache: $e'),
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: Theme.of(context).colorScheme.error,
-            ),
-          );
-        }
-      }
-    }
-  }
+    if (confirmed != true || !context.mounted) return;
 
-  Future<void> _clearTempFiles(BuildContext context, WidgetRef ref) async {
+    // Show loading
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Row(
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: Colors.white),
+            ),
+            SizedBox(width: 12),
+            Text('Cleaning HLS cache...'),
+          ],
+        ),
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: 10),
+      ),
+    );
+
     try {
       final api = ref.read(apiServiceProvider);
-      await api.cleanupTempFiles();
+      await api.cleanupHlsCache();
       ref.invalidate(appStorageStatsProvider);
       if (context.mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Temporary files cleared'),
+            content: Text('✓ HLS cache cleaned successfully'),
             behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.green,
           ),
         );
       }
     } catch (e) {
       if (context.mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to clean cache: $e'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _clearTempFiles(BuildContext context, WidgetRef ref) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Row(
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: Colors.white),
+            ),
+            SizedBox(width: 12),
+            Text('Clearing temp files...'),
+          ],
+        ),
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: 10),
+      ),
+    );
+
+    try {
+      final api = ref.read(apiServiceProvider);
+      await api.cleanupTempFiles();
+      ref.invalidate(appStorageStatsProvider);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✓ Temporary files cleared'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to clear temp files: $e'),

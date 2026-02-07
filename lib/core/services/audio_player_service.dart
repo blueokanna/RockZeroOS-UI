@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -69,8 +70,106 @@ class AudioPlayerState {
   bool get hasAudio => currentUrl != null && currentUrl!.isNotEmpty;
 }
 
+/// Background audio handler for system media controls & notification
+class RockZeroAudioHandler extends BaseAudioHandler with SeekHandler {
+  final AudioPlayer _player;
+  final List<StreamSubscription> _subs = [];
+
+  RockZeroAudioHandler(this._player) {
+    // Forward player state to audio_service
+    _subs.add(_player.playbackEventStream.listen((event) {
+      final playing = _player.playing;
+      playbackState.add(playbackState.value.copyWith(
+        controls: [
+          MediaControl.skipToPrevious,
+          if (playing) MediaControl.pause else MediaControl.play,
+          MediaControl.stop,
+          MediaControl.skipToNext,
+        ],
+        systemActions: const {
+          MediaAction.seek,
+          MediaAction.seekForward,
+          MediaAction.seekBackward,
+        },
+        androidCompactActionIndices: const [0, 1, 3],
+        processingState: _mapProcessingState(_player.processingState),
+        playing: playing,
+        updatePosition: _player.position,
+        bufferedPosition: _player.bufferedPosition,
+        speed: _player.speed,
+      ));
+    }));
+
+    _subs.add(_player.durationStream.listen((duration) {
+      final item = mediaItem.value;
+      if (item != null && duration != null) {
+        mediaItem.add(item.copyWith(duration: duration));
+      }
+    }));
+  }
+
+  AudioProcessingState _mapProcessingState(ProcessingState state) {
+    switch (state) {
+      case ProcessingState.idle:
+        return AudioProcessingState.idle;
+      case ProcessingState.loading:
+        return AudioProcessingState.loading;
+      case ProcessingState.buffering:
+        return AudioProcessingState.buffering;
+      case ProcessingState.ready:
+        return AudioProcessingState.ready;
+      case ProcessingState.completed:
+        return AudioProcessingState.completed;
+    }
+  }
+
+  @override
+  Future<void> play() => _player.play();
+
+  @override
+  Future<void> pause() => _player.pause();
+
+  @override
+  Future<void> stop() async {
+    await _player.stop();
+    return super.stop();
+  }
+
+  @override
+  Future<void> seek(Duration position) => _player.seek(position);
+
+  @override
+  Future<void> setSpeed(double speed) => _player.setSpeed(speed);
+
+  Future<void> dispose() async {
+    for (final sub in _subs) {
+      await sub.cancel();
+    }
+    _subs.clear();
+  }
+}
+
+/// Singleton holder for the audio handler
+RockZeroAudioHandler? _globalAudioHandler;
+
+Future<RockZeroAudioHandler> _getOrCreateHandler(AudioPlayer player) async {
+  if (_globalAudioHandler != null) return _globalAudioHandler!;
+  _globalAudioHandler = await AudioService.init(
+    builder: () => RockZeroAudioHandler(player),
+    config: AudioServiceConfig(
+      androidNotificationChannelId: 'com.rockzero.audio',
+      androidNotificationChannelName: 'RockZero Audio',
+      androidNotificationOngoing: true,
+      androidStopForegroundOnPause: false,
+      androidNotificationIcon: 'mipmap/ic_launcher',
+    ),
+  );
+  return _globalAudioHandler!;
+}
+
 class AudioPlayerService extends Notifier<AudioPlayerState> {
   AudioPlayer? _audioPlayer;
+  RockZeroAudioHandler? _audioHandler;
   String? _authToken;
 
   final List<StreamSubscription> _subscriptions = [];
@@ -108,6 +207,9 @@ class AudioPlayerService extends Notifier<AudioPlayerState> {
 
       _audioPlayer = AudioPlayer();
 
+      // Initialize background audio handler
+      _audioHandler = await _getOrCreateHandler(_audioPlayer!);
+
       final headers = <String, String>{};
       if (_authToken != null && _authToken!.isNotEmpty) {
         headers['Authorization'] = 'Bearer $_authToken';
@@ -132,10 +234,7 @@ class AudioPlayerService extends Notifier<AudioPlayerState> {
         final infoUrl = '$baseUrl/api/v1/streaming/info$infoPath';
 
         final response = await http
-            .get(
-              Uri.parse(infoUrl),
-              headers: headers,
-            )
+            .get(Uri.parse(infoUrl), headers: headers)
             .timeout(const Duration(seconds: 10));
 
         if (response.statusCode == 200) {
@@ -154,6 +253,14 @@ class AudioPlayerService extends Notifier<AudioPlayerState> {
       await _audioPlayer!
           .setUrl(streamUrl, headers: headers)
           .timeout(const Duration(seconds: 30));
+
+      // Set media item for notification display
+      _audioHandler?.mediaItem.add(MediaItem(
+        id: streamUrl,
+        title: fileName,
+        artist: 'RockZero',
+        duration: _audioPlayer!.duration ?? Duration.zero,
+      ));
 
       _setupListeners();
 
@@ -193,6 +300,11 @@ class AudioPlayerService extends Notifier<AudioPlayerState> {
     _subscriptions.add(_audioPlayer!.durationStream.listen((duration) {
       if (duration != null) {
         state = state.copyWith(duration: duration);
+        // Update notification duration
+        final item = _audioHandler?.mediaItem.value;
+        if (item != null) {
+          _audioHandler?.mediaItem.add(item.copyWith(duration: duration));
+        }
       }
     }));
 
@@ -275,9 +387,11 @@ class AudioPlayerService extends Notifier<AudioPlayerState> {
 
   Future<void> stop() async {
     _cancelSubscriptions();
+    await _audioHandler?.stop();
     await _audioPlayer?.stop();
     await _audioPlayer?.dispose();
     _audioPlayer = null;
+    // Don't null out _audioHandler - it's a singleton
     state = const AudioPlayerState();
   }
 

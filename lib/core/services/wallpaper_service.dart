@@ -283,6 +283,26 @@ class WallpaperColorNotifier extends Notifier<Color?> {
   }
 }
 
+/// 壁纸模糊程度 Provider (0.0 ~ 50.0)
+final wallpaperBlurAmountProvider =
+    NotifierProvider<WallpaperBlurAmountNotifier, double>(
+  WallpaperBlurAmountNotifier.new,
+);
+
+class WallpaperBlurAmountNotifier extends Notifier<double> {
+  @override
+  double build() {
+    final box = Hive.box('settings');
+    return box.get('wallpaperBlurAmount', defaultValue: 25.0) as double;
+  }
+
+  Future<void> setBlurAmount(double amount) async {
+    state = amount;
+    final box = Hive.box('settings');
+    await box.put('wallpaperBlurAmount', amount);
+  }
+}
+
 /// 混合后的主题色 Provider
 /// 自定义壁纸模式: 70% 手机壁纸色 + 30% 自定义壁纸色
 /// 默认模式: 不混合，返回null让系统使用种子颜色

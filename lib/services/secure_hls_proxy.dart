@@ -2,10 +2,24 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:pointycastle/export.dart';
 import 'package:thirds/blake3.dart' as blake3;
+
+/// Top-level function for isolate-based decryption
+/// Must be top-level or static for compute() to work
+Uint8List _decryptInIsolate(Map<String, Uint8List> params) {
+  final ciphertextWithTag = params['ciphertextWithTag']!;
+  final key = params['key']!;
+  final nonce = params['nonce']!;
+
+  final cipher = GCMBlockCipher(AESEngine());
+  cipher.init(
+      false, AEADParameters(KeyParameter(key), 128, nonce, Uint8List(0)));
+  return cipher.process(ciphertextWithTag);
+}
 
 class AesGcmCrypto {
   static Uint8List decrypt({
@@ -21,6 +35,34 @@ class AesGcmCrypto {
     cipher.init(
         false, AEADParameters(KeyParameter(key), 128, nonce, Uint8List(0)));
     return cipher.process(ciphertextWithTag);
+  }
+
+  /// Decrypt in a background isolate to avoid blocking the UI thread
+  static Future<Uint8List> decryptAsync({
+    required Uint8List ciphertextWithTag,
+    required Uint8List key,
+    required Uint8List nonce,
+  }) {
+    if (key.length != 32) throw ArgumentError('Invalid key length');
+    if (nonce.length != 12) throw ArgumentError('Invalid nonce length');
+    if (ciphertextWithTag.length < 16) throw ArgumentError('Data too short');
+
+    // For 4K segments (typically > 500KB), always use isolate
+    // Lowered threshold from 64KB to 32KB for smoother playback
+    if (ciphertextWithTag.length > 32768) {
+      return compute(_decryptInIsolate, {
+        'ciphertextWithTag': ciphertextWithTag,
+        'key': key,
+        'nonce': nonce,
+      });
+    }
+
+    // Small data: decrypt inline (faster than isolate overhead)
+    return Future.value(decrypt(
+      ciphertextWithTag: ciphertextWithTag,
+      key: key,
+      nonce: nonce,
+    ));
   }
 }
 
@@ -94,6 +136,17 @@ class HlsEncryptor {
         key: _encryptionKey,
         nonce: nonce);
   }
+
+  /// Async decryption — runs in background isolate for large segments
+  Future<Uint8List> decryptSegmentAsync(Uint8List encryptedData) {
+    if (encryptedData.length < 29) throw ArgumentError('Data too short');
+    final nonce = encryptedData.sublist(0, 12);
+    final ciphertextWithTag = encryptedData.sublist(12);
+    return AesGcmCrypto.decryptAsync(
+        ciphertextWithTag: ciphertextWithTag,
+        key: _encryptionKey,
+        nonce: nonce);
+  }
 }
 
 class ProxyStreamStats {
@@ -149,7 +202,7 @@ class ProxyStreamStats {
 class _SegmentCache {
   final Map<int, Uint8List> _cache = {};
   final List<int> _accessOrder = [];
-  static const int _maxSize = 100; // 增大缓存到 100 个段落
+  static const int _maxSize = 300; // 缓存 300 个段落（约30分钟4K视频）
 
   Uint8List? get(int index) {
     if (_cache.containsKey(index)) {
@@ -210,11 +263,11 @@ class SecureHlsProxyServer {
   final ProxyStreamStats stats = ProxyStreamStats();
   HttpClient? _httpClient;
 
-  // 优化参数
-  static const int _prefetchAhead = 10; // 预取前方 10 个段落
-  static const int _prefetchBehind = 3; // 预取后方 3 个段落（用于回退）
-  static const int _maxConcurrentPrefetch = 4; // 最大并行预取数
-  static const Duration _requestTimeout = Duration(seconds: 60);
+  // 优化参数 - 针对4K视频大幅提升
+  static const int _prefetchAhead = 30; // 预取前方 30 个段落（180秒，4K需要更多缓冲）
+  static const int _prefetchBehind = 5; // 预取后方 5 个段落（用于回退）
+  static const int _maxConcurrentPrefetch = 12; // 最大并行预取数（吃满带宽）
+  static const Duration _requestTimeout = Duration(seconds: 90);
 
   bool _isPrefetching = false;
 
@@ -235,8 +288,9 @@ class SecureHlsProxyServer {
     _cache.clear();
     _httpClient = HttpClient()
       ..connectionTimeout = const Duration(seconds: 15)
-      ..idleTimeout = const Duration(seconds: 120)
-      ..maxConnectionsPerHost = 8 // 增加并发连接数
+      ..idleTimeout = const Duration(seconds: 300)
+      ..maxConnectionsPerHost = 16 // 大幅增加并发连接数以吃满带宽
+      ..autoUncompress = true
       ..badCertificateCallback = (_, __, ___) => true;
   }
 
@@ -440,6 +494,8 @@ class SecureHlsProxyServer {
         final client = _httpClient ?? HttpClient();
         final req = await client.postUrl(url);
         req.headers.contentType = ContentType.json;
+        req.headers.add('Connection', 'keep-alive');
+        req.headers.add('Accept-Encoding', 'identity'); // 已加密数据不需要压缩
         if (jwtToken.isNotEmpty) {
           req.headers.add('Authorization', 'Bearer $jwtToken');
         }
@@ -448,15 +504,20 @@ class SecureHlsProxyServer {
         final response = await req.close().timeout(_requestTimeout);
 
         if (response.statusCode == 200) {
-          final encrypted =
-              await response.fold<List<int>>([], (p, c) => p..addAll(c));
+          // 使用 BytesBuilder 减少内存拷贝
+          final builder = BytesBuilder(copy: false);
+          await for (final chunk in response) {
+            builder.add(chunk);
+          }
+          final encrypted = builder.takeBytes();
+
           if (encrypted.length < 100) throw Exception('Invalid segment');
 
           stats.recordNetworkReceive(encrypted.length);
           stats.recordNetworkLoad();
 
-          final decrypted =
-              _encryptor.decryptSegment(Uint8List.fromList(encrypted));
+          final decrypted = await _encryptor
+              .decryptSegmentAsync(Uint8List.fromList(encrypted));
           stats.recordDecryption(decrypted.length);
           onSegmentLoaded?.call(decrypted.length, true);
 
@@ -467,7 +528,7 @@ class SecureHlsProxyServer {
       } catch (e) {
         lastError = e is Exception ? e : Exception('Unknown error');
         if (attempt < maxRetries) {
-          await Future.delayed(Duration(milliseconds: 200 * attempt));
+          await Future.delayed(Duration(milliseconds: 100 * attempt));
         }
       }
     }
@@ -479,27 +540,32 @@ class SecureHlsProxyServer {
     request.response.statusCode = HttpStatus.ok;
     request.response.headers.contentType = ContentType('video', 'mp2t');
     request.response.headers.contentLength = data.length;
-    request.response.headers.add('Cache-Control', 'no-cache');
+    request.response.headers.add('Cache-Control', 'private, max-age=300');
+    request.response.headers.add('Connection', 'keep-alive');
+    request.response.headers.add('X-Segment-Size', data.length.toString());
     request.response.add(data);
     await request.response.close();
   }
 
-  /// 预取指定位置周围的段落（用于 seek 操作）
   void prefetchAroundSegment(int targetSegment) {
     if (_stopped || _totalSegments == null) return;
 
-    // 清空当前预取队列，优先预取目标位置
     _prefetchQueue.clear();
+    _isPrefetching = false;
 
-    // 添加目标段落及其周围的段落
-    for (int i = -_prefetchBehind; i <= _prefetchAhead; i++) {
-      final index = targetSegment + i;
-      if (index >= 0 && index < _totalSegments!) {
-        if (!_cache.contains(index) &&
-            !_pendingRequests.containsKey(index) &&
-            !_activePrefetches.contains(index)) {
-          _prefetchQueue.add(index);
-        }
+    final indices = <int>[targetSegment];
+    for (int i = 1; i <= _prefetchAhead; i++) {
+      if (targetSegment + i < _totalSegments!) indices.add(targetSegment + i);
+    }
+    for (int i = 1; i <= _prefetchBehind; i++) {
+      if (targetSegment - i >= 0) indices.add(targetSegment - i);
+    }
+
+    for (final index in indices) {
+      if (!_cache.contains(index) &&
+          !_pendingRequests.containsKey(index) &&
+          !_activePrefetches.contains(index)) {
+        _prefetchQueue.add(index);
       }
     }
 
@@ -520,7 +586,6 @@ class SecureHlsProxyServer {
       }
     }
 
-    // 预取后方段落（用于回退）
     for (int i = 1; i <= _prefetchBehind; i++) {
       final prevIndex = currentIndex - i;
       if (prevIndex < 0) break;
@@ -539,9 +604,7 @@ class SecureHlsProxyServer {
     _isPrefetching = true;
 
     try {
-      // 并行预取多个段落
       while (_prefetchQueue.isNotEmpty && !_stopped) {
-        // 获取要预取的段落（最多 _maxConcurrentPrefetch 个）
         final toFetch = <int>[];
         while (toFetch.length < _maxConcurrentPrefetch &&
             _prefetchQueue.isNotEmpty) {
@@ -554,10 +617,9 @@ class SecureHlsProxyServer {
             continue;
           }
 
-          // 跳过距离当前播放位置太远的段落
           if (_lastRequestedSegment >= 0) {
             final distance = (index - _lastRequestedSegment).abs();
-            if (distance > _prefetchAhead + 5) continue;
+            if (distance > _prefetchAhead + 10) continue;
           }
 
           toFetch.add(index);
@@ -565,7 +627,6 @@ class SecureHlsProxyServer {
 
         if (toFetch.isEmpty) break;
 
-        // 并行获取
         _activePrefetches.addAll(toFetch);
         await Future.wait(
           toFetch.map((index) => _prefetchSingleSegment(index)),
@@ -573,8 +634,8 @@ class SecureHlsProxyServer {
         );
         _activePrefetches.removeAll(toFetch);
 
-        // 短暂延迟，避免过度占用网络
-        await Future.delayed(const Duration(milliseconds: 20));
+        // Minimal delay to avoid starving the event loop, but keep throughput high
+        await Future.delayed(const Duration(milliseconds: 2));
       }
     } finally {
       _isPrefetching = false;
