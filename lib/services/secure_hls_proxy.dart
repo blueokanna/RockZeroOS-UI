@@ -426,6 +426,31 @@ class SecureHlsProxyServer {
       return;
     }
 
+    // 检测 seek 操作：如果请求的段落与上一个段落不连续，说明用户进行了 seek
+    final isSeek =
+        _lastRequestedSegment >= 0 && (index - _lastRequestedSegment).abs() > 2;
+
+    if (isSeek) {
+      debugPrint('[HLS Proxy] Seek detected: $_lastRequestedSegment -> $index');
+      // 1. 清空所有预取队列
+      _prefetchQueue.clear();
+      _isPrefetching = false;
+
+      // 2. 取消远离新位置的 pending 请求
+      final keysToCancel = _pendingRequests.keys
+          .where((k) => (k - index).abs() > _prefetchAhead)
+          .toList();
+      for (final key in keysToCancel) {
+        final c = _pendingRequests.remove(key);
+        if (c != null && !c.isCompleted) {
+          c.completeError(Exception('Cancelled due to seek'));
+        }
+      }
+
+      // 3. 通知服务端预缓冲 seek 目标附近的段落（异步，不阻塞）
+      _prebufferOnServer(index);
+    }
+
     _lastRequestedSegment = index;
 
     try {
@@ -459,14 +484,31 @@ class SecureHlsProxyServer {
       try {
         final data = await _fetchSegment(segmentName);
         _cache.put(index, data);
-        completer.complete(data);
+        if (!completer.isCompleted) completer.complete(data);
         await _serveSegment(request, data);
         _startPrefetch(index);
-      } catch (_) {
+      } catch (e) {
         stats.recordFailure();
         if (!completer.isCompleted) {
-          completer.completeError(Exception('Fetch failed'));
+          completer.completeError(Exception('Fetch failed: $e'));
         }
+
+        // seek 场景下，如果第一次失败，自动重试一次（服务端可能还在转码）
+        if (isSeek) {
+          debugPrint(
+              '[HLS Proxy] Seek segment $index failed, retrying after 1s...');
+          await Future.delayed(const Duration(seconds: 1));
+          try {
+            final retryData = await _fetchSegment(segmentName);
+            _cache.put(index, retryData);
+            await _serveSegment(request, retryData);
+            _startPrefetch(index);
+            return;
+          } catch (_) {
+            // 重试也失败了
+          }
+        }
+
         request.response.statusCode = HttpStatus.serviceUnavailable;
         await request.response.close();
       } finally {
@@ -476,6 +518,32 @@ class SecureHlsProxyServer {
       request.response.statusCode = HttpStatus.internalServerError;
       await request.response.close();
     }
+  }
+
+  /// 通知服务端预缓冲 seek 目标附近的段落（后台执行，不阻塞播放）
+  void _prebufferOnServer(int targetIndex) {
+    if (_stopped) return;
+    // 异步通知服务端预转码，不等待结果
+    Future(() async {
+      try {
+        final segmentName = 'segment_$targetIndex.ts';
+        final url =
+            '$baseUrl/api/v1/secure-hls/$sessionId/prebuffer/$segmentName';
+        final client = _httpClient ?? HttpClient();
+        final req = await client.postUrl(Uri.parse(url));
+        if (jwtToken.isNotEmpty) {
+          req.headers.add('Authorization', 'Bearer $jwtToken');
+        }
+        req.headers.contentType = ContentType.json;
+        req.write('{}');
+        final response = await req.close().timeout(const Duration(seconds: 5));
+        await response.drain();
+        debugPrint(
+            '[HLS Proxy] Prebuffer request sent for segment $targetIndex');
+      } catch (e) {
+        debugPrint('[HLS Proxy] Prebuffer request failed: $e');
+      }
+    });
   }
 
   Future<Uint8List> _fetchSegment(String segmentName) async {
@@ -550,9 +618,11 @@ class SecureHlsProxyServer {
   void prefetchAroundSegment(int targetSegment) {
     if (_stopped || _totalSegments == null) return;
 
+    // 清除旧的预取队列，优先获取新目标周围的段落
     _prefetchQueue.clear();
     _isPrefetching = false;
 
+    // 优先级：目标段落 > 目标前后 > 更远的段落
     final indices = <int>[targetSegment];
     for (int i = 1; i <= _prefetchAhead; i++) {
       if (targetSegment + i < _totalSegments!) indices.add(targetSegment + i);
@@ -570,6 +640,38 @@ class SecureHlsProxyServer {
     }
 
     _processPrefetchQueue();
+  }
+
+  /// 检查指定段落是否已在缓存中
+  bool isSegmentCached(int index) {
+    return _cache.contains(index) ||
+        (_pendingRequests.containsKey(index) &&
+            _pendingRequests[index]!.isCompleted);
+  }
+
+  /// 等待指定段落就绪（已缓存或正在获取中的请求完成）
+  Future<bool> waitForSegment(int index,
+      {Duration timeout = const Duration(seconds: 10)}) async {
+    if (_cache.contains(index)) return true;
+
+    // 如果有正在进行的请求，等待它完成
+    if (_pendingRequests.containsKey(index)) {
+      try {
+        await _pendingRequests[index]!.future.timeout(timeout);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    // 段落既不在缓存中也没有正在获取，触发获取
+    try {
+      final data = await _fetchSegment('segment_$index.ts').timeout(timeout);
+      _cache.put(index, data);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   void _startPrefetch(int currentIndex) {

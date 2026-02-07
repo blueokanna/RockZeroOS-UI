@@ -11,6 +11,7 @@ import '../services/device_discovery_service.dart';
 import '../services/wallpaper_service.dart';
 import '../theme/app_theme.dart';
 import 'mini_audio_player.dart';
+import 'mini_video_player.dart';
 
 class BottomNavVisibleNotifier extends Notifier<bool> {
   @override
@@ -173,21 +174,30 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
       return Stack(
         fit: StackFit.expand,
         children: [
-          // Wallpaper image
-          Image.file(
-            File(wallpaperPath),
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) {
-              return Container(color: colorScheme.surface);
-            },
+          // Wallpaper image - 全屏显示，不加透明度
+          Positioned.fill(
+            child: Image.file(
+              File(wallpaperPath),
+              fit: BoxFit.cover,
+              width: double.infinity,
+              height: double.infinity,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(color: colorScheme.surface);
+              },
+            ),
           ),
-          // Glass overlay with blur
-          ClipRect(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: blurAmount, sigmaY: blurAmount),
-              child: Container(
-                color: colorScheme.surface.withValues(
-                    alpha: (0.3 + (blurAmount / 50.0) * 0.5).clamp(0.3, 0.8)),
+          // Glass overlay with blur - 极低遮罩让壁纸清晰可见
+          Positioned.fill(
+            child: ClipRect(
+              child: BackdropFilter(
+                filter:
+                    ImageFilter.blur(sigmaX: blurAmount, sigmaY: blurAmount),
+                child: Container(
+                  // blur=0 时几乎完全透明(0.02)，blur=50 时轻微遮罩(0.25)
+                  color: colorScheme.surface.withValues(
+                      alpha: (0.02 + (blurAmount / 50.0) * 0.23)
+                          .clamp(0.02, 0.25)),
+                ),
               ),
             ),
           ),
@@ -197,13 +207,21 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
             body: content,
             bottomNavigationBar: bottomNav,
           ),
+          // 浮动小窗视频播放器
+          const MiniVideoPlayer(),
         ],
       );
     }
 
-    return Scaffold(
-      body: content,
-      bottomNavigationBar: bottomNav,
+    return Stack(
+      children: [
+        Scaffold(
+          body: content,
+          bottomNavigationBar: bottomNav,
+        ),
+        // 浮动小窗视频播放器（非壁纸模式也需要）
+        const MiniVideoPlayer(),
+      ],
     );
   }
 

@@ -7,7 +7,7 @@ import '../../features/auth/presentation/pages/register_page.dart';
 import '../../features/auth/providers/auth_provider.dart';
 import '../../features/dashboard/presentation/pages/dashboard_page.dart';
 import '../../features/files/presentation/pages/files_page.dart';
-import '../../features/appstore/presentation/pages/appstore_page.dart';
+import '../../features/appstore/presentation/pages/wasm_store_page.dart';
 import '../../features/system/presentation/pages/system_page.dart';
 import '../../features/settings/presentation/pages/settings_page.dart';
 import '../../features/device_discovery/presentation/pages/device_discovery_page.dart';
@@ -114,7 +114,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             path: '/appstore',
             name: 'appstore',
             pageBuilder: (context, state) =>
-                _buildPageTransition(state, const AppStorePage()),
+                _buildPageTransition(state, const WasmStorePage()),
           ),
           GoRoute(
             path: '/system',

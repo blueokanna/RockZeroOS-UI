@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:media_kit/media_kit.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit_video/media_kit_video.dart';
-import '../services/secure_hls_player.dart';
 
-class SecureVideoPlayerScreen extends StatefulWidget {
+import '../core/services/video_player_service.dart';
+
+class SecureVideoPlayerScreen extends ConsumerStatefulWidget {
   final String fileId;
   final String fileName;
   final String jwtToken;
@@ -23,30 +24,14 @@ class SecureVideoPlayerScreen extends StatefulWidget {
   });
 
   @override
-  State<SecureVideoPlayerScreen> createState() =>
+  ConsumerState<SecureVideoPlayerScreen> createState() =>
       _SecureVideoPlayerScreenState();
 }
 
-class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
-  SecureHlsPlayer? _securePlayer;
-  Player? _player;
-  VideoController? _controller;
-
-  bool _isInitializing = true;
-  bool _isBuffering = false;
-  bool _hasError = false;
-  String? _errorMessage;
+class _SecureVideoPlayerScreenState
+    extends ConsumerState<SecureVideoPlayerScreen> {
   bool _showControls = true;
   bool _isDisposed = false;
-  bool _isVideoReady = false;
-
-  Duration _position = Duration.zero;
-  Duration _duration = Duration.zero;
-  Duration _bufferedPosition = Duration.zero;
-  bool _isPlaying = false;
-
-  int _retryCount = 0;
-  static const int _maxRetries = 3;
 
   @override
   void initState() {
@@ -79,174 +64,48 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
   Future<void> _initializePlayer() async {
     if (_isDisposed) return;
 
-    try {
-      setState(() {
-        _isInitializing = true;
-        _hasError = false;
-        _errorMessage = null;
-        _isVideoReady = false;
-      });
+    final service = ref.read(videoPlayerServiceProvider.notifier);
+    await service.playSecureVideo(
+      baseUrl: widget.baseUrl,
+      jwtToken: widget.jwtToken,
+      userId: widget.userId,
+      password: widget.password,
+      fileId: widget.fileId,
+      fileName: widget.fileName,
+    );
 
-      _securePlayer = SecureHlsPlayer(
-        baseUrl: widget.baseUrl,
-        jwtToken: widget.jwtToken,
-      );
-
-      await _securePlayer!.initializeSaeHandshake(
-        widget.userId,
-        widget.password,
-        fileId: widget.fileId,
-      );
-
-      if (_isDisposed) return;
-
-      final proxyUrl = await _securePlayer!.getProxyPlaylistUrl();
-
-      _player = Player(
-        configuration: const PlayerConfiguration(
-          bufferSize: 64 * 1024 * 1024, // 64MB 缓冲
-        ),
-      );
-
-      _controller = VideoController(_player!);
-
-      _player!.stream.playing.listen((playing) {
-        if (mounted && !_isDisposed) {
-          setState(() => _isPlaying = playing);
-        }
-      });
-
-      _player!.stream.position.listen((position) {
-        if (mounted && !_isDisposed) {
-          setState(() => _position = position);
-        }
-      });
-
-      _player!.stream.duration.listen((duration) {
-        if (mounted && !_isDisposed) {
-          setState(() {
-            _duration = duration;
-            if (duration.inMilliseconds > 0) {
-              _isVideoReady = true;
-            }
-          });
-        }
-      });
-
-      _player!.stream.buffering.listen((buffering) {
-        if (mounted && !_isDisposed) {
-          setState(() => _isBuffering = buffering);
-        }
-      });
-
-      _player!.stream.buffer.listen((buffer) {
-        if (mounted && !_isDisposed) {
-          setState(() => _bufferedPosition = buffer);
-        }
-      });
-
-      _player!.stream.error.listen((error) {
-        if (error.isNotEmpty && mounted && !_isDisposed) {
-          debugPrint('[SecureVideoPlayer] Player error: $error');
-          _handlePlaybackError(error);
-        }
-      });
-
-      _player!.stream.completed.listen((completed) {
-        if (completed && mounted && !_isDisposed) {
-          debugPrint('[SecureVideoPlayer] Playback completed');
-        }
-      });
-
-      await _player!.open(Media(proxyUrl), play: true);
-
-      if (_isDisposed) {
-        await _player?.dispose();
-        return;
-      }
-
-      setState(() {
-        _isInitializing = false;
-        _retryCount = 0;
-      });
-    } catch (e, stack) {
-      debugPrint('[SecureVideoPlayer] Error: $e');
-      debugPrint('[SecureVideoPlayer] Stack: $stack');
-
-      if (mounted && !_isDisposed) {
-        setState(() {
-          _isInitializing = false;
-          _hasError = true;
-          _errorMessage = _formatErrorMessage(e.toString());
-        });
-      }
-    }
-  }
-
-  String _formatErrorMessage(String error) {
-    if (error.contains('HTTP 500')) {
-      return '服务器转码失败，请稍后重试';
-    } else if (error.contains('HTTP 404')) {
-      return '视频文件不存在';
-    } else if (error.contains('timeout') || error.contains('Timeout')) {
-      return '连接超时，请检查网络';
-    } else if (error.contains('SAE') || error.contains('handshake')) {
-      return '安全握手失败，请重新登录';
-    } else if (error.contains('decrypt') || error.contains('Decrypt')) {
-      return '解密失败，密钥可能不匹配';
-    }
-    return error;
-  }
-
-  void _handlePlaybackError(String error) {
-    if (_retryCount < _maxRetries) {
-      _retryCount++;
-      debugPrint(
-          '[SecureVideoPlayer] Retrying... (attempt $_retryCount/$_maxRetries)');
-      Future.delayed(const Duration(seconds: 2), () {
-        if (mounted && !_isDisposed && _player != null) {
-          _player!.play();
-        }
-      });
-    } else {
-      setState(() {
-        _hasError = true;
-        _errorMessage = _formatErrorMessage(error);
-      });
-    }
+    // 标记为全屏模式
+    service.enterFullscreen();
   }
 
   @override
   void dispose() {
     _isDisposed = true;
-    _player?.dispose();
-    _securePlayer?.stop();
+    // 不停止播放器 - 让它继续在小窗模式播放
+    final service = ref.read(videoPlayerServiceProvider.notifier);
+    service.exitFullscreen();
     _exitFullscreen();
     super.dispose();
   }
 
   void _togglePlayPause() {
-    if (_player == null || !_isVideoReady) return;
-    if (_isPlaying) {
-      _player!.pause();
-    } else {
-      _player!.play();
-    }
+    ref.read(videoPlayerServiceProvider.notifier).togglePlayPause();
   }
 
   void _seekTo(Duration position) {
-    if (_player == null || !_isVideoReady) return;
-    _player?.seek(position);
+    ref.read(videoPlayerServiceProvider.notifier).seekTo(position);
   }
 
   void _seekRelative(int seconds) {
-    if (_player == null || !_isVideoReady) return;
-    final newPosition = _position + Duration(seconds: seconds);
-    final clampedPosition = Duration(
-      milliseconds:
-          newPosition.inMilliseconds.clamp(0, _duration.inMilliseconds),
-    );
-    _player?.seek(clampedPosition);
+    ref.read(videoPlayerServiceProvider.notifier).seekRelative(seconds);
+  }
+
+  /// 进入小窗模式并返回上一页
+  void _enterPipAndGoBack() {
+    final service = ref.read(videoPlayerServiceProvider.notifier);
+    service.enterPipMode();
+    _exitFullscreen();
+    Navigator.pop(context);
   }
 
   String _formatDuration(Duration duration) {
@@ -254,31 +113,32 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
     final hours = twoDigits(duration.inHours);
     final minutes = twoDigits(duration.inMinutes.remainder(60));
     final seconds = twoDigits(duration.inSeconds.remainder(60));
-
-    if (duration.inHours > 0) {
-      return '$hours:$minutes:$seconds';
-    }
+    if (duration.inHours > 0) return '$hours:$minutes:$seconds';
     return '$minutes:$seconds';
   }
 
   @override
   Widget build(BuildContext context) {
+    final videoState = ref.watch(videoPlayerServiceProvider);
+    final service = ref.read(videoPlayerServiceProvider.notifier);
+    final controller = service.videoController;
+
     return Scaffold(
       backgroundColor: Colors.black,
-      body: _buildBody(),
+      body: _buildBody(videoState, controller),
     );
   }
 
-  Widget _buildBody() {
-    if (_isInitializing) {
+  Widget _buildBody(VideoPlayerState videoState, VideoController? controller) {
+    if (!videoState.isInitialized && videoState.error == null) {
       return _buildInitializingView();
     }
 
-    if (_hasError) {
-      return _buildErrorView();
+    if (videoState.error != null) {
+      return _buildErrorView(videoState.error!);
     }
 
-    if (_controller == null) {
+    if (controller == null) {
       return _buildInitializingView();
     }
 
@@ -288,12 +148,14 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
         fit: StackFit.expand,
         children: [
           Video(
-            controller: _controller!,
+            controller: controller,
             controls: NoVideoControls,
           ),
-          if (_isBuffering || !_isVideoReady) _buildBufferingIndicator(),
-          if (_showControls && _isVideoReady) _buildControls(),
-          if (_showControls) _buildTopBar(),
+          if (videoState.isBuffering || videoState.isSeeking)
+            _buildBufferingIndicator(videoState),
+          if (_showControls && videoState.isInitialized)
+            _buildControls(videoState),
+          if (_showControls) _buildTopBar(videoState),
         ],
       ),
     );
@@ -314,7 +176,7 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
           ),
           const SizedBox(height: 24),
           const Text(
-            'Establishing a secure connection...',
+            '正在建立安全连接...',
             style: TextStyle(
               color: Colors.white,
               fontSize: 16,
@@ -323,11 +185,8 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
           ),
           const SizedBox(height: 12),
           Text(
-            'SAE handshake + AES-256-GCM encryption',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey.shade500,
-            ),
+            'SAE 握手 + AES-256-GCM 加密',
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
           ),
           const SizedBox(height: 32),
           TextButton.icon(
@@ -337,16 +196,14 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
             },
             icon: const Icon(Icons.arrow_back, size: 18),
             label: const Text('取消'),
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.grey.shade400,
-            ),
+            style: TextButton.styleFrom(foregroundColor: Colors.grey.shade400),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildBufferingIndicator() {
+  Widget _buildBufferingIndicator(VideoPlayerState videoState) {
     return Center(
       child: Container(
         padding: const EdgeInsets.all(20),
@@ -367,11 +224,8 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
             ),
             const SizedBox(height: 12),
             Text(
-              _isVideoReady ? '缓冲中...' : '加载中...',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-              ),
+              videoState.isSeeking ? '跳转中...' : '缓冲中...',
+              style: const TextStyle(color: Colors.white, fontSize: 14),
             ),
           ],
         ),
@@ -379,7 +233,7 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
     );
   }
 
-  Widget _buildErrorView() {
+  Widget _buildErrorView(String error) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -392,20 +246,16 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
                 color: Colors.orange.withAlpha(30),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
-                Icons.error_outline,
-                size: 48,
-                color: Colors.orange,
-              ),
+              child: const Icon(Icons.error_outline,
+                  size: 48, color: Colors.orange),
             ),
             const SizedBox(height: 24),
             const Text(
               '播放失败',
               style: TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             Container(
@@ -415,11 +265,8 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
-                _errorMessage ?? '未知错误',
-                style: TextStyle(
-                  color: Colors.grey.shade400,
-                  fontSize: 14,
-                ),
+                error,
+                style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
                 textAlign: TextAlign.center,
               ),
             ),
@@ -444,7 +291,6 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
                 const SizedBox(width: 16),
                 FilledButton.icon(
                   onPressed: () {
-                    _retryCount = 0;
                     _initializePlayer();
                   },
                   icon: const Icon(Icons.refresh, size: 18),
@@ -463,7 +309,7 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
     );
   }
 
-  Widget _buildTopBar() {
+  Widget _buildTopBar(VideoPlayerState videoState) {
     return Positioned(
       top: 0,
       left: 0,
@@ -483,10 +329,7 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
               children: [
                 IconButton(
                   icon: const Icon(Icons.arrow_back, color: Colors.white),
-                  onPressed: () {
-                    _exitFullscreen();
-                    Navigator.pop(context);
-                  },
+                  onPressed: _enterPipAndGoBack,
                 ),
                 Expanded(
                   child: Text(
@@ -498,6 +341,13 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),
+                ),
+                // 小窗模式按钮
+                IconButton(
+                  icon: const Icon(Icons.picture_in_picture_alt,
+                      color: Colors.white),
+                  tooltip: '小窗播放',
+                  onPressed: _enterPipAndGoBack,
                 ),
                 Container(
                   padding:
@@ -513,7 +363,7 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
                       Icon(Icons.lock, color: Colors.green, size: 14),
                       SizedBox(width: 4),
                       Text(
-                        'SECURE',
+                        'AES-256-GCM',
                         style: TextStyle(
                           color: Colors.green,
                           fontSize: 11,
@@ -523,10 +373,6 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
                     ],
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.download, color: Colors.white),
-                  onPressed: _showDownloadInfo,
-                ),
               ],
             ),
           ),
@@ -535,13 +381,15 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
     );
   }
 
-  Widget _buildControls() {
-    final progress = _duration.inMilliseconds > 0
-        ? _position.inMilliseconds / _duration.inMilliseconds
+  Widget _buildControls(VideoPlayerState videoState) {
+    final progress = videoState.duration.inMilliseconds > 0
+        ? videoState.position.inMilliseconds /
+            videoState.duration.inMilliseconds
         : 0.0;
 
-    final bufferedProgress = _duration.inMilliseconds > 0
-        ? _bufferedPosition.inMilliseconds / _duration.inMilliseconds
+    final bufferedProgress = videoState.duration.inMilliseconds > 0
+        ? videoState.bufferedPosition.inMilliseconds /
+            videoState.duration.inMilliseconds
         : 0.0;
 
     return Positioned(
@@ -578,7 +426,7 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
                     ),
                     child: IconButton(
                       icon: Icon(
-                        _isPlaying ? Icons.pause : Icons.play_arrow,
+                        videoState.isPlaying ? Icons.pause : Icons.play_arrow,
                         color: Colors.white,
                         size: 48,
                       ),
@@ -595,8 +443,10 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
                 ],
               ),
               const SizedBox(height: 16),
+              // 进度条
               Stack(
                 children: [
+                  // 缓冲进度
                   SliderTheme(
                     data: SliderTheme.of(context).copyWith(
                       trackHeight: 4,
@@ -610,6 +460,7 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
                       onChanged: null,
                     ),
                   ),
+                  // 播放进度（可拖动）
                   SliderTheme(
                     data: SliderTheme.of(context).copyWith(
                       trackHeight: 4,
@@ -625,7 +476,8 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
                       onChanged: (value) {
                         final newPosition = Duration(
                           milliseconds:
-                              (value * _duration.inMilliseconds).round(),
+                              (value * videoState.duration.inMilliseconds)
+                                  .round(),
                         );
                         _seekTo(newPosition);
                       },
@@ -639,12 +491,12 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      _formatDuration(_position),
+                      _formatDuration(videoState.position),
                       style:
                           const TextStyle(color: Colors.white70, fontSize: 12),
                     ),
                     Text(
-                      _formatDuration(_duration),
+                      _formatDuration(videoState.duration),
                       style:
                           const TextStyle(color: Colors.white70, fontSize: 12),
                     ),
@@ -654,93 +506,6 @@ class _SecureVideoPlayerScreenState extends State<SecureVideoPlayerScreen> {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  void _showDownloadInfo() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: Colors.grey.shade900,
-        title: const Row(
-          children: [
-            Icon(Icons.security, color: Colors.green),
-            SizedBox(width: 8),
-            Text('安全播放', style: TextStyle(color: Colors.white)),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildInfoRow('加密算法', 'AES-256-GCM'),
-            _buildInfoRow('密钥交换', 'WPA3-SAE (Dragonfly)'),
-            _buildInfoRow('认证方式', 'JWT Token'),
-            _buildInfoRow('传输协议', 'HTTPS + TLS 1.3'),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.withAlpha(26),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange.withAlpha(77)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.info_outline,
-                      color: Colors.orange, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'This video uses end-to-end encryption and cannot be downloaded using standard tools.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.orange.shade200,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('关闭'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 80,
-            child: Text(
-              label,
-              style: TextStyle(
-                fontWeight: FontWeight.w500,
-                fontSize: 13,
-                color: Colors.grey.shade400,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(
-                fontSize: 13,
-                color: Colors.white,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

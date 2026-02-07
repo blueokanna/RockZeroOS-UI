@@ -384,18 +384,52 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
     _position = clampedPosition;
     setState(() {});
 
-    // 预取目标段落周围的数据，确保随点随播
+    // 预取目标段落周围的数据
     final targetSegment = (clampedPosition.inSeconds / 6).floor();
+
+    // 先通知代理预取目标段落，然后等待目标段落就绪后再 seek
+    // 这样可以避免 mpv 在段落未就绪时卡住
     _proxyServer?.prefetchAroundSegment(targetSegment);
 
-    _player!.seek(clampedPosition).then((_) {
-      // 短暂延迟后释放 seek 锁，让 position stream 接管
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (mounted && !_isDisposed) {
-          _isSeeking = false;
-        }
-      });
-    });
+    // 等待代理准备好目标段落（最多等 8 秒）
+    _waitForSegmentAndSeek(clampedPosition, targetSegment);
+  }
+
+  Future<void> _waitForSegmentAndSeek(
+      Duration targetPosition, int targetSegment) async {
+    // 给代理一点时间来开始获取目标段落
+    // 对于已缓存的段落这几乎是即时的
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    // 检查目标段落是否已在缓存中
+    bool segmentReady = _proxyServer?.isSegmentCached(targetSegment) ?? false;
+
+    if (!segmentReady) {
+      // 段落未缓存，等待它被获取（最多 8 秒）
+      for (int i = 0; i < 80; i++) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        if (_isDisposed || !mounted) return;
+        segmentReady = _proxyServer?.isSegmentCached(targetSegment) ?? false;
+        if (segmentReady) break;
+      }
+    }
+
+    if (_isDisposed || !mounted) return;
+
+    // 执行 seek（即使段落未完全就绪也要 seek，避免永远卡住）
+    try {
+      await _player!.seek(targetPosition);
+    } catch (e) {
+      debugPrint('[VideoPlayer] Seek error: $e');
+    }
+
+    // 等待 mpv 完成 seek 后再释放 seeking 锁
+    // 给 mpv 足够时间处理 seek 和开始解码
+    await Future.delayed(const Duration(milliseconds: 500));
+    if (mounted && !_isDisposed) {
+      _isSeeking = false;
+      setState(() {});
+    }
   }
 
   void _seekForward() {
@@ -839,14 +873,18 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
                     ? _duration.inMilliseconds.toDouble()
                     : 1,
                 onChanged: (value) {
-                  _seekTo(Duration(milliseconds: value.toInt()));
+                  // 拖动时只更新 UI 位置，不实际 seek（避免大量无效请求）
+                  setState(() {
+                    _position = Duration(milliseconds: value.toInt());
+                  });
                 },
                 onChangeStart: (_) {
                   _isSeeking = true;
                   _hideControlsTimer?.cancel();
                 },
-                onChangeEnd: (_) {
-                  _isSeeking = false;
+                onChangeEnd: (value) {
+                  // 松手时才执行实际 seek
+                  _seekTo(Duration(milliseconds: value.toInt()));
                   _startHideControlsTimer();
                 },
               ),

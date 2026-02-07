@@ -1238,6 +1238,125 @@ class ApiService {
   Future<void> removeComposeApp(String name) async {
     await _dio.delete('/api/v1/docker/compose/$name');
   }
+
+  // ============ WASM Store API (Steam/Epic/Web3/WASM) ============
+
+  /// 获取商店概览
+  Future<Map<String, dynamic>> getWasmStoreOverview() async {
+    final response = await _dio.get('/api/v1/wasm-store/overview');
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 获取 Steam 精选游戏
+  Future<Map<String, dynamic>> getSteamFeatured() async {
+    final response = await _dio.get('/api/v1/wasm-store/steam/featured');
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 获取 Steam 游戏详情
+  Future<Map<String, dynamic>> getSteamAppDetails(String appId) async {
+    final response = await _dio.get('/api/v1/wasm-store/steam/app/$appId');
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 获取 Epic 免费游戏
+  Future<Map<String, dynamic>> getEpicFreeGames() async {
+    final response = await _dio.get('/api/v1/wasm-store/epic/free');
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 搜索游戏
+  Future<Map<String, dynamic>> searchGames({
+    String? query,
+    String? platform,
+    int page = 1,
+    int pageSize = 20,
+  }) async {
+    final response = await _dio.get(
+      '/api/v1/wasm-store/search',
+      queryParameters: {
+        if (query != null) 'q': query,
+        if (platform != null) 'platform': platform,
+        'page': page,
+        'page_size': pageSize,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 获取 WASM 应用列表
+  Future<List<dynamic>> getWasmApps() async {
+    final response = await _dio.get('/api/v1/wasm-store/wasm/apps');
+    return response.data as List<dynamic>;
+  }
+
+  /// 安装 WASM 应用
+  Future<Map<String, dynamic>> installWasmApp({
+    required String appId,
+    required String wasmUrl,
+    required String name,
+    String? expectedHash,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/wasm-store/wasm/install',
+      data: {
+        'app_id': appId,
+        'wasm_url': wasmUrl,
+        'name': name,
+        if (expectedHash != null) 'expected_hash': expectedHash,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 运行 WASM 应用
+  Future<Map<String, dynamic>> runWasmApp(
+    String appId, {
+    String? function,
+    List<String>? args,
+    Map<String, String>? env,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/wasm-store/wasm/$appId/run',
+      data: {
+        if (function != null) 'function': function,
+        if (args != null) 'args': args,
+        if (env != null) 'env': env,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 卸载 WASM 应用
+  Future<void> uninstallWasmApp(String appId) async {
+    await _dio.delete('/api/v1/wasm-store/wasm/$appId');
+  }
+
+  /// 获取插件列表
+  Future<List<dynamic>> getPlugins() async {
+    final response = await _dio.get('/api/v1/wasm-store/plugins');
+    return response.data as List<dynamic>;
+  }
+
+  /// 注册插件
+  Future<Map<String, dynamic>> registerPlugin({
+    required Map<String, dynamic> manifest,
+    required String wasmUrl,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/wasm-store/plugins/register',
+      data: {
+        'manifest': manifest,
+        'wasm_url': wasmUrl,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 注销插件
+  Future<void> unregisterPlugin(String pluginId) async {
+    await _dio.delete('/api/v1/wasm-store/plugins/$pluginId');
+  }
 }
 
 // WebDAV Entry Model

@@ -15,7 +15,7 @@ class WallpaperBackground extends ConsumerWidget {
   const WallpaperBackground({
     super.key,
     required this.child,
-    this.opacity = 0.15,
+    this.opacity = 0.85,
     this.blendMode = BlendMode.srcOver,
   });
 

@@ -216,4 +216,5 @@ class SecureHlsPlayer {
   String? get filePath => _filePath;
   bool get isInitialized => _sessionId != null && _pmk != null;
   HlsEncryptor? get encryptor => _encryptor;
+  SecureHlsProxyServer? get proxy => _proxy;
 }
