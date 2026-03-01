@@ -201,6 +201,7 @@ class _EnhancedAudioPlayerPageState
       debugPrint('[AudioPlayer] Using stream URL: $streamUrl');
 
       // Use LockCachingAudioSource for better seek support
+      // ignore: experimental_member_use
       final audioSource = LockCachingAudioSource(
         Uri.parse(streamUrl),
         headers: headers,

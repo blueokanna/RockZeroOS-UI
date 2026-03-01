@@ -147,8 +147,8 @@ class MarkdownViewer extends StatelessWidget {
         shrinkWrap: shrinkWrap,
         styleSheet: styleSheet,
         onTapLink: (text, href, title) => _onTapLink(context, href),
-        imageBuilder: (uri, title, alt) =>
-            _buildImage(context, uri, title, alt),
+        sizedImageBuilder: (config) =>
+            _buildImage(context, config.uri, config.title, config.alt),
       );
     }
 
@@ -159,7 +159,8 @@ class MarkdownViewer extends StatelessWidget {
       shrinkWrap: shrinkWrap,
       styleSheet: styleSheet,
       onTapLink: (text, href, title) => _onTapLink(context, href),
-      imageBuilder: (uri, title, alt) => _buildImage(context, uri, title, alt),
+      sizedImageBuilder: (config) =>
+          _buildImage(context, config.uri, config.title, config.alt),
     );
   }
 

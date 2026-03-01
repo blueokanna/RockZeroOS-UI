@@ -10,11 +10,13 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # Material Design 3 & UI
   cupertino_icons: ^1.0.8
   google_fonts: ^7.0.2
   flutter_animate: ^4.5.2
   animations: ^2.0.11
 
+  # State Management - Riverpod 3.0.3 (stable with freezed 3.x)
   flutter_riverpod: ^3.0.3
   riverpod_annotation: ^3.0.3
 
@@ -25,10 +27,10 @@ dependencies:
   # Cryptography
   pointycastle: ^3.9.1
   crypto: ^3.0.6
-  edwards25519: ^1.0.5
-  hashlib: ^2.3.0
-  thirds: ^0.2.0-alpha.1
-  ffi: ^2.1.3
+  edwards25519: ^1.0.5  # Edwards25519 曲线运算（与 Rust curve25519_dalek 兼容）
+  hashlib: ^2.3.0       # SHA3-256, Blake2b, HMAC 等
+  thirds: ^0.2.0-alpha.1  # Blake3 支持
+  ffi: ^2.1.3  # FFI for Rust native library binding
 
   # Local Storage & Security
   flutter_secure_storage: ^10.0.0
@@ -44,24 +46,23 @@ dependencies:
   network_info_plus: ^7.0.0
   connectivity_plus: ^7.0.0
 
+  # Media & Video/Audio
+  video_player: ^2.9.3
+  chewie: ^1.10.0
+  just_audio: ^0.10.5
+  photo_view: ^0.15.0
+  audio_waveforms: ^2.0.2
   media_kit: ^1.2.6
   media_kit_video: ^2.0.1
   media_kit_libs_video: ^1.0.7
-  media_kit_libs_android_video: ^1.3.8
-  media_kit_libs_windows_video: ^1.0.11
-  media_kit_libs_linux: ^1.2.1
-  media_kit_libs_macos_video: ^1.1.4
-  media_kit_libs_ios_video: ^1.1.4
-  just_audio: ^0.10.5
-  audio_service: ^0.18.15
-  just_audio_background: ^0.0.1-beta.13
-  photo_view: ^0.15.0
-  audio_waveforms: ^2.0.2
+  audio_service: ^0.18.18
+  # Advanced animations
   flutter_staggered_animations: ^1.1.1
   shimmer: ^3.0.0
 
   # WebView for in-app browser
   webview_flutter: ^4.10.0
+  flutter_markdown: ^0.7.7+1
 
   # File Management
   file_picker: ^10.3.8
@@ -79,10 +80,6 @@ dependencies:
   freezed_annotation: ^3.1.0
   equatable: ^2.0.7
   go_router: ^17.0.1
-
-  # Markdown rendering
-  flutter_markdown: ^0.7.6
-  markdown: ^7.2.2
 
   # System Info
   device_info_plus: ^12.3.0
@@ -102,25 +99,7 @@ dev_dependencies:
   json_serializable: ^6.9.5
   freezed: ^3.2.3
   riverpod_generator: ^3.0.3
-  flutter_launcher_icons: ^0.14.3
-
-# App icon configuration
-flutter_launcher_icons:
-  android: "ic_launcher"
-  ios: true
-  image_path: "assets/images/RockZero.png"
-  min_sdk_android: 21
-  adaptive_icon_background: "#1a1a2e"
-  adaptive_icon_foreground: "assets/images/RockZero.png"
-  web:
-    generate: true
-    image_path: "assets/images/RockZero.png"
-  windows:
-    generate: true
-    image_path: "assets/images/RockZero.png"
-  macos:
-    generate: true
-    image_path: "assets/images/RockZero.png"
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
@@ -129,3 +108,21 @@ flutter:
     - assets/images/
     - assets/icons/
     - assets/fonts/
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/images/RockZero.png
+  min_sdk_android: 21
+  web:
+    generate: true
+    image_path: assets/images/RockZero.png
+    background_color: "#ffffff"
+    theme_color: "#0175C2"
+  windows:
+    generate: true
+    image_path: assets/images/RockZero.png
+    icon_size: 256
+  macos:
+    generate: true
+    image_path: assets/images/RockZero.png

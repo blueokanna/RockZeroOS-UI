@@ -147,11 +147,12 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
         _testProgress = 1.0;
       });
     } catch (e) {
-      if (mounted && !_isCancelled)
+      if (mounted && !_isCancelled) {
         setState(() {
           _state = SpeedTestState.error;
           _error = e.toString();
         });
+      }
     }
   }
 
@@ -160,8 +161,9 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     final List<int> pings = [];
     final uri = Uri.parse('$_serverUrl/api/v1/speedtest/ping');
     final headers = <String, String>{};
-    if (_authToken != null && _authToken!.isNotEmpty)
+    if (_authToken != null && _authToken!.isNotEmpty) {
       headers['Authorization'] = 'Bearer $_authToken';
+    }
 
     for (int i = 0; i < _pingTestCount; i++) {
       if (!mounted || _isCancelled) return;
@@ -186,13 +188,15 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     if (pings.isNotEmpty) {
       final avg = pings.reduce((a, b) => a + b) ~/ pings.length;
       double jitterSum = 0;
-      for (int i = 1; i < pings.length; i++)
+      for (int i = 1; i < pings.length; i++) {
         jitterSum += (pings[i] - pings[i - 1]).abs();
-      if (mounted && !_isCancelled)
+      }
+      if (mounted && !_isCancelled) {
         setState(() {
           _ping = avg;
           _jitter = pings.length > 1 ? jitterSum / (pings.length - 1) : 0;
         });
+      }
     }
   }
 
@@ -202,8 +206,9 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     final startTime = DateTime.now();
     final testDuration = Duration(seconds: _downloadTestDurationSec);
     final headers = <String, String>{};
-    if (_authToken != null && _authToken!.isNotEmpty)
+    if (_authToken != null && _authToken!.isNotEmpty) {
       headers['Authorization'] = 'Bearer $_authToken';
+    }
 
     try {
       double instantSpeed = 0;
@@ -252,8 +257,9 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
             }
             chunkSw.stop();
             final e = chunkSw.elapsedMilliseconds / 1000;
-            if (e > 0 && chunkBytes > 0)
+            if (e > 0 && chunkBytes > 0) {
               speeds.add((chunkBytes * 8) / (e * 1000000));
+            }
           }
         } catch (_) {}
         await Future.delayed(const Duration(milliseconds: 100));
@@ -280,13 +286,16 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     final testDuration = Duration(seconds: _uploadTestDurationSec);
     final testData = Uint8List(5 * 1024 * 1024);
     final rng = math.Random();
-    for (int i = 0; i < testData.length; i++) testData[i] = rng.nextInt(256);
+    for (int i = 0; i < testData.length; i++) {
+      testData[i] = rng.nextInt(256);
+    }
     final headers = <String, String>{
       'Content-Type': 'application/octet-stream',
       'Content-Length': testData.length.toString()
     };
-    if (_authToken != null && _authToken!.isNotEmpty)
+    if (_authToken != null && _authToken!.isNotEmpty) {
       headers['Authorization'] = 'Bearer $_authToken';
+    }
 
     try {
       double instantSpeed = 0;

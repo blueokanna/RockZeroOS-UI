@@ -1,771 +1,433 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:pointycastle/export.dart';
-import 'package:thirds/blake3.dart' as blake3;
 
-/// Top-level function for isolate-based decryption
-/// Must be top-level or static for compute() to work
-Uint8List _decryptInIsolate(Map<String, Uint8List> params) {
-  final ciphertextWithTag = params['ciphertextWithTag']!;
-  final key = params['key']!;
-  final nonce = params['nonce']!;
+import 'zkp/hls_bulletproof_auth.dart';
 
-  final cipher = GCMBlockCipher(AESEngine());
-  cipher.init(
-      false, AEADParameters(KeyParameter(key), 128, nonce, Uint8List(0)));
-  return cipher.process(ciphertextWithTag);
-}
-
-class AesGcmCrypto {
-  static Uint8List decrypt({
-    required Uint8List ciphertextWithTag,
-    required Uint8List key,
-    required Uint8List nonce,
-  }) {
-    if (key.length != 32) throw ArgumentError('Invalid key length');
-    if (nonce.length != 12) throw ArgumentError('Invalid nonce length');
-    if (ciphertextWithTag.length < 16) throw ArgumentError('Data too short');
-
-    final cipher = GCMBlockCipher(AESEngine());
-    cipher.init(
-        false, AEADParameters(KeyParameter(key), 128, nonce, Uint8List(0)));
-    return cipher.process(ciphertextWithTag);
-  }
-
-  /// Decrypt in a background isolate to avoid blocking the UI thread
-  static Future<Uint8List> decryptAsync({
-    required Uint8List ciphertextWithTag,
-    required Uint8List key,
-    required Uint8List nonce,
-  }) {
-    if (key.length != 32) throw ArgumentError('Invalid key length');
-    if (nonce.length != 12) throw ArgumentError('Invalid nonce length');
-    if (ciphertextWithTag.length < 16) throw ArgumentError('Data too short');
-
-    // For 4K segments (typically > 500KB), always use isolate
-    // Lowered threshold from 64KB to 32KB for smoother playback
-    if (ciphertextWithTag.length > 32768) {
-      return compute(_decryptInIsolate, {
-        'ciphertextWithTag': ciphertextWithTag,
-        'key': key,
-        'nonce': nonce,
-      });
-    }
-
-    // Small data: decrypt inline (faster than isolate overhead)
-    return Future.value(decrypt(
-      ciphertextWithTag: ciphertextWithTag,
-      key: key,
-      nonce: nonce,
-    ));
-  }
-}
-
-class HkdfBlake3 {
-  final Uint8List _prk;
-  HkdfBlake3._(this._prk);
-
-  factory HkdfBlake3.withSessionSalt(String sessionId, Uint8List ikm) {
-    final saltInput = 'hls-session-salt:$sessionId';
-    final salt = Uint8List.fromList(blake3.blake3(utf8.encode(saltInput), 32));
-    final prkInput = Uint8List(32 + ikm.length);
-    prkInput.setRange(0, 32, salt);
-    prkInput.setRange(32, 32 + ikm.length, ikm);
-    return HkdfBlake3._(Uint8List.fromList(blake3.blake3(prkInput, 32)));
-  }
-
-  Uint8List expand(Uint8List info, int length) {
-    if (length == 0) return Uint8List(0);
-    final output = Uint8List(length);
-    var t = Uint8List(0);
-    var counter = 1;
-    var offset = 0;
-    while (offset < length) {
-      final input = Uint8List(32 + t.length + info.length + 1);
-      var pos = 0;
-      input.setRange(pos, pos + 32, _prk);
-      pos += 32;
-      input.setRange(pos, pos + t.length, t);
-      pos += t.length;
-      input.setRange(pos, pos + info.length, info);
-      pos += info.length;
-      input[pos] = counter;
-      t = Uint8List.fromList(blake3.blake3(input, 32));
-      final copyLen = (length - offset).clamp(0, 32);
-      output.setRange(offset, offset + copyLen, t);
-      offset += copyLen;
-      counter++;
-    }
-    return output;
-  }
-}
-
-class HlsEncryptor {
-  final Uint8List _encryptionKey;
-  final String sessionId;
-  final Uint8List pmk;
-
-  HlsEncryptor._({
-    required this.sessionId,
-    required this.pmk,
-    required Uint8List encryptionKey,
-  }) : _encryptionKey = encryptionKey;
-
-  factory HlsEncryptor({required String sessionId, required Uint8List pmk}) {
-    if (pmk.length != 32) throw ArgumentError('Invalid PMK length');
-    final hkdf = HkdfBlake3.withSessionSalt(sessionId, pmk);
-    final encryptionKey =
-        hkdf.expand(Uint8List.fromList(utf8.encode('hls-master-key')), 32);
-    return HlsEncryptor._(
-        sessionId: sessionId, pmk: pmk, encryptionKey: encryptionKey);
-  }
-
-  Uint8List get encryptionKey => Uint8List.fromList(_encryptionKey);
-
-  Uint8List decryptSegment(Uint8List encryptedData) {
-    if (encryptedData.length < 29) throw ArgumentError('Data too short');
-    final nonce = encryptedData.sublist(0, 12);
-    final ciphertextWithTag = encryptedData.sublist(12);
-    return AesGcmCrypto.decrypt(
-        ciphertextWithTag: ciphertextWithTag,
-        key: _encryptionKey,
-        nonce: nonce);
-  }
-
-  /// Async decryption — runs in background isolate for large segments
-  Future<Uint8List> decryptSegmentAsync(Uint8List encryptedData) {
-    if (encryptedData.length < 29) throw ArgumentError('Data too short');
-    final nonce = encryptedData.sublist(0, 12);
-    final ciphertextWithTag = encryptedData.sublist(12);
-    return AesGcmCrypto.decryptAsync(
-        ciphertextWithTag: ciphertextWithTag,
-        key: _encryptionKey,
-        nonce: nonce);
-  }
-}
-
-class ProxyStreamStats {
-  int _networkBytesReceived = 0;
-  int _decryptedBytesTotal = 0;
-  int _segmentsLoadedFromNetwork = 0;
-  int _segmentsServedFromCache = 0;
-  int _segmentsDecrypted = 0;
-  int _failedRequests = 0;
-  int _totalSegments = 0;
-  DateTime? _startTime;
-
-  void reset() {
-    _networkBytesReceived = 0;
-    _decryptedBytesTotal = 0;
-    _segmentsLoadedFromNetwork = 0;
-    _segmentsServedFromCache = 0;
-    _segmentsDecrypted = 0;
-    _failedRequests = 0;
-    _startTime = DateTime.now();
-  }
-
-  void recordNetworkReceive(int bytes) => _networkBytesReceived += bytes;
-  void recordDecryption(int bytes) {
-    _decryptedBytesTotal += bytes;
-    _segmentsDecrypted++;
-  }
-
-  void recordNetworkLoad() => _segmentsLoadedFromNetwork++;
-  void recordCacheHit() => _segmentsServedFromCache++;
-  void recordFailure() => _failedRequests++;
-  void setTotalSegments(int total) => _totalSegments = total;
-
-  int get networkBytesReceived => _networkBytesReceived;
-  int get decryptedBytesTotal => _decryptedBytesTotal;
-  int get segmentsLoadedFromNetwork => _segmentsLoadedFromNetwork;
-  int get segmentsServedFromCache => _segmentsServedFromCache;
-  int get segmentsDecrypted => _segmentsDecrypted;
-  int get failedRequests => _failedRequests;
-  int get totalSegments => _totalSegments;
-
-  double get cacheHitRate {
-    final total = _segmentsLoadedFromNetwork + _segmentsServedFromCache;
-    return total == 0 ? 0 : _segmentsServedFromCache / total;
-  }
-
-  Duration get sessionDuration => _startTime == null
-      ? Duration.zero
-      : DateTime.now().difference(_startTime!);
-}
-
-/// 高性能段落缓存 - 支持 LRU 淘汰和快速查找
-class _SegmentCache {
-  final Map<int, Uint8List> _cache = {};
-  final List<int> _accessOrder = [];
-  static const int _maxSize = 300; // 缓存 300 个段落（约30分钟4K视频）
-
-  Uint8List? get(int index) {
-    if (_cache.containsKey(index)) {
-      // 更新访问顺序 (LRU)
-      _accessOrder.remove(index);
-      _accessOrder.add(index);
-      return _cache[index];
-    }
-    return null;
-  }
-
-  void put(int index, Uint8List data) {
-    if (_cache.containsKey(index)) {
-      _accessOrder.remove(index);
-    }
-    _cache[index] = data;
-    _accessOrder.add(index);
-
-    // LRU 淘汰
-    while (_cache.length > _maxSize && _accessOrder.isNotEmpty) {
-      final oldest = _accessOrder.removeAt(0);
-      _cache.remove(oldest);
-    }
-  }
-
-  bool contains(int index) => _cache.containsKey(index);
-
-  void clear() {
-    _cache.clear();
-    _accessOrder.clear();
-  }
-
-  int get size => _cache.length;
-}
-
+/// 安全 HLS 代理服务器
+///
+/// 使用 Bulletproofs 零知识证明进行视频段访问认证
+///
+/// 工作原理：
+/// 1. 启动本地 HTTP 服务器（127.0.0.1:随机端口）
+/// 2. 拦截播放器的 .ts 段请求
+/// 3. 生成 Bulletproofs ZKP 证明（证明密码知识）
+/// 4. 向后端发送 POST 请求（带 ZKP 证明）
+/// 5. 解密视频段（使用 AES-256-GCM）
+/// 6. 返回明文视频段给播放器
 class SecureHlsProxyServer {
   HttpServer? _server;
   int? _port;
   final String baseUrl;
   final String sessionId;
-  final Uint8List pmk;
-  final String jwtToken;
-  final void Function(int bytes, bool decrypted)? onSegmentLoaded;
+  final Uint8List pmk; // Pairwise Master Key
+  final String password; // User password for ZKP proof generation
+  final PasswordRegistration? zkpRegistration; // ZKP registration from server
 
-  final Random _random = Random.secure();
-  final _SegmentCache _cache = _SegmentCache();
-  final Map<int, Completer<Uint8List>> _pendingRequests = {};
-  final Set<int> _prefetchQueue = {};
-  final Set<int> _activePrefetches = {};
-
-  late final HlsEncryptor _encryptor;
-  bool _initialized = false;
-  bool _stopped = false;
-  String? _cachedPlaylist;
-  int? _totalSegments;
-  int _lastRequestedSegment = -1;
-
-  final ProxyStreamStats stats = ProxyStreamStats();
-  HttpClient? _httpClient;
-
-  // 优化参数 - 针对4K视频大幅提升
-  static const int _prefetchAhead = 30; // 预取前方 30 个段落（180秒，4K需要更多缓冲）
-  static const int _prefetchBehind = 5; // 预取后方 5 个段落（用于回退）
-  static const int _maxConcurrentPrefetch = 12; // 最大并行预取数（吃满带宽）
-  static const Duration _requestTimeout = Duration(seconds: 90);
-
-  bool _isPrefetching = false;
+  // Bulletproofs auth context
+  late final HlsBulletproofAuth _bulletproofAuth;
 
   SecureHlsProxyServer({
     required this.baseUrl,
     required this.sessionId,
     required this.pmk,
-    this.jwtToken = '',
-    this.onSegmentLoaded,
-  });
-
-  void _initialize() {
-    if (_initialized) return;
-    _encryptor = HlsEncryptor(sessionId: sessionId, pmk: pmk);
-    _initialized = true;
-    _stopped = false;
-    stats.reset();
-    _cache.clear();
-    _httpClient = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 15)
-      ..idleTimeout = const Duration(seconds: 300)
-      ..maxConnectionsPerHost = 16 // 大幅增加并发连接数以吃满带宽
-      ..autoUncompress = true
-      ..badCertificateCallback = (_, __, ___) => true;
+    required this.password,
+    this.zkpRegistration,
+  }) {
+    _bulletproofAuth = HlsBulletproofAuth();
   }
 
+  /// 启动代理服务器
   Future<String> start() async {
-    _initialize();
-    _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    _port = _server!.port;
-    _server!.listen(_handleRequest, onError: (_) {});
-    return 'http://127.0.0.1:$_port/playlist.m3u8';
+    try {
+      // 绑定到本地回环地址的随机端口
+      _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      _port = _server!.port;
+
+      debugPrint('[SecureHLS Proxy] Started on http://127.0.0.1:$_port');
+      debugPrint('[SecureHLS Proxy] Using Bulletproofs ZKP authentication');
+
+      // 处理请求
+      _server!.listen(_handleRequest);
+
+      // 返回代理服务器的播放列表 URL
+      return 'http://127.0.0.1:$_port/playlist.m3u8';
+    } catch (e) {
+      debugPrint('[SecureHLS Proxy] Failed to start: $e');
+      rethrow;
+    }
   }
 
+  /// 停止代理服务器
   Future<void> stop() async {
-    _stopped = true;
-    for (final c in _pendingRequests.values) {
-      if (!c.isCompleted) {
-        c.completeError(Exception('Stopped'));
-      }
-    }
-    _pendingRequests.clear();
-    _prefetchQueue.clear();
-    _activePrefetches.clear();
-    _cache.clear();
     await _server?.close(force: true);
-    _httpClient?.close(force: true);
     _server = null;
-    _httpClient = null;
-    _initialized = false;
-    _cachedPlaylist = null;
+    _port = null;
+    debugPrint('[SecureHLS Proxy] Stopped');
   }
 
-  String _bytesToHex(Uint8List bytes) =>
-      bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  /// 预取指定段附近的视频段
+  ///
+  /// 在 seek 操作时调用，提前请求目标段附近的数据以减少延迟。
+  void prefetchAroundSegment(int segmentIndex) {
+    if (_server == null) return;
 
-  Map<String, String> _generateSecureParams(String segmentName) {
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final nonce =
-        base64Encode(List<int>.generate(16, (_) => _random.nextInt(256)));
-    final message = '$sessionId:$timestamp:$nonce:$segmentName';
-    final hash = blake3.blake3(
-        Uint8List.fromList([...pmk, ...utf8.encode(message)]), 32);
-    return {
-      'ts': timestamp.toString(),
-      'nonce': nonce,
-      'sig': _bytesToHex(Uint8List.fromList(hash))
-    };
-  }
+    debugPrint(
+        '[SecureHLS Proxy] Prefetch requested around segment $segmentIndex');
 
-  int _parseSegmentIndex(String name) {
-    final match = RegExp(r'segment_(\d+)\.ts').firstMatch(name);
-    return match != null ? int.tryParse(match.group(1) ?? '') ?? -1 : -1;
-  }
+    // 预取当前段及前后各 2 个段（共 5 个段）
+    final start = (segmentIndex - 2).clamp(0, segmentIndex);
+    final end = segmentIndex + 2;
 
-  Future<void> _handleRequest(HttpRequest request) async {
-    if (_stopped) {
-      request.response.statusCode = HttpStatus.serviceUnavailable;
-      await request.response.close();
-      return;
+    for (int i = start; i <= end; i++) {
+      final segmentName = 'segment_$i.ts';
+      final segmentUrl = '$baseUrl/api/v1/secure-hls/$sessionId/$segmentName';
+
+      // 异步预取，不阻塞当前操作
+      _prefetchSegment(segmentUrl, segmentName).catchError((e) {
+        debugPrint('[SecureHLS Proxy] Prefetch failed for $segmentName: $e');
+      });
     }
+  }
 
-    request.response.headers.add('Access-Control-Allow-Origin', '*');
-    if (request.method == 'OPTIONS') {
-      request.response.statusCode = HttpStatus.ok;
-      await request.response.close();
-      return;
-    }
-
+  /// 异步预取单个视频段
+  Future<void> _prefetchSegment(String url, String segmentName) async {
     try {
-      final path = request.uri.path;
-      if (path.contains('playlist.m3u8')) {
-        await _handlePlaylist(request);
-      } else if (path.endsWith('.ts')) {
-        await _handleSegment(request, path);
-      } else {
-        request.response.statusCode = HttpStatus.notFound;
-        await request.response.close();
-      }
-    } catch (_) {
-      try {
-        request.response.statusCode = HttpStatus.internalServerError;
-        await request.response.close();
-      } catch (_) {}
-    }
-  }
+      final zkpProof = _generateBulletproofZkpProof();
 
-  Future<void> _handlePlaylist(HttpRequest request) async {
-    try {
-      if (_cachedPlaylist != null) {
-        _servePlaylist(request, _cachedPlaylist!);
-        _startPrefetch(0);
-        return;
-      }
+      final client = HttpClient();
+      final request = await client.postUrl(Uri.parse(url));
+      request.headers.contentType = ContentType.json;
+      request.write(jsonEncode({'zkp_proof': zkpProof}));
 
-      final url = '$baseUrl/api/v1/secure-hls/$sessionId/playlist.m3u8';
-      final client = _httpClient ?? HttpClient();
-      final req = await client.getUrl(Uri.parse(url));
-      if (jwtToken.isNotEmpty) {
-        req.headers.add('Authorization', 'Bearer $jwtToken');
-      }
-      final response = await req.close().timeout(const Duration(seconds: 30));
+      final response = await request.close();
 
       if (response.statusCode == 200) {
+        // 读取并丢弃——让系统层面的缓存生效
+        await response.drain<void>();
+        debugPrint('[SecureHLS Proxy] Prefetched: $segmentName');
+      }
+    } catch (e) {
+      // 预取失败不影响正常播放
+      debugPrint('[SecureHLS Proxy] Prefetch error for $segmentName: $e');
+    }
+  }
+
+  /// 处理 HTTP 请求
+  Future<void> _handleRequest(HttpRequest request) async {
+    try {
+      final path = request.uri.path;
+      debugPrint('[SecureHLS Proxy] Request: ${request.method} $path');
+
+      if (path == '/playlist.m3u8') {
+        // 转发播放列表请求
+        await _handlePlaylistRequest(request);
+      } else if (path.endsWith('.ts')) {
+        // 拦截视频段请求，添加 ZKP 证明
+        await _handleSegmentRequest(request, path);
+      } else {
+        request.response.statusCode = HttpStatus.notFound;
+        request.response.write('Not Found');
+        await request.response.close();
+      }
+    } catch (e) {
+      debugPrint('[SecureHLS Proxy] Error handling request: $e');
+      request.response.statusCode = HttpStatus.internalServerError;
+      request.response.write('Internal Server Error: $e');
+      await request.response.close();
+    }
+  }
+
+  /// 处理播放列表请求
+  Future<void> _handlePlaylistRequest(HttpRequest request) async {
+    try {
+      // 从后端获取播放列表
+      final playlistUrl = '$baseUrl/api/v1/secure-hls/$sessionId/playlist.m3u8';
+      final response = await HttpClient()
+          .getUrl(Uri.parse(playlistUrl))
+          .then((req) => req.close());
+
+      if (response.statusCode == 200) {
+        // 读取播放列表内容
         final content = await response.transform(utf8.decoder).join();
-        _totalSegments = RegExp(r'segment_\d+\.ts').allMatches(content).length;
-        stats.setTotalSegments(_totalSegments ?? 0);
-        _cachedPlaylist = content;
-        _servePlaylist(request, content);
-        _startPrefetch(0);
+
+        // 修改播放列表，将视频段 URL 替换为代理服务器的 URL
+        final modifiedContent = _modifyPlaylist(content);
+
+        // 返回修改后的播放列表
+        request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType =
+            ContentType('application', 'vnd.apple.mpegurl', charset: 'utf-8');
+        request.response.write(modifiedContent);
       } else {
         request.response.statusCode = response.statusCode;
-        await request.response.close();
+        request.response.write('Failed to fetch playlist');
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[SecureHLS Proxy] Playlist error: $e');
       request.response.statusCode = HttpStatus.internalServerError;
-      await request.response.close();
-    }
-  }
-
-  void _servePlaylist(HttpRequest request, String content) {
-    request.response.statusCode = HttpStatus.ok;
-    request.response.headers.contentType =
-        ContentType('application', 'vnd.apple.mpegurl', charset: 'utf-8');
-    request.response.headers.add('Cache-Control', 'no-cache');
-    request.response.write(content);
-    request.response.close();
-  }
-
-  Future<void> _handleSegment(HttpRequest request, String path) async {
-    final segmentName = path.startsWith('/') ? path.substring(1) : path;
-    final index = _parseSegmentIndex(segmentName);
-    if (index < 0) {
-      request.response.statusCode = HttpStatus.badRequest;
-      await request.response.close();
-      return;
-    }
-
-    // 检测 seek 操作：如果请求的段落与上一个段落不连续，说明用户进行了 seek
-    final isSeek =
-        _lastRequestedSegment >= 0 && (index - _lastRequestedSegment).abs() > 2;
-
-    if (isSeek) {
-      debugPrint('[HLS Proxy] Seek detected: $_lastRequestedSegment -> $index');
-      // 1. 清空所有预取队列
-      _prefetchQueue.clear();
-      _isPrefetching = false;
-
-      // 2. 取消远离新位置的 pending 请求
-      final keysToCancel = _pendingRequests.keys
-          .where((k) => (k - index).abs() > _prefetchAhead)
-          .toList();
-      for (final key in keysToCancel) {
-        final c = _pendingRequests.remove(key);
-        if (c != null && !c.isCompleted) {
-          c.completeError(Exception('Cancelled due to seek'));
-        }
-      }
-
-      // 3. 通知服务端预缓冲 seek 目标附近的段落（异步，不阻塞）
-      _prebufferOnServer(index);
-    }
-
-    _lastRequestedSegment = index;
-
-    try {
-      // 1. 检查缓存
-      final cached = _cache.get(index);
-      if (cached != null) {
-        stats.recordCacheHit();
-        await _serveSegment(request, cached);
-        _startPrefetch(index);
-        return;
-      }
-
-      // 2. 检查是否有正在进行的请求
-      if (_pendingRequests.containsKey(index)) {
-        try {
-          final data =
-              await _pendingRequests[index]!.future.timeout(_requestTimeout);
-          await _serveSegment(request, data);
-        } catch (_) {
-          stats.recordFailure();
-          request.response.statusCode = HttpStatus.serviceUnavailable;
-          await request.response.close();
-        }
-        return;
-      }
-
-      // 3. 发起新请求
-      final completer = Completer<Uint8List>();
-      _pendingRequests[index] = completer;
-
-      try {
-        final data = await _fetchSegment(segmentName);
-        _cache.put(index, data);
-        if (!completer.isCompleted) completer.complete(data);
-        await _serveSegment(request, data);
-        _startPrefetch(index);
-      } catch (e) {
-        stats.recordFailure();
-        if (!completer.isCompleted) {
-          completer.completeError(Exception('Fetch failed: $e'));
-        }
-
-        // seek 场景下，如果第一次失败，自动重试一次（服务端可能还在转码）
-        if (isSeek) {
-          debugPrint(
-              '[HLS Proxy] Seek segment $index failed, retrying after 1s...');
-          await Future.delayed(const Duration(seconds: 1));
-          try {
-            final retryData = await _fetchSegment(segmentName);
-            _cache.put(index, retryData);
-            await _serveSegment(request, retryData);
-            _startPrefetch(index);
-            return;
-          } catch (_) {
-            // 重试也失败了
-          }
-        }
-
-        request.response.statusCode = HttpStatus.serviceUnavailable;
-        await request.response.close();
-      } finally {
-        _pendingRequests.remove(index);
-      }
-    } catch (_) {
-      request.response.statusCode = HttpStatus.internalServerError;
-      await request.response.close();
-    }
-  }
-
-  /// 通知服务端预缓冲 seek 目标附近的段落（后台执行，不阻塞播放）
-  void _prebufferOnServer(int targetIndex) {
-    if (_stopped) return;
-    // 异步通知服务端预转码，不等待结果
-    Future(() async {
-      try {
-        final segmentName = 'segment_$targetIndex.ts';
-        final url =
-            '$baseUrl/api/v1/secure-hls/$sessionId/prebuffer/$segmentName';
-        final client = _httpClient ?? HttpClient();
-        final req = await client.postUrl(Uri.parse(url));
-        if (jwtToken.isNotEmpty) {
-          req.headers.add('Authorization', 'Bearer $jwtToken');
-        }
-        req.headers.contentType = ContentType.json;
-        req.write('{}');
-        final response = await req.close().timeout(const Duration(seconds: 5));
-        await response.drain();
-        debugPrint(
-            '[HLS Proxy] Prebuffer request sent for segment $targetIndex');
-      } catch (e) {
-        debugPrint('[HLS Proxy] Prebuffer request failed: $e');
-      }
-    });
-  }
-
-  Future<Uint8List> _fetchSegment(String segmentName) async {
-    const maxRetries = 3;
-    Exception? lastError;
-
-    for (int attempt = 1; attempt <= maxRetries; attempt++) {
-      if (_stopped) throw Exception('Stopped');
-
-      try {
-        final params = _generateSecureParams(segmentName);
-        final url =
-            Uri.parse('$baseUrl/api/v1/secure-hls/$sessionId/$segmentName')
-                .replace(queryParameters: params);
-
-        final client = _httpClient ?? HttpClient();
-        final req = await client.postUrl(url);
-        req.headers.contentType = ContentType.json;
-        req.headers.add('Connection', 'keep-alive');
-        req.headers.add('Accept-Encoding', 'identity'); // 已加密数据不需要压缩
-        if (jwtToken.isNotEmpty) {
-          req.headers.add('Authorization', 'Bearer $jwtToken');
-        }
-        req.write('{}');
-
-        final response = await req.close().timeout(_requestTimeout);
-
-        if (response.statusCode == 200) {
-          // 使用 BytesBuilder 减少内存拷贝
-          final builder = BytesBuilder(copy: false);
-          await for (final chunk in response) {
-            builder.add(chunk);
-          }
-          final encrypted = builder.takeBytes();
-
-          if (encrypted.length < 100) throw Exception('Invalid segment');
-
-          stats.recordNetworkReceive(encrypted.length);
-          stats.recordNetworkLoad();
-
-          final decrypted = await _encryptor
-              .decryptSegmentAsync(Uint8List.fromList(encrypted));
-          stats.recordDecryption(decrypted.length);
-          onSegmentLoaded?.call(decrypted.length, true);
-
-          return decrypted;
-        } else {
-          throw Exception('Server error: ${response.statusCode}');
-        }
-      } catch (e) {
-        lastError = e is Exception ? e : Exception('Unknown error');
-        if (attempt < maxRetries) {
-          await Future.delayed(Duration(milliseconds: 100 * attempt));
-        }
-      }
-    }
-
-    throw lastError ?? Exception('Fetch failed');
-  }
-
-  Future<void> _serveSegment(HttpRequest request, Uint8List data) async {
-    request.response.statusCode = HttpStatus.ok;
-    request.response.headers.contentType = ContentType('video', 'mp2t');
-    request.response.headers.contentLength = data.length;
-    request.response.headers.add('Cache-Control', 'private, max-age=300');
-    request.response.headers.add('Connection', 'keep-alive');
-    request.response.headers.add('X-Segment-Size', data.length.toString());
-    request.response.add(data);
-    await request.response.close();
-  }
-
-  void prefetchAroundSegment(int targetSegment) {
-    if (_stopped || _totalSegments == null) return;
-
-    // 清除旧的预取队列，优先获取新目标周围的段落
-    _prefetchQueue.clear();
-    _isPrefetching = false;
-
-    // 优先级：目标段落 > 目标前后 > 更远的段落
-    final indices = <int>[targetSegment];
-    for (int i = 1; i <= _prefetchAhead; i++) {
-      if (targetSegment + i < _totalSegments!) indices.add(targetSegment + i);
-    }
-    for (int i = 1; i <= _prefetchBehind; i++) {
-      if (targetSegment - i >= 0) indices.add(targetSegment - i);
-    }
-
-    for (final index in indices) {
-      if (!_cache.contains(index) &&
-          !_pendingRequests.containsKey(index) &&
-          !_activePrefetches.contains(index)) {
-        _prefetchQueue.add(index);
-      }
-    }
-
-    _processPrefetchQueue();
-  }
-
-  /// 检查指定段落是否已在缓存中
-  bool isSegmentCached(int index) {
-    return _cache.contains(index) ||
-        (_pendingRequests.containsKey(index) &&
-            _pendingRequests[index]!.isCompleted);
-  }
-
-  /// 等待指定段落就绪（已缓存或正在获取中的请求完成）
-  Future<bool> waitForSegment(int index,
-      {Duration timeout = const Duration(seconds: 10)}) async {
-    if (_cache.contains(index)) return true;
-
-    // 如果有正在进行的请求，等待它完成
-    if (_pendingRequests.containsKey(index)) {
-      try {
-        await _pendingRequests[index]!.future.timeout(timeout);
-        return true;
-      } catch (_) {
-        return false;
-      }
-    }
-
-    // 段落既不在缓存中也没有正在获取，触发获取
-    try {
-      final data = await _fetchSegment('segment_$index.ts').timeout(timeout);
-      _cache.put(index, data);
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  void _startPrefetch(int currentIndex) {
-    if (_stopped || _totalSegments == null) return;
-
-    // 预取前方段落
-    for (int i = 1; i <= _prefetchAhead; i++) {
-      final nextIndex = currentIndex + i;
-      if (nextIndex >= _totalSegments!) break;
-      if (!_cache.contains(nextIndex) &&
-          !_pendingRequests.containsKey(nextIndex) &&
-          !_activePrefetches.contains(nextIndex)) {
-        _prefetchQueue.add(nextIndex);
-      }
-    }
-
-    for (int i = 1; i <= _prefetchBehind; i++) {
-      final prevIndex = currentIndex - i;
-      if (prevIndex < 0) break;
-      if (!_cache.contains(prevIndex) &&
-          !_pendingRequests.containsKey(prevIndex) &&
-          !_activePrefetches.contains(prevIndex)) {
-        _prefetchQueue.add(prevIndex);
-      }
-    }
-
-    _processPrefetchQueue();
-  }
-
-  Future<void> _processPrefetchQueue() async {
-    if (_isPrefetching || _prefetchQueue.isEmpty || _stopped) return;
-    _isPrefetching = true;
-
-    try {
-      while (_prefetchQueue.isNotEmpty && !_stopped) {
-        final toFetch = <int>[];
-        while (toFetch.length < _maxConcurrentPrefetch &&
-            _prefetchQueue.isNotEmpty) {
-          final index = _prefetchQueue.first;
-          _prefetchQueue.remove(index);
-
-          if (_cache.contains(index) ||
-              _pendingRequests.containsKey(index) ||
-              _activePrefetches.contains(index)) {
-            continue;
-          }
-
-          if (_lastRequestedSegment >= 0) {
-            final distance = (index - _lastRequestedSegment).abs();
-            if (distance > _prefetchAhead + 10) continue;
-          }
-
-          toFetch.add(index);
-        }
-
-        if (toFetch.isEmpty) break;
-
-        _activePrefetches.addAll(toFetch);
-        await Future.wait(
-          toFetch.map((index) => _prefetchSingleSegment(index)),
-          eagerError: false,
-        );
-        _activePrefetches.removeAll(toFetch);
-
-        // Minimal delay to avoid starving the event loop, but keep throughput high
-        await Future.delayed(const Duration(milliseconds: 2));
-      }
+      request.response.write('Error: $e');
     } finally {
-      _isPrefetching = false;
+      await request.response.close();
     }
   }
 
-  Future<void> _prefetchSingleSegment(int index) async {
-    if (_stopped || _cache.contains(index)) return;
+  /// 修改播放列表，替换视频段 URL
+  String _modifyPlaylist(String content) {
+    // 将 segment_N.ts 替换为代理服务器的 URL
+    return content.replaceAllMapped(
+      RegExp(r'(segment_\d+\.ts)'),
+      (match) => 'http://127.0.0.1:$_port/${match.group(1)}',
+    );
+  }
+
+  /// 处理视频段请求（使用 Bulletproofs ZKP 证明）
+  Future<void> _handleSegmentRequest(HttpRequest request, String path) async {
+    try {
+      final segmentName = path.substring(1); // 移除开头的 '/'
+
+      debugPrint('[SecureHLS Proxy] Fetching segment: $segmentName');
+
+      // 1. 生成 Bulletproofs ZKP 证明
+      final zkpProof = _generateBulletproofZkpProof();
+
+      // 2. 向后端发送 POST 请求（带 ZKP 证明）
+      final segmentUrl = '$baseUrl/api/v1/secure-hls/$sessionId/$segmentName';
+
+      final client = HttpClient();
+      final backendRequest = await client.postUrl(Uri.parse(segmentUrl));
+      backendRequest.headers.contentType = ContentType.json;
+
+      // 发送 JSON body（包含 ZKP 证明）
+      final body = jsonEncode({'zkp_proof': zkpProof});
+      backendRequest.write(body);
+
+      final backendResponse = await backendRequest.close();
+
+      if (backendResponse.statusCode == 200) {
+        // 3. 读取加密的视频段
+        final encryptedData = await backendResponse.fold<List<int>>(
+            [], (previous, element) => previous..addAll(element));
+
+        // 4. 解密视频段（使用 AES-256-GCM）
+        final decryptedData =
+            _decryptSegment(Uint8List.fromList(encryptedData));
+
+        // 5. 返回明文视频段给播放器
+        request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = ContentType('video', 'mp2t');
+        request.response.headers.contentLength = decryptedData.length;
+        request.response.add(decryptedData);
+
+        debugPrint(
+            '[SecureHLS Proxy] Segment served: $segmentName (${decryptedData.length} bytes)');
+      } else {
+        final errorBody = await backendResponse.transform(utf8.decoder).join();
+        debugPrint(
+            '[SecureHLS Proxy] Backend error: ${backendResponse.statusCode} - $errorBody');
+        request.response.statusCode = backendResponse.statusCode;
+        request.response.write('Backend error: $errorBody');
+      }
+    } catch (e, stack) {
+      debugPrint('[SecureHLS Proxy] Segment error: $e');
+      debugPrint('[SecureHLS Proxy] Stack: $stack');
+      request.response.statusCode = HttpStatus.internalServerError;
+      request.response.write('Error: $e');
+    } finally {
+      await request.response.close();
+    }
+  }
+
+  /// 生成完整的 Bulletproofs ZKP 证明
+  ///
+  /// 使用 Rust FFI 调用完整的 Bulletproofs 实现，
+  /// 证明用户知道密码，而不泄露密码本身。
+  ///
+  /// 证明结构包含：
+  /// - Schnorr 证明：证明知道密码和 blinding factor
+  /// - Bulletproofs 范围证明：密码熵值 >= 28 bits（密码学证明）
+  /// - 时间戳和 nonce：防止重放攻击
+  /// - 上下文绑定：固定为 "hls_segment_access"
+  String _generateBulletproofZkpProof() {
+    if (zkpRegistration == null) {
+      throw StateError(
+        'ZKP registration data is required for authentication. '
+        'Please ensure the user has completed registration.',
+      );
+    }
+
+    // 确保 FFI 已初始化
+    if (!_bulletproofAuth.isInitialized) {
+      if (!_bulletproofAuth.initializeAuto()) {
+        throw StateError(
+          'Failed to initialize Bulletproofs FFI. '
+          'Ensure the native library is available.',
+        );
+      }
+    }
 
     try {
-      final data = await _fetchSegment('segment_$index.ts');
-      _cache.put(index, data);
-    } catch (_) {
-      // 预取失败不影响播放
+      debugPrint('[SecureHLS Proxy] Generating full Bulletproofs ZKP proof...');
+
+      // 生成完整的 Bulletproofs 证明（Schnorr + 范围证明）
+      final proofBase64 = _bulletproofAuth.generateProof(
+        password,
+        zkpRegistration!,
+        context: 'hls_segment_access',
+      );
+
+      debugPrint('[SecureHLS Proxy] ✅ Full Bulletproofs ZKP proof generated');
+      debugPrint(
+          '[SecureHLS Proxy]   - Proof size: ${proofBase64.length} chars (base64)');
+
+      return proofBase64;
+    } catch (e) {
+      debugPrint('[SecureHLS Proxy] Failed to generate Bulletproofs proof: $e');
+      rethrow;
     }
   }
 
-  int? get totalSegments => _totalSegments;
-  int get currentSegmentIndex => _lastRequestedSegment;
-
-  int getBufferedSegmentsAhead() {
-    if (_lastRequestedSegment < 0) return 0;
-    int count = 0;
-    for (int i = _lastRequestedSegment + 1;
-        i <= _lastRequestedSegment + _prefetchAhead;
-        i++) {
-      if (_cache.contains(i)) count++;
+  /// 解密视频段（完整的 AES-256-GCM 实现）
+  ///
+  /// Rust端加密数据格式（使用 aes_gcm crate）：
+  /// - 前 12 字节：nonce
+  /// - 剩余部分：ciphertext + tag（tag自动附加在ciphertext末尾）
+  Uint8List _decryptSegment(Uint8List encryptedData) {
+    if (encryptedData.length < 28) {
+      // 至少需要 12 字节 nonce + 16 字节 tag
+      debugPrint(
+          '[SecureHLS Proxy] Invalid encrypted data length: ${encryptedData.length}');
+      throw Exception('Invalid encrypted data format');
     }
-    return count;
+
+    try {
+      // 提取 nonce（前 12 字节）
+      final nonce = encryptedData.sublist(0, 12);
+
+      // 剩余部分是 ciphertext + tag（tag 已经附加在 ciphertext 末尾）
+      final ciphertextWithTag = encryptedData.sublist(12);
+
+      // 从 PMK 派生解密密钥（AES-256 需要 32 字节）
+      // 使用与 Rust 端完全一致的 info 参数："hls-master-key"
+      final decryptionKey = _deriveKey(pmk, 'hls-master-key');
+
+      // 使用完整的 AES-256-GCM 解密
+      // pointycastle 的 GCM 实现会自动处理附加在末尾的 tag
+      final plaintext = _aesGcmDecrypt(
+        ciphertextWithTag: ciphertextWithTag,
+        key: decryptionKey,
+        nonce: nonce,
+      );
+
+      debugPrint(
+          '[SecureHLS Proxy] Decrypted segment: ${plaintext.length} bytes');
+      return plaintext;
+    } catch (e, stack) {
+      debugPrint('[SecureHLS Proxy] Decryption error: $e');
+      debugPrint('[SecureHLS Proxy] Stack trace: $stack');
+      rethrow;
+    }
+  }
+
+  /// AES-256-GCM 解密（完整的生产级实现）
+  ///
+  /// 使用 pointycastle 库实现标准的 AES-GCM 解密
+  ///
+  /// 参数：
+  /// - ciphertextWithTag: 加密的数据 + 认证标签（tag 附加在末尾）
+  /// - key: 32 字节的 AES-256 密钥
+  /// - nonce: 12 字节的 nonce（IV）
+  ///
+  /// 返回：解密后的明文数据
+  ///
+  /// 抛出：如果认证失败或解密失败
+  ///
+  /// 注意：Rust 的 aes_gcm crate 会自动将 16 字节的 tag 附加到 ciphertext 末尾
+  Uint8List _aesGcmDecrypt({
+    required Uint8List ciphertextWithTag,
+    required Uint8List key,
+    required Uint8List nonce,
+  }) {
+    try {
+      // 验证参数长度
+      if (key.length != 32) {
+        throw ArgumentError(
+            'AES-256 requires a 32-byte key, got ${key.length}');
+      }
+      if (nonce.length != 12) {
+        throw ArgumentError(
+            'GCM requires a 12-byte nonce, got ${nonce.length}');
+      }
+      if (ciphertextWithTag.length < 16) {
+        throw ArgumentError(
+            'Ciphertext too short, must include 16-byte tag, got ${ciphertextWithTag.length}');
+      }
+
+      // 创建 AES-GCM 解密器
+      final cipher = GCMBlockCipher(AESEngine());
+
+      // 设置参数
+      // pointycastle 的 GCM 实现期望 ciphertext + tag 作为输入
+      final params = AEADParameters(
+        KeyParameter(key),
+        128, // tag 长度（位）
+        nonce,
+        Uint8List(0), // 附加认证数据（AAD）为空
+      );
+
+      // 初始化解密器
+      cipher.init(false, params); // false = 解密模式
+
+      // 执行解密（输入是 ciphertext + tag）
+      final plaintext = cipher.process(ciphertextWithTag);
+
+      debugPrint('[SecureHLS Proxy] AES-GCM decryption successful');
+      return plaintext;
+    } on ArgumentError catch (e) {
+      debugPrint('[SecureHLS Proxy] Invalid GCM parameters: $e');
+      throw Exception('GCM decryption failed: Invalid parameters - $e');
+    } catch (e) {
+      // 认证失败或其他错误
+      debugPrint('[SecureHLS Proxy] GCM decryption failed: $e');
+      throw Exception(
+          'GCM decryption failed: Authentication tag verification failed or corrupted data');
+    }
+  }
+
+  /// 从密钥派生子密钥（使用 HKDF-SHA3-256）
+  ///
+  /// 生产级实现：使用 HKDF-SHA3-256 进行密钥派生，与 Rust 端完全一致
+  ///
+  /// Rust 端使用：
+  /// ```rust
+  /// let hk = Hkdf::<Sha3_256>::new(None, &pmk);
+  /// hk.expand(b"hls-master-key", &mut encryption_key)
+  /// ```
+  ///
+  /// 参数：
+  /// - key: 主密钥（PMK）
+  /// - info: 上下文信息字符串
+  ///
+  /// 返回：32 字节的派生密钥
+  Uint8List _deriveKey(Uint8List key, String info) {
+    // 使用 HKDF-SHA3-256 派生密钥（与 Rust 端一致）
+    final hkdf = HKDFKeyDerivator(SHA3Digest(256));
+
+    // HKDF 参数：
+    // - salt: None（与 Rust 端的 Hkdf::new(None, &pmk) 一致）
+    // - info: 上下文信息
+    final infoBytes = Uint8List.fromList(utf8.encode(info));
+
+    // 初始化 HKDF（salt 为 null 表示使用零值 salt）
+    hkdf.init(HkdfParameters(key, 32, null, infoBytes));
+
+    // 派生 32 字节的密钥
+    final derivedKey = Uint8List(32);
+    hkdf.deriveKey(null, 0, derivedKey, 0);
+
+    return derivedKey;
   }
 }

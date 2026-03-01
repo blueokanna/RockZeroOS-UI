@@ -134,7 +134,7 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
       await _securePlayer!.initializeSaeHandshake(
         userId,
         password,
-        fileId: fileId,
+        fileId,
       );
 
       // 2. 获取代理 URL
@@ -261,17 +261,20 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
       position: clampedPosition,
     );
 
-    // 通知代理服务器预取 seek 目标附近的段落
+    // Notify proxy to prebuffer around the seek target
     final proxy = _securePlayer?.proxy;
     if (proxy != null) {
       final segmentIndex = clampedPosition.inSeconds ~/ 6;
       proxy.prefetchAroundSegment(segmentIndex);
     }
 
-    await _player!.seek(clampedPosition);
+    try {
+      await _player!.seek(clampedPosition);
+    } catch (e) {
+      debugPrint('[VideoPlayerService] Seek error: $e');
+    }
 
-    // 监听 buffering 状态变化来取消 seeking 标记
-    // 当 buffering 结束时（数据就绪），取消 seeking 状态
+    // Listen for buffering to end, then clear seeking state
     StreamSubscription<bool>? seekBufferSub;
     seekBufferSub = _player!.stream.buffering.listen((buffering) {
       if (!buffering && state.isSeeking) {
@@ -280,10 +283,10 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
       }
     });
 
-    // 安全超时：最多等 15 秒（4K 转码可能需要较长时间）
-    Future.delayed(const Duration(seconds: 15), () {
+    // Safety timeout: 30 seconds max wait (server may need time to transcode)
+    Future.delayed(const Duration(seconds: 30), () {
       if (state.isSeeking) {
-        state = state.copyWith(isSeeking: false);
+        state = state.copyWith(isSeeking: false, isBuffering: false);
         seekBufferSub?.cancel();
       }
     });

@@ -1,56 +1,22 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:chewie/chewie.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
-import 'package:media_kit/media_kit.dart';
-import 'package:media_kit_video/media_kit_video.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../../core/widgets/shell_scaffold.dart';
 import '../../../../services/sae_handshake_service.dart';
 import '../../../../services/secure_hls_proxy.dart';
 
-class SecureStreamStats {
-  ProxyStreamStats? _proxyStats;
-  DateTime? sessionStartTime;
-  String encryptionMethod = 'AES-256-GCM';
-  String keyExchange = 'SAE (WPA3)';
-
-  void setProxyStats(ProxyStreamStats stats) => _proxyStats = stats;
-
-  int get networkBytesReceived => _proxyStats?.networkBytesReceived ?? 0;
-  int get decryptedBytesTotal => _proxyStats?.decryptedBytesTotal ?? 0;
-  int get segmentsLoadedFromNetwork =>
-      _proxyStats?.segmentsLoadedFromNetwork ?? 0;
-  int get segmentsServedFromCache => _proxyStats?.segmentsServedFromCache ?? 0;
-  int get segmentsDecrypted => _proxyStats?.segmentsDecrypted ?? 0;
-  int get failedRequests => _proxyStats?.failedRequests ?? 0;
-  double get cacheHitRate => _proxyStats?.cacheHitRate ?? 0;
-
-  String get formattedNetworkBytes => _formatBytes(networkBytesReceived);
-  String get formattedDecryptedBytes => _formatBytes(decryptedBytesTotal);
-
-  String get sessionDuration {
-    if (sessionStartTime == null) return '0s';
-    final d = DateTime.now().difference(sessionStartTime!);
-    if (d.inHours > 0) return '${d.inHours}h ${d.inMinutes % 60}m';
-    if (d.inMinutes > 0) return '${d.inMinutes}m ${d.inSeconds % 60}s';
-    return '${d.inSeconds}s';
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
-  }
-}
-
+/// 安全HLS视频播放器 - 使用SAE握手和ZKP验证
 class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
   final String? filePath;
   final String? fileId;
@@ -63,85 +29,56 @@ class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
     this.fileId,
     required this.fileName,
     required this.baseUrl,
-  }) : assert(filePath != null || fileId != null);
+  }) : assert(filePath != null || fileId != null,
+            'Either filePath or fileId is required');
 
   @override
   ConsumerState<SecureHlsVideoPlayer> createState() =>
       _SecureHlsVideoPlayerState();
 }
 
-class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
-    with WidgetsBindingObserver {
-  Player? _player;
-  VideoController? _videoController;
+class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
+  VideoPlayerController? _videoController;
+  ChewieController? _chewieController;
   SecureHlsProxyServer? _proxyServer;
 
   bool _isLoading = true;
-  bool _isInitializing = false;
-  String _loadingStatus = '初始化中...';
-  double _loadingProgress = 0;
   String? _error;
   String? _authToken;
   String? _hlsSessionId;
   String? _userId;
   String? _userPassword;
-  Uint8List? _pmk;
+  Uint8List? _pmk; // Pairwise Master Key
 
   bool _isDownloading = false;
   double _downloadProgress = 0;
-  bool _isDisposed = false;
-  bool _showControls = true;
-  Timer? _hideControlsTimer;
-  Timer? _uiUpdateTimer;
 
-  final SecureStreamStats _stats = SecureStreamStats();
+  bool _isLooping = false;
 
-  Duration _position = Duration.zero;
-  Duration _duration = Duration.zero;
-  bool _isPlaying = false;
-  bool _isBuffering = false;
-  bool _isSeeking = false;
-
-  final List<StreamSubscription> _subscriptions = [];
+  late Color _primaryColor;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _enterFullscreen();
     WakelockPlus.enable();
-    _stats.sessionStartTime = DateTime.now();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 允许后台继续播放音频（不暂停）
-    // 视频在后台时只需要音频继续播放，画面会自动暂停渲染
-    if (state == AppLifecycleState.paused) {
-      // 不暂停播放器，让音频在后台继续
-      debugPrint('[VideoPlayer] App moved to background, audio continues');
-    } else if (state == AppLifecycleState.resumed) {
-      // 恢复时刷新UI
-      if (mounted && !_isDisposed) {
-        setState(() {});
-      }
-    }
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (!_isInitializing && _player == null && _error == null) {
-      _isInitializing = true;
+    _primaryColor = Theme.of(context).colorScheme.primary;
+    if (_videoController == null && _error == null) {
       _initPlayer();
     }
   }
 
   Future<void> _initPlayer() async {
-    if (_isDisposed) return;
-
     try {
-      _updateLoading('正在获取凭据...', 0.1);
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
 
       const storage = FlutterSecureStorage();
       _authToken = await storage.read(key: 'access_token');
@@ -149,462 +86,272 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
       _userPassword = await storage.read(key: 'user_password_hash');
 
       if (_authToken == null || _authToken!.isEmpty) {
-        _setError('未登录，请先登录');
+        setState(() {
+          _error = '未登录，请先登录';
+          _isLoading = false;
+        });
         return;
       }
+
       if (_userId == null || _userPassword == null) {
-        _setError('无法获取用户凭据，请重新登录');
+        setState(() {
+          _error = '无法获取用户凭据，请重新登录';
+          _isLoading = false;
+        });
         return;
       }
-      if (_isDisposed) return;
 
-      _updateLoading('正在建立安全连接...', 0.2);
+      debugPrint('[SecureHLS] Starting SAE handshake...');
 
+      // 使用 SaeHandshakeService 执行完整的 SAE 握手
       final handshakeService = SaeHandshakeService(
         baseUrl: widget.baseUrl,
         jwtToken: _authToken!,
       );
-      final filePath = widget.filePath ?? '';
 
+      final filePath = widget.filePath ?? '';
       final (sessionId, pmk) = await handshakeService.performHandshake(
         filePath: filePath,
         password: _userPassword!,
         userId: _userId!,
       );
 
-      if (_isDisposed) return;
       _hlsSessionId = sessionId;
       _pmk = pmk;
 
-      _updateLoading('正在启动安全代理...', 0.4);
+      final playlistUrl =
+          '${widget.baseUrl}/api/v1/secure-hls/$_hlsSessionId/playlist.m3u8';
 
+      debugPrint('[SecureHLS] HLS session created: $_hlsSessionId');
+      debugPrint('[SecureHLS] Playlist URL: $playlistUrl');
+
+      // 步骤6: 启动本地代理服务器
+      debugPrint('[SecureHLS] Starting local proxy server...');
       _proxyServer = SecureHlsProxyServer(
         baseUrl: widget.baseUrl,
         sessionId: _hlsSessionId!,
         pmk: _pmk!,
-        jwtToken: _authToken ?? '',
+        password: _userPassword!,
       );
-      _stats.setProxyStats(_proxyServer!.stats);
 
       final proxyPlaylistUrl = await _proxyServer!.start();
-      if (_isDisposed) return;
+      debugPrint('[SecureHLS] Proxy server started: $proxyPlaylistUrl');
 
-      _updateLoading('正在初始化播放器...', 0.6);
+      // 步骤7: 等待播放列表准备好
+      debugPrint('[SecureHLS] Waiting for playlist...');
+      bool playlistReady = false;
+      for (int i = 0; i < 30; i++) {
+        await Future.delayed(const Duration(seconds: 1));
 
-      // Configure player with platform-specific hardware decoding
-      final Map<String, String> mpvOptions = {};
-      if (Platform.isAndroid) {
-        mpvOptions['hwdec'] = 'mediacodec';
-        mpvOptions['hwdec-codecs'] = 'h264,hevc,vp8,vp9,av1';
-        mpvOptions['demuxer-max-bytes'] = '150MiB'; // 4K segments are large
-        mpvOptions['demuxer-max-back-bytes'] = '64MiB';
-        mpvOptions['demuxer-readahead-secs'] = '120'; // 2分钟预读
-        mpvOptions['cache'] = 'yes';
-        mpvOptions['cache-secs'] = '120';
-        mpvOptions['cache-pause-initial'] = 'yes';
-        mpvOptions['cache-pause-wait'] = '3'; // 缓冲不足时暂停等待3秒
-        mpvOptions['hr-seek'] = 'yes';
-        mpvOptions['hr-seek-framedrop'] = 'yes';
-        mpvOptions['hr-seek-demuxer-offset'] = '0';
-        mpvOptions['demuxer-seekable-cache'] = 'yes';
-        mpvOptions['force-seekable'] = 'yes';
-        mpvOptions['network-timeout'] = '60';
-        mpvOptions['stream-buffer-size'] = '4MiB'; // 增大网络流缓冲
-        mpvOptions['video-sync'] = 'display-resample'; // 更平滑的帧同步
-        mpvOptions['interpolation'] = 'yes';
-      } else if (Platform.isIOS) {
-        mpvOptions['hwdec'] = 'videotoolbox';
-        mpvOptions['demuxer-max-bytes'] = '150MiB';
-        mpvOptions['demuxer-max-back-bytes'] = '64MiB';
-        mpvOptions['demuxer-readahead-secs'] = '120';
-        mpvOptions['cache'] = 'yes';
-        mpvOptions['cache-secs'] = '120';
-        mpvOptions['cache-pause-initial'] = 'yes';
-        mpvOptions['cache-pause-wait'] = '3';
-        mpvOptions['hr-seek'] = 'yes';
-        mpvOptions['hr-seek-framedrop'] = 'yes';
-        mpvOptions['hr-seek-demuxer-offset'] = '0';
-        mpvOptions['demuxer-seekable-cache'] = 'yes';
-        mpvOptions['force-seekable'] = 'yes';
-        mpvOptions['network-timeout'] = '60';
-        mpvOptions['stream-buffer-size'] = '4MiB';
-        mpvOptions['video-sync'] = 'display-resample';
-      } else {
-        mpvOptions['hwdec'] = 'auto-safe';
-        mpvOptions['demuxer-max-bytes'] = '256MiB'; // 桌面端更大缓冲
-        mpvOptions['demuxer-max-back-bytes'] = '128MiB';
-        mpvOptions['demuxer-readahead-secs'] = '180';
-        mpvOptions['cache'] = 'yes';
-        mpvOptions['cache-secs'] = '180';
-        mpvOptions['cache-pause-initial'] = 'yes';
-        mpvOptions['cache-pause-wait'] = '3';
-        mpvOptions['hr-seek'] = 'yes';
-        mpvOptions['demuxer-seekable-cache'] = 'yes';
-        mpvOptions['force-seekable'] = 'yes';
-        mpvOptions['network-timeout'] = '60';
-        mpvOptions['stream-buffer-size'] = '8MiB';
-        mpvOptions['video-sync'] = 'display-resample';
-      }
+        try {
+          final checkResponse = await http.get(
+            Uri.parse(playlistUrl),
+            headers: {
+              'Accept': 'application/vnd.apple.mpegurl, */*',
+              'User-Agent': 'RockZeroOS/1.0',
+            },
+          ).timeout(const Duration(seconds: 2));
 
-      _player = Player(
-        configuration: PlayerConfiguration(
-          bufferSize: 64 * 1024 * 1024, // 64MB — 4K segments are much larger
-          logLevel: MPVLogLevel.warn,
-          protocolWhitelist: const ['http', 'https', 'tcp', 'tls', 'file'],
-        ),
-      );
-
-      // Apply mpv options via the native player handle
-      final nativePlayer = _player!.platform;
-      if (nativePlayer is NativePlayer) {
-        for (final entry in mpvOptions.entries) {
-          await nativePlayer.setProperty(entry.key, entry.value);
+          if (checkResponse.statusCode == 200) {
+            final content = checkResponse.body;
+            if (content.contains('#EXTM3U') &&
+                (content.contains('#EXTINF') || content.contains('segment_'))) {
+              debugPrint('[SecureHLS] ✅ Playlist ready after ${i + 1} seconds');
+              playlistReady = true;
+              break;
+            }
+          }
+        } catch (e) {
+          debugPrint(
+              '[SecureHLS] Playlist check failed: $e, waiting... (${i + 1}s)');
         }
       }
 
-      _videoController = VideoController(
-        _player!,
-        configuration: VideoControllerConfiguration(
-          enableHardwareAcceleration: true,
-          // Use hardware rendering on Android for zero-copy display
-          androidAttachSurfaceAfterVideoParameters: false,
+      if (!playlistReady) {
+        throw Exception('播放列表生成超时');
+      }
+
+      // 步骤8: 创建视频播放器（使用代理服务器URL）
+      if (_chewieController != null) {
+        _chewieController!.pause();
+        _chewieController!.dispose();
+        _chewieController = null;
+      }
+      if (_videoController != null) {
+        _videoController!.dispose();
+        _videoController = null;
+      }
+
+      debugPrint('[SecureHLS] Creating video controller with proxy URL');
+
+      // 创建视频播放器控制器（使用代理服务器的URL）
+      _videoController = VideoPlayerController.networkUrl(
+        Uri.parse(proxyPlaylistUrl),
+        videoPlayerOptions: VideoPlayerOptions(
+          mixWithOthers: false,
+          allowBackgroundPlayback: false,
         ),
       );
 
-      _subscriptions.add(_player!.stream.playing.listen((p) {
-        _isPlaying = p;
-        if (mounted && !_isDisposed) setState(() {});
-      }));
+      // 初始化视频控制器
+      await _videoController!.initialize().timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          throw TimeoutException('视频加载超时');
+        },
+      );
 
-      _subscriptions.add(_player!.stream.position.listen((p) {
-        if (!_isSeeking) _position = p;
-      }));
+      debugPrint('[SecureHLS] ✅ Video controller initialized');
 
-      _subscriptions.add(_player!.stream.duration.listen((d) {
-        _duration = d;
-      }));
+      // 设置循环播放
+      _videoController!.setLooping(_isLooping);
 
-      _subscriptions.add(_player!.stream.buffering.listen((b) {
-        _isBuffering = b;
-        if (mounted && !_isDisposed) setState(() {});
-      }));
+      // 创建Chewie控制器
+      _chewieController = ChewieController(
+        videoPlayerController: _videoController!,
+        autoPlay: true,
+        looping: _isLooping,
+        allowFullScreen: true,
+        allowMuting: true,
+        showControls: true,
+        showControlsOnInitialize: true,
+        placeholder: Container(color: Colors.black),
+        autoInitialize: true,
+        additionalOptions: (context) => [
+          OptionItem(
+            onTap: (_) => _toggleLooping(),
+            iconData: _isLooping ? Icons.repeat_one : Icons.repeat,
+            title: _isLooping ? '循环: 开' : '循环: 关',
+          ),
+        ],
+        errorBuilder: (_, errorMessage) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error, color: Colors.white54, size: 48),
+                const SizedBox(height: 16),
+                Text(
+                  errorMessage,
+                  style: const TextStyle(color: Colors.white54),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: _retry,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('重试'),
+                ),
+              ],
+            ),
+          );
+        },
+        materialProgressColors: ChewieProgressColors(
+          playedColor: _primaryColor,
+          handleColor: _primaryColor,
+          backgroundColor: Colors.white24,
+          bufferedColor: Colors.white38,
+        ),
+      );
 
-      _updateLoading('正在加载视频...', 0.8);
-
-      await _player!.open(Media(proxyPlaylistUrl), play: true);
-      if (_isDisposed) return;
-
-      _uiUpdateTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
-        if (mounted && !_isDisposed) setState(() {});
-      });
-
-      _startHideControlsTimer();
-
-      if (mounted && !_isDisposed) {
+      if (mounted) {
         setState(() {
           _isLoading = false;
-          _loadingProgress = 1.0;
         });
       }
-    } catch (e) {
-      _setError(_parseError(e.toString()));
-    } finally {
-      _isInitializing = false;
-    }
-  }
 
-  void _updateLoading(String status, double progress) {
-    if (mounted && !_isDisposed) {
-      setState(() {
-        _loadingStatus = status;
-        _loadingProgress = progress;
-      });
-    }
-  }
-
-  void _setError(String error) {
-    if (mounted && !_isDisposed) {
-      setState(() {
-        _error = error;
-        _isLoading = false;
-      });
-    }
-  }
-
-  String _parseError(String e) {
-    final lower = e.toLowerCase();
-    if (lower.contains('key') || lower.contains('decrypt')) return '密钥错误，请重新登录';
-    if (lower.contains('sae') ||
-        lower.contains('handshake') ||
-        lower.contains('verification')) {
-      return 'SAE安全握手失败，请检查密码是否正确';
-    }
-    if (lower.contains('timeout')) return '连接超时，请检查网络';
-    if (lower.contains('network') || lower.contains('connection'))
-      return '网络错误，请检查连接';
-    if (lower.contains('401') || lower.contains('unauthorized'))
-      return '认证失败，请重新登录';
-    if (lower.contains('404') || lower.contains('not found')) return '文件不存在';
-    if (lower.contains('500')) return '服务器错误，请稍后重试';
-    return '播放失败，请重试';
-  }
-
-  void _startHideControlsTimer() {
-    _hideControlsTimer?.cancel();
-    _hideControlsTimer = Timer(const Duration(seconds: 4), () {
-      if (mounted && !_isDisposed && _isPlaying) {
-        setState(() => _showControls = false);
+      debugPrint('[SecureHLS] Player initialized successfully');
+    } catch (e, stack) {
+      debugPrint('[SecureHLS] Error: $e');
+      debugPrint('[SecureHLS] Stack: $stack');
+      if (mounted) {
+        setState(() {
+          _error = '播放失败: $e';
+          _isLoading = false;
+        });
       }
+    }
+  }
+
+  void _toggleLooping() {
+    setState(() {
+      _isLooping = !_isLooping;
     });
-  }
-
-  void _onTapVideo() {
-    setState(() => _showControls = !_showControls);
-    if (_showControls) _startHideControlsTimer();
-  }
-
-  void _togglePlayPause() {
-    if (_player == null) return;
-    if (_isPlaying) {
-      _player!.pause();
-    } else {
-      _player!.play();
-      _startHideControlsTimer();
-    }
-  }
-
-  void _seekTo(Duration position) {
-    if (_player == null || _duration == Duration.zero) return;
-
-    final clampedPosition = Duration(
-      milliseconds: position.inMilliseconds.clamp(0, _duration.inMilliseconds),
-    );
-
-    _isSeeking = true;
-    _position = clampedPosition;
-    setState(() {});
-
-    // 预取目标段落周围的数据
-    final targetSegment = (clampedPosition.inSeconds / 6).floor();
-
-    // 先通知代理预取目标段落，然后等待目标段落就绪后再 seek
-    // 这样可以避免 mpv 在段落未就绪时卡住
-    _proxyServer?.prefetchAroundSegment(targetSegment);
-
-    // 等待代理准备好目标段落（最多等 8 秒）
-    _waitForSegmentAndSeek(clampedPosition, targetSegment);
-  }
-
-  Future<void> _waitForSegmentAndSeek(
-      Duration targetPosition, int targetSegment) async {
-    // 给代理一点时间来开始获取目标段落
-    // 对于已缓存的段落这几乎是即时的
-    await Future.delayed(const Duration(milliseconds: 50));
-
-    // 检查目标段落是否已在缓存中
-    bool segmentReady = _proxyServer?.isSegmentCached(targetSegment) ?? false;
-
-    if (!segmentReady) {
-      // 段落未缓存，等待它被获取（最多 8 秒）
-      for (int i = 0; i < 80; i++) {
-        await Future.delayed(const Duration(milliseconds: 100));
-        if (_isDisposed || !mounted) return;
-        segmentReady = _proxyServer?.isSegmentCached(targetSegment) ?? false;
-        if (segmentReady) break;
-      }
-    }
-
-    if (_isDisposed || !mounted) return;
-
-    // 执行 seek（即使段落未完全就绪也要 seek，避免永远卡住）
-    try {
-      await _player!.seek(targetPosition);
-    } catch (e) {
-      debugPrint('[VideoPlayer] Seek error: $e');
-    }
-
-    // 等待 mpv 完成 seek 后再释放 seeking 锁
-    // 给 mpv 足够时间处理 seek 和开始解码
-    await Future.delayed(const Duration(milliseconds: 500));
-    if (mounted && !_isDisposed) {
-      _isSeeking = false;
-      setState(() {});
-    }
-  }
-
-  void _seekForward() {
-    final newPos = _position + const Duration(seconds: 15);
-    _seekTo(newPos < _duration ? newPos : _duration);
-  }
-
-  void _seekBackward() {
-    final newPos = _position - const Duration(seconds: 15);
-    _seekTo(newPos > Duration.zero ? newPos : Duration.zero);
-  }
-
-  String _formatDuration(Duration d) {
-    String twoDigits(int n) => n.toString().padLeft(2, '0');
-    if (d.inHours > 0) {
-      return '${twoDigits(d.inHours)}:${twoDigits(d.inMinutes.remainder(60))}:${twoDigits(d.inSeconds.remainder(60))}';
-    }
-    return '${twoDigits(d.inMinutes)}:${twoDigits(d.inSeconds.remainder(60))}';
-  }
-
-  void _showSecurityInfoDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.security, color: Colors.green.shade400),
-            const SizedBox(width: 12),
-            const Text('安全连接信息'),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _infoSection('加密方式', Icons.lock, [
-                _infoRow('算法', _stats.encryptionMethod),
-                _infoRow('密钥交换', _stats.keyExchange),
-                _infoRow('重放保护', '已启用'),
-              ]),
-              const Divider(height: 24),
-              _infoSection('流量统计', Icons.data_usage, [
-                _infoRow('网络接收', _stats.formattedNetworkBytes),
-                _infoRow('解密数据', _stats.formattedDecryptedBytes),
-                _infoRow('网络加载', '${_stats.segmentsLoadedFromNetwork} 段'),
-                _infoRow('缓存命中', '${_stats.segmentsServedFromCache} 段'),
-                _infoRow('命中率',
-                    '${(_stats.cacheHitRate * 100).toStringAsFixed(1)}%'),
-              ]),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
-        ],
-      ),
-    );
-  }
-
-  Widget _infoSection(String title, IconData icon, List<Widget> children) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(children: [
-          Icon(icon, size: 18, color: Colors.grey),
-          const SizedBox(width: 8),
-          Text(title,
-              style:
-                  const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-        ]),
-        const SizedBox(height: 8),
-        ...children,
-      ],
-    );
-  }
-
-  Widget _infoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: TextStyle(color: Colors.grey.shade600)),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w500)),
-        ],
-      ),
-    );
+    _videoController?.setLooping(_isLooping);
+    _chewieController?.setLooping(_isLooping);
   }
 
   Future<void> _retry() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-      _loadingProgress = 0;
-      _loadingStatus = '正在重试...';
-    });
-    await _cleanup();
-    _isInitializing = false;
+    await _cleanupHlsSession();
+    _chewieController?.dispose();
+    _videoController?.dispose();
+    _chewieController = null;
+    _videoController = null;
     await _initPlayer();
   }
 
-  Future<void> _cleanup() async {
-    _uiUpdateTimer?.cancel();
-    _hideControlsTimer?.cancel();
-    for (final sub in _subscriptions) {
-      await sub.cancel();
+  Future<void> _cleanupHlsSession() async {
+    // 停止代理服务器
+    if (_proxyServer != null) {
+      await _proxyServer!.stop();
+      _proxyServer = null;
+      debugPrint('[SecureHLS] Proxy server stopped');
     }
-    _subscriptions.clear();
 
-    try {
-      await _player?.dispose();
-    } catch (_) {}
-    _player = null;
-    _videoController = null;
-
-    try {
-      await _proxyServer?.stop();
-    } catch (_) {}
-    _proxyServer = null;
-
+    // 停止HLS会话
     if (_hlsSessionId != null && _authToken != null) {
       try {
         await http.post(
           Uri.parse('${widget.baseUrl}/api/v1/secure-hls/$_hlsSessionId/stop'),
           headers: {'Authorization': 'Bearer $_authToken'},
-        ).timeout(const Duration(seconds: 3));
-      } catch (_) {}
+        );
+        debugPrint('[SecureHLS] HLS session stopped: $_hlsSessionId');
+      } catch (e) {
+        debugPrint('[SecureHLS] Failed to stop HLS session: $e');
+      }
+      _hlsSessionId = null;
     }
-    _hlsSessionId = null;
-    _pmk = null;
   }
 
-  void _restoreNavigation() {
-    // 恢复系统 UI
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge,
-        overlays: SystemUiOverlay.values);
+  @override
+  void dispose() {
+    _cleanupHlsSession();
+    _chewieController?.dispose();
+    _videoController?.dispose();
+    _exitFullscreen();
+    WakelockPlus.disable();
+    super.dispose();
+  }
+
+  void _enterFullscreen() {
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.immersiveSticky,
+      overlays: [],
+    );
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+      DeviceOrientation.portraitUp,
+    ]);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ref.read(bottomNavVisibleProvider.notifier).hide();
+      }
+    });
+  }
+
+  void _exitFullscreen() {
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.edgeToEdge,
+      overlays: SystemUiOverlay.values,
+    );
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
       DeviceOrientation.portraitDown,
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
-    // 恢复底部导航栏
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        ref.read(bottomNavVisibleProvider.notifier).show();
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _isDisposed = true;
-    WidgetsBinding.instance.removeObserver(this);
-    _cleanup();
-    _restoreNavigation();
-    WakelockPlus.disable();
-    super.dispose();
-  }
-
-  void _enterFullscreen() {
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky,
-        overlays: []);
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-      DeviceOrientation.portraitUp,
-    ]);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && !_isDisposed) {
-        ref.read(bottomNavVisibleProvider.notifier).hide();
-      }
-    });
+    ref.read(bottomNavVisibleProvider.notifier).show();
   }
 
   Future<void> _downloadFile() async {
@@ -644,14 +391,21 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
         }
       }
 
-      if (downloadDir == null) throw Exception('无法获取下载目录');
+      if (downloadDir == null) {
+        throw Exception('无法获取下载目录');
+      }
       if (!await downloadDir.exists()) {
         await downloadDir.create(recursive: true);
       }
 
-      final downloadUrl = widget.filePath != null
-          ? '${widget.baseUrl}/api/v1/filemanager/download?path=${Uri.encodeComponent(widget.filePath!)}'
-          : '${widget.baseUrl}/api/v1/files/${widget.fileId}/download';
+      final String downloadUrl;
+      if (widget.filePath != null) {
+        downloadUrl =
+            '${widget.baseUrl}/api/v1/filemanager/download?path=${Uri.encodeComponent(widget.filePath!)}';
+      } else {
+        downloadUrl =
+            '${widget.baseUrl}/api/v1/files/${widget.fileId}/download';
+      }
 
       final file = File('${downloadDir.path}/${widget.fileName}');
       final request = http.Request('GET', Uri.parse(downloadUrl));
@@ -686,11 +440,13 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('下载失败'), backgroundColor: Colors.red),
+          SnackBar(content: Text('下载失败: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
-      if (mounted) setState(() => _isDownloading = false);
+      if (mounted) {
+        setState(() => _isDownloading = false);
+      }
     }
   }
 
@@ -698,220 +454,64 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
   Widget build(BuildContext context) {
     return PopScope(
       canPop: true,
-      onPopInvokedWithResult: (didPop, result) {
+      onPopInvokedWithResult: (didPop, _) {
         if (didPop) {
-          _restoreNavigation();
+          _exitFullscreen();
         }
       },
       child: Scaffold(
         backgroundColor: Colors.black,
-        body: GestureDetector(
-          onTap: _onTapVideo,
-          behavior: HitTestBehavior.opaque,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              if (_videoController != null && !_isLoading && _error == null)
-                Video(
-                  controller: _videoController!,
-                  fit: BoxFit.contain,
-                  fill: Colors.black,
-                  controls: NoVideoControls,
+        appBar: AppBar(
+          backgroundColor: Colors.black,
+          foregroundColor: Colors.white,
+          title: Text(
+            widget.fileName,
+            style: const TextStyle(fontSize: 16),
+            overflow: TextOverflow.ellipsis,
+          ),
+          actions: [
+            if (!_isLoading && _error == null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withValues(alpha: 0.3),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.lock, size: 12, color: Colors.green),
+                        SizedBox(width: 4),
+                        Text(
+                          'SECURE',
+                          style: TextStyle(fontSize: 10, color: Colors.green),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-              if (_isLoading) _buildLoading(),
-              if (_error != null) _buildError(),
-              if (_isBuffering && !_isLoading && _error == null)
-                const Center(
-                  child: CircularProgressIndicator(
-                      color: Colors.white, strokeWidth: 3),
-                ),
-              if (!_isLoading && _error == null) _buildControls(),
-              if (_isDownloading) _buildDownloadProgress(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildControls() {
-    return AnimatedOpacity(
-      opacity: _showControls ? 1.0 : 0.0,
-      duration: const Duration(milliseconds: 300),
-      child: IgnorePointer(
-        ignoring: !_showControls,
-        child: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Color.fromRGBO(0, 0, 0, 0.7),
-                Colors.transparent,
-                Colors.transparent,
-                Color.fromRGBO(0, 0, 0, 0.7),
-              ],
-              stops: [0.0, 0.2, 0.8, 1.0],
-            ),
-          ),
-          child: Column(
-            children: [
-              _buildTopBar(),
-              const Spacer(),
-              _buildCenterControls(),
-              const Spacer(),
-              _buildBottomBar(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopBar() {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Row(
-          children: [
-            IconButton(
-              icon: const Icon(Icons.arrow_back, color: Colors.white, size: 28),
-              onPressed: () {
-                _restoreNavigation();
-                Navigator.of(context).pop();
-              },
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                widget.fileName,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w500),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
               ),
-            ),
             IconButton(
-              icon: const Icon(Icons.security, color: Colors.green, size: 24),
-              onPressed: _showSecurityInfoDialog,
-              tooltip: '安全连接信息',
-            ),
-            IconButton(
-              icon: const Icon(Icons.download, color: Colors.white, size: 24),
+              icon: const Icon(Icons.download),
               onPressed: _downloadFile,
-              tooltip: '下载视频',
+              tooltip: '下载原文件',
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildCenterControls() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        IconButton(
-          icon: const Icon(Icons.replay_10, color: Colors.white, size: 40),
-          onPressed: _seekBackward,
-          tooltip: '后退15秒',
-        ),
-        const SizedBox(width: 32),
-        Container(
-          width: 72,
-          height: 72,
-          decoration: const BoxDecoration(
-            color: Color.fromRGBO(255, 255, 255, 0.2),
-            shape: BoxShape.circle,
-          ),
-          child: IconButton(
-            icon: Icon(
-              _isPlaying ? Icons.pause : Icons.play_arrow,
-              color: Colors.white,
-              size: 48,
-            ),
-            onPressed: _togglePlayPause,
-          ),
-        ),
-        const SizedBox(width: 32),
-        IconButton(
-          icon: const Icon(Icons.forward_10, color: Colors.white, size: 40),
-          onPressed: _seekForward,
-          tooltip: '快进15秒',
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBottomBar() {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        body: Stack(
+          fit: StackFit.expand,
           children: [
-            SliderTheme(
-              data: SliderTheme.of(context).copyWith(
-                trackHeight: 4,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
-                overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
-                activeTrackColor: Colors.blue,
-                inactiveTrackColor: const Color.fromRGBO(255, 255, 255, 0.3),
-                thumbColor: Colors.blue,
-                overlayColor: const Color.fromRGBO(33, 150, 243, 0.3),
-              ),
-              child: Slider(
-                value: _duration.inMilliseconds > 0
-                    ? _position.inMilliseconds
-                        .toDouble()
-                        .clamp(0, _duration.inMilliseconds.toDouble())
-                    : 0,
-                min: 0,
-                max: _duration.inMilliseconds > 0
-                    ? _duration.inMilliseconds.toDouble()
-                    : 1,
-                onChanged: (value) {
-                  // 拖动时只更新 UI 位置，不实际 seek（避免大量无效请求）
-                  setState(() {
-                    _position = Duration(milliseconds: value.toInt());
-                  });
-                },
-                onChangeStart: (_) {
-                  _isSeeking = true;
-                  _hideControlsTimer?.cancel();
-                },
-                onChangeEnd: (value) {
-                  // 松手时才执行实际 seek
-                  _seekTo(Duration(milliseconds: value.toInt()));
-                  _startHideControlsTimer();
-                },
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(_formatDuration(_position),
-                      style:
-                          const TextStyle(color: Colors.white, fontSize: 13)),
-                  Row(
-                    children: [
-                      Icon(Icons.lock, color: Colors.green.shade400, size: 14),
-                      const SizedBox(width: 4),
-                      Text('AES-256-GCM',
-                          style: TextStyle(
-                              color: Colors.green.shade400, fontSize: 11)),
-                    ],
-                  ),
-                  Text(_formatDuration(_duration),
-                      style:
-                          const TextStyle(color: Colors.white, fontSize: 13)),
-                ],
-              ),
-            ),
+            if (_chewieController != null && !_isLoading && _error == null)
+              Chewie(controller: _chewieController!),
+            if (_isLoading) _buildLoading(),
+            if (_error != null && !_isLoading) _buildError(),
+            if (_isDownloading) _buildDownloadProgress(),
           ],
         ),
       ),
@@ -919,41 +519,49 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
   }
 
   Widget _buildLoading() {
-    return Container(
-      color: Colors.black,
-      child: Center(
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircularProgressIndicator(color: Colors.white),
+          SizedBox(height: 16),
+          Text('正在建立安全连接...', style: TextStyle(color: Colors.white)),
+          SizedBox(height: 8),
+          Text(
+            'SAE握手 + ZKP验证 + AES-256-GCM加密',
+            style: TextStyle(color: Colors.white54, fontSize: 12),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildError() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(
-              width: 80,
-              height: 80,
-              child: CircularProgressIndicator(
-                value: _loadingProgress > 0 ? _loadingProgress : null,
-                strokeWidth: 4,
-                color: Colors.blue,
-                backgroundColor: const Color.fromRGBO(255, 255, 255, 0.2),
-              ),
-            ),
+            const Icon(Icons.error_outline, color: Colors.white54, size: 64),
+            const SizedBox(height: 16),
+            Text(_error!,
+                style: const TextStyle(color: Colors.white54),
+                textAlign: TextAlign.center),
             const SizedBox(height: 24),
-            Text(_loadingStatus,
-                style: const TextStyle(color: Colors.white, fontSize: 16)),
-            const SizedBox(height: 8),
-            Text(
-              '${(_loadingProgress * 100).toInt()}%',
-              style: const TextStyle(
-                  color: Color.fromRGBO(255, 255, 255, 0.7), fontSize: 14),
+            FilledButton.icon(
+              onPressed: _retry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('重试'),
             ),
-            const SizedBox(height: 24),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.security, color: Colors.green.shade400, size: 16),
-                const SizedBox(width: 8),
-                Text('正在建立安全加密连接...',
-                    style:
-                        TextStyle(color: Colors.green.shade400, fontSize: 13)),
-              ],
+            const SizedBox(height: 16),
+            TextButton(
+              onPressed: () {
+                _exitFullscreen();
+                Navigator.pop(context);
+              },
+              child: const Text('返回'),
             ),
           ],
         ),
@@ -961,95 +569,33 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
     );
   }
 
-  Widget _buildError() {
-    return Container(
-      color: Colors.black,
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.error_outline, color: Colors.red.shade400, size: 64),
-              const SizedBox(height: 24),
-              Text(
-                _error ?? '未知错误',
-                style: const TextStyle(color: Colors.white, fontSize: 16),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 32),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      _restoreNavigation();
-                      Navigator.of(context).pop();
-                    },
-                    icon: const Icon(Icons.arrow_back),
-                    label: const Text('返回'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      side: const BorderSide(color: Colors.white54),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 24, vertical: 12),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  ElevatedButton.icon(
-                    onPressed: _retry,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('重试'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 24, vertical: 12),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildDownloadProgress() {
     return Positioned(
-      bottom: 100,
-      left: 0,
-      right: 0,
-      child: Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          decoration: BoxDecoration(
-            color: const Color.fromRGBO(0, 0, 0, 0.8),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('正在下载...',
-                  style: TextStyle(color: Colors.white, fontSize: 14)),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: 200,
-                child: LinearProgressIndicator(
-                  value: _downloadProgress,
-                  backgroundColor: const Color.fromRGBO(255, 255, 255, 0.2),
-                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '${(_downloadProgress * 100).toInt()}%',
-                style: const TextStyle(
-                    color: Color.fromRGBO(255, 255, 255, 0.7), fontSize: 12),
-              ),
-            ],
-          ),
+      top: MediaQuery.of(context).padding.top + 60,
+      left: 16,
+      right: 16,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+            color: Colors.black87, borderRadius: BorderRadius.circular(12)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.download, color: Colors.white),
+                const SizedBox(width: 12),
+                const Expanded(
+                    child:
+                        Text('下载中...', style: TextStyle(color: Colors.white))),
+                Text('${(_downloadProgress * 100).toInt()}%',
+                    style: const TextStyle(color: Colors.white)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            LinearProgressIndicator(
+                value: _downloadProgress, backgroundColor: Colors.white24),
+          ],
         ),
       ),
     );

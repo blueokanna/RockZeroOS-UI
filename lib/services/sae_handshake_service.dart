@@ -5,8 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:thirds/blake3.dart' as blake3;
 
+import 'hkdf_blake3.dart';
 import 'sae_client_curve25519.dart';
-import 'secure_hls_proxy.dart';
 
 class SaeHandshakeService {
   final String baseUrl;
