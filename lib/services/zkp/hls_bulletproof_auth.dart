@@ -214,7 +214,10 @@ class HlsBulletproofAuth {
     if (password.isEmpty) return 0;
 
     int charsetSize = 0;
-    bool hasLower = false, hasUpper = false, hasDigit = false, hasSpecial = false;
+    bool hasLower = false,
+        hasUpper = false,
+        hasDigit = false,
+        hasSpecial = false;
 
     for (final c in password.codeUnits) {
       if (c >= 0x61 && c <= 0x7A) {
@@ -276,12 +279,10 @@ class HlsBulletproofAuth {
   /// Pedersen commitment: H(g || password_scalar) XOR H(h || blinding)
   ///
   /// 使用 Blake3 哈希模拟椭圆曲线上的 Pedersen commitment
-  Uint8List _pedersenCommit(
-      Uint8List passwordScalar, Uint8List blinding) {
+  Uint8List _pedersenCommit(Uint8List passwordScalar, Uint8List blinding) {
     final gHash =
         Uint8List.fromList(blake3.blake3([0x67, ...passwordScalar], 32));
-    final hHash =
-        Uint8List.fromList(blake3.blake3([0x68, ...blinding], 32));
+    final hHash = Uint8List.fromList(blake3.blake3([0x68, ...blinding], 32));
 
     final result = Uint8List(32);
     for (int i = 0; i < 32; i++) {
@@ -314,8 +315,10 @@ class HlsBulletproofAuth {
 
     // response_password = k_password + challenge * password_scalar (mod order)
     // 使用简化的模运算（与 Blake3 hash 兼容）
-    final responsePassword = _scalarAdd(kPassword, _scalarMul(challenge, passwordScalar));
-    final responseBlinding = _scalarAdd(kBlinding, _scalarMul(challenge, blinding));
+    final responsePassword =
+        _scalarAdd(kPassword, _scalarMul(challenge, passwordScalar));
+    final responseBlinding =
+        _scalarAdd(kBlinding, _scalarMul(challenge, blinding));
 
     return _SchnorrProof(
       aPoint: base64Encode(aPoint),
@@ -352,8 +355,8 @@ class HlsBulletproofAuth {
     final proofData = <String, dynamic>{
       'bits': 64,
       'commitment': base64Encode(commitment),
-      'blinding_hash': base64Encode(
-          Uint8List.fromList(blake3.blake3(blinding, 32))),
+      'blinding_hash':
+          base64Encode(Uint8List.fromList(blake3.blake3(blinding, 32))),
       'value_above_threshold': entropyValue >= threshold,
     };
 
