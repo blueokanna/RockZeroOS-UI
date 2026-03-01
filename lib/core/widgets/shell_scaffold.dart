@@ -113,34 +113,37 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
         wallpaperPath != null &&
         wallpaperPath.isNotEmpty;
 
-    Widget content = Row(
-      children: [
-        // Navigation Rail for medium/wide screens
-        if ((isMediumScreen || isWideScreen) && bottomNavVisible)
-          AnimatedSlide(
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasized,
-            offset: bottomNavVisible ? Offset.zero : const Offset(-1, 0),
-            child: _buildNavigationRail(
-              isWideScreen,
-              connectedDevice,
-              hasWallpaper,
-              colorScheme,
+    Widget content = SafeArea(
+      bottom: false,
+      child: Row(
+        children: [
+          // Navigation Rail for medium/wide screens
+          if ((isMediumScreen || isWideScreen) && bottomNavVisible)
+            AnimatedSlide(
+              duration: M3Durations.medium2,
+              curve: M3Curves.emphasized,
+              offset: bottomNavVisible ? Offset.zero : const Offset(-1, 0),
+              child: _buildNavigationRail(
+                isWideScreen,
+                connectedDevice,
+                hasWallpaper,
+                colorScheme,
+              ),
             ),
-          ),
 
-        // Vertical divider
-        if ((isMediumScreen || isWideScreen) && bottomNavVisible)
-          VerticalDivider(
-            width: 1,
-            thickness: 1,
-            color: colorScheme.outlineVariant
-                .withValues(alpha: hasWallpaper ? 0.3 : 1.0),
-          ),
+          // Vertical divider
+          if ((isMediumScreen || isWideScreen) && bottomNavVisible)
+            VerticalDivider(
+              width: 1,
+              thickness: 1,
+              color: colorScheme.outlineVariant
+                  .withValues(alpha: hasWallpaper ? 0.3 : 1.0),
+            ),
 
-        // Main content
-        Expanded(child: widget.child),
-      ],
+          // Main content
+          Expanded(child: widget.child),
+        ],
+      ),
     );
 
     Widget? bottomNav;

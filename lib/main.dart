@@ -95,6 +95,18 @@ class _RockZeroAppState extends ConsumerState<RockZeroApp> {
       theme: AppTheme.light(effectiveColor),
       darkTheme: AppTheme.dark(effectiveColor),
       routerConfig: router,
+      builder: (context, child) {
+        // Clamp text scale factor to prevent layout breakage
+        final mediaQuery = MediaQuery.of(context);
+        final clampedTextScaler = mediaQuery.textScaler.clamp(
+          minScaleFactor: 0.8,
+          maxScaleFactor: 1.3,
+        );
+        return MediaQuery(
+          data: mediaQuery.copyWith(textScaler: clampedTextScaler),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
     );
   }
 }

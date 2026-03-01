@@ -285,16 +285,31 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         },
         child: CustomScrollView(
           slivers: [
-            // App Bar
-            SliverAppBar.large(
-              title: Row(
-                children: [
-                  Icon(Icons.dashboard_rounded, size: 28),
-                  const SizedBox(width: 12),
-                  const Text('Dashboard'),
-                ],
+            // App Bar - use medium on narrow screens to save space
+            SliverAppBar(
+              expandedHeight:
+                  MediaQuery.of(context).size.width <= 600 ? 80 : 120,
+              floating: true,
+              pinned: true,
+              flexibleSpace: FlexibleSpaceBar(
+                titlePadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                title: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.dashboard_rounded,
+                        size: 22,
+                        color: Theme.of(context).colorScheme.onSurface),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Dashboard',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                    ),
+                  ],
+                ),
               ),
-              // Removed refresh and notification buttons - auto-refresh is enabled
             ),
 
             // Content
