@@ -113,12 +113,15 @@ flutter_launcher_icons:
   android: true
   ios: true
   image_path: assets/images/RockZero.png
+  adaptive_icon_foreground: assets/images/RockZero.png
+  adaptive_icon_background: "#1a1a2e"
+  adaptive_icon_padding: 0
   min_sdk_android: 21
   web:
     generate: true
     image_path: assets/images/RockZero.png
-    background_color: "#ffffff"
-    theme_color: "#0175C2"
+    background_color: "#1a1a2e"
+    theme_color: "#1a1a2e"
   windows:
     generate: true
     image_path: assets/images/RockZero.png
