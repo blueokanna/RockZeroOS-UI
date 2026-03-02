@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
@@ -152,19 +153,34 @@ class RockZeroAudioHandler extends BaseAudioHandler with SeekHandler {
 /// Singleton holder for the audio handler
 RockZeroAudioHandler? _globalAudioHandler;
 
-Future<RockZeroAudioHandler> _getOrCreateHandler(AudioPlayer player) async {
+/// Whether the current platform supports AudioService (system media controls).
+/// AudioService requires platform-specific setup; on desktop (Windows/Linux)
+/// it may fail or behave unexpectedly, so we guard initialization.
+bool get _supportsAudioService {
+  if (kIsWeb) return false;
+  return Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
+}
+
+Future<RockZeroAudioHandler?> _getOrCreateHandler(AudioPlayer player) async {
+  if (!_supportsAudioService) return null;
   if (_globalAudioHandler != null) return _globalAudioHandler!;
-  _globalAudioHandler = await AudioService.init(
-    builder: () => RockZeroAudioHandler(player),
-    config: AudioServiceConfig(
-      androidNotificationChannelId: 'com.rockzero.audio',
-      androidNotificationChannelName: 'RockZero Audio',
-      androidNotificationOngoing: true,
-      androidStopForegroundOnPause: false,
-      androidNotificationIcon: 'mipmap/ic_launcher',
-    ),
-  );
-  return _globalAudioHandler!;
+  try {
+    _globalAudioHandler = await AudioService.init(
+      builder: () => RockZeroAudioHandler(player),
+      config: AudioServiceConfig(
+        androidNotificationChannelId: 'com.rockzero.audio',
+        androidNotificationChannelName: 'RockZero Audio',
+        androidNotificationOngoing: true,
+        androidStopForegroundOnPause: false,
+        androidNotificationIcon: 'mipmap/ic_launcher',
+      ),
+    );
+  } catch (e) {
+    debugPrint('[AudioPlayerService] AudioService.init() failed: $e');
+    // On platforms where AudioService isn't available, continue without it
+    _globalAudioHandler = null;
+  }
+  return _globalAudioHandler;
 }
 
 class AudioPlayerService extends Notifier<AudioPlayerState> {

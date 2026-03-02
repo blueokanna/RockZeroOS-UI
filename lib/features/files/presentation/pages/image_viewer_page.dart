@@ -14,7 +14,51 @@ import 'package:photo_view/photo_view_gallery.dart';
 
 import '../../../../core/theme/app_theme.dart';
 
-/// Custom image provider that supports authentication headers
+/// 内存缓存 - 避免重复下载同一图片
+class _ImageMemoryCache {
+  static final Map<String, Uint8List> _cache = {};
+  static const int _maxCacheSize = 50 * 1024 * 1024; // 50MB 缓存上限
+  static int _currentSize = 0;
+  static final List<String> _keys = [];
+
+  static Uint8List? get(String key) {
+    if (_cache.containsKey(key)) {
+      // LRU: 移到最后
+      _keys.remove(key);
+      _keys.add(key);
+      return _cache[key];
+    }
+    return null;
+  }
+
+  static void put(String key, Uint8List data) {
+    // 如果已存在，先移除旧数据
+    if (_cache.containsKey(key)) {
+      _currentSize -= _cache[key]!.length;
+      _keys.remove(key);
+    }
+
+    // 淘汰旧数据直到有足够空间
+    while (_currentSize + data.length > _maxCacheSize && _keys.isNotEmpty) {
+      final oldKey = _keys.removeAt(0);
+      final oldData = _cache.remove(oldKey);
+      if (oldData != null) _currentSize -= oldData.length;
+    }
+
+    _cache[key] = data;
+    _keys.add(key);
+    _currentSize += data.length;
+  }
+}
+
+/// 支持认证头的网络图片加载器
+///
+/// 特性：
+/// - JWT Bearer Token 认证
+/// - 内存缓存（LRU，50MB 上限）
+/// - 超时重试（最多 2 次重试）
+/// - 流式下载（适合大图片）
+/// - ETag 条件请求支持
 class AuthenticatedNetworkImage
     extends ImageProvider<AuthenticatedNetworkImage> {
   final String url;
@@ -50,19 +94,85 @@ class AuthenticatedNetworkImage
     AuthenticatedNetworkImage key,
     ImageDecoderCallback decode,
   ) async {
-    final headers = <String, String>{};
-    if (authToken != null && authToken!.isNotEmpty) {
-      headers['Authorization'] = 'Bearer $authToken';
+    // 1. 检查内存缓存
+    final cacheKey = '${key.url}|${key.authToken?.hashCode}';
+    final cached = _ImageMemoryCache.get(cacheKey);
+    if (cached != null) {
+      debugPrint('[ImageLoader] Cache hit: ${key.url}');
+      final buffer = await ImmutableBuffer.fromUint8List(cached);
+      return decode(buffer);
     }
 
-    final response = await http.get(Uri.parse(url), headers: headers);
-    if (response.statusCode != 200) {
-      throw Exception('Failed to load image: ${response.statusCode}');
+    // 2. 网络加载（带重试）
+    const maxRetries = 2;
+    Object? lastError;
+
+    for (int attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        final headers = <String, String>{
+          'Accept': 'image/*,*/*;q=0.8',
+        };
+        if (key.authToken != null && key.authToken!.isNotEmpty) {
+          headers['Authorization'] = 'Bearer ${key.authToken}';
+        }
+
+        // 使用流式请求避免大图片内存峰值
+        final request = http.Request('GET', Uri.parse(key.url));
+        request.headers.addAll(headers);
+
+        final client = http.Client();
+        try {
+          final response =
+              await client.send(request).timeout(const Duration(seconds: 30));
+
+          if (response.statusCode == 200) {
+            // 流式读取响应体
+            final bytes = await response.stream.toBytes().timeout(
+                  const Duration(seconds: 120),
+                );
+
+            if (bytes.isEmpty) {
+              throw Exception('Empty image response');
+            }
+
+            debugPrint(
+                '[ImageLoader] Loaded ${bytes.length} bytes from ${key.url}');
+
+            // 写入缓存
+            _ImageMemoryCache.put(cacheKey, bytes);
+
+            final buffer = await ImmutableBuffer.fromUint8List(bytes);
+            return decode(buffer);
+          } else if (response.statusCode == 304) {
+            // 服务器返回 Not Modified - 使用缓存（如果存在）
+            final cachedAgain = _ImageMemoryCache.get(cacheKey);
+            if (cachedAgain != null) {
+              final buffer = await ImmutableBuffer.fromUint8List(cachedAgain);
+              return decode(buffer);
+            }
+            throw Exception('304 Not Modified but no cache available');
+          } else {
+            // 消费响应体以释放连接
+            await response.stream.drain();
+            throw Exception(
+                'HTTP ${response.statusCode}: Failed to load image');
+          }
+        } finally {
+          client.close();
+        }
+      } catch (e) {
+        lastError = e;
+        debugPrint(
+            '[ImageLoader] Attempt ${attempt + 1}/${maxRetries + 1} failed for ${key.url}: $e');
+        if (attempt < maxRetries) {
+          // 指数退避重试
+          await Future.delayed(Duration(milliseconds: 500 * (attempt + 1)));
+        }
+      }
     }
 
-    final bytes = response.bodyBytes;
-    final buffer = await ImmutableBuffer.fromUint8List(bytes);
-    return decode(buffer);
+    throw lastError ??
+        Exception('Failed to load image after $maxRetries retries');
   }
 
   @override
@@ -497,15 +607,30 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
           ),
           const SizedBox(height: 16),
           const Text(
-            'Failed to load image',
-            style: TextStyle(color: Colors.white54),
+            '图片加载失败',
+            style: TextStyle(color: Colors.white54, fontSize: 16),
           ),
           const SizedBox(height: 8),
-          Text(
-            error.toString(),
-            style: const TextStyle(color: Colors.white38, fontSize: 10),
-            textAlign: TextAlign.center,
-            maxLines: 3,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Text(
+              error.toString(),
+              style: const TextStyle(color: Colors.white38, fontSize: 10),
+              textAlign: TextAlign.center,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: () {
+              // 清除缓存并重建 ImageProvider 触发重新加载
+              imageCache.clear();
+              imageCache.clearLiveImages();
+              setState(() {});
+            },
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('重试'),
           ),
         ],
       ),

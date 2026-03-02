@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -16,18 +15,19 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../../../core/widgets/shell_scaffold.dart';
 import '../../../../services/sae_handshake_service.dart';
 
-/// 安全HLS视频播放器 - 使用SAE握手 + 直接HLS播放（media_kit/mpv）
+/// 智能视频播放器 - 优先直接流式播放，回退到安全 HLS
 ///
-/// 播放流程：
-/// 1. SAE 握手建立安全会话（JWT + 密码验证 → session_id）
-/// 2. 服务器用 ffmpeg 将视频分片为 HLS（VOD 模式）
-/// 3. media_kit (mpv) 直接通过 GET 请求播放 HLS 流
-/// 4. 段访问通过 session_id（128 位随机 UUID）鉴权
+/// 播放策略（快到慢）：
+/// 1. 【直接播放】HTTP Range 流式传输（最快，零延迟）
+///    - media_kit (mpv) 原生支持 Range 请求
+///    - 通过 HTTP headers 传递 JWT 认证
+///    - 支持所有 mpv 支持的格式（MP4/MKV/AVI/WebM 等）
+///    - 即时开始播放，支持快进快退
 ///
-/// 优势：
-/// - 使用 mpv 后端，支持广泛的编解码器和容器格式
-/// - 直接 GET 请求获取段，无需本地代理，无需 ZKP 证明
-/// - 支持随点随播，低延迟
+/// 2. 【安全 HLS】SAE 握手 + ffmpeg 渐进式分片（回退）
+///    - 仅在直接播放失败时使用（例如需要转码的格式）
+///    - 渐进式分片：ffmpeg 在后台分片，首个片段可用即开始播放
+///    - 不再等待全部分片完成
 /// - ARM 设备友好，无加解密开销
 class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
   final String? filePath;
@@ -63,6 +63,11 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
   bool _isDownloading = false;
   double _downloadProgress = 0;
+
+  /// 当前播放模式 - 用于 UI 显示
+  /// 'direct' = 直接 HTTP Range 流式传输（最快）
+  /// 'hls'    = SAE + HLS 安全播放（回退）
+  String _playbackMode = 'direct';
 
   // 播放器状态
   bool _isPlaying = false;
@@ -112,80 +117,81 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         return;
       }
 
-      // SAE 握手
-      setState(() => _loadingStatus = '正在执行 SAE 安全握手...');
-      debugPrint('[SecureHLS] Starting SAE handshake...');
-
-      final handshakeService = SaeHandshakeService(
-        baseUrl: widget.baseUrl,
-        jwtToken: _authToken!,
-      );
-
-      final filePath = widget.filePath ?? '';
-      final (sessionId, _) = await handshakeService.performHandshake(
-        filePath: filePath,
-        password: _userPassword!,
-        userId: _userId!,
-      );
-
-      _hlsSessionId = sessionId;
-
-      // 直接播放列表 URL（服务器用 session_id 鉴权）
-      final playlistUrl =
-          '${widget.baseUrl}/api/v1/secure-hls/$_hlsSessionId/playlist.m3u8';
-
-      debugPrint('[SecureHLS] HLS session created: $_hlsSessionId');
-      debugPrint('[SecureHLS] Direct playlist URL: $playlistUrl');
-
-      // 等待服务器 ffmpeg 分片完成
-      setState(() => _loadingStatus = '正在等待视频分片...');
-      debugPrint('[SecureHLS] Waiting for playlist to be ready...');
-
-      bool playlistReady = false;
-      for (int i = 0; i < 60; i++) {
-        if (!mounted) return;
-
-        try {
-          final checkResponse = await http.get(
-            Uri.parse(playlistUrl),
-            headers: {
-              'Accept': 'application/vnd.apple.mpegurl, */*',
-              'User-Agent': 'RockZeroOS/1.0',
-            },
-          ).timeout(const Duration(seconds: 5));
-
-          if (checkResponse.statusCode == 200) {
-            final content = checkResponse.body;
-            if (content.contains('#EXTM3U') &&
-                (content.contains('#EXTINF') || content.contains('segment_'))) {
-              debugPrint('[SecureHLS] Playlist ready after ${i + 1} seconds');
-              playlistReady = true;
-              break;
-            }
-          }
-          debugPrint(
-              '[SecureHLS] Playlist not ready (status=${checkResponse.statusCode}), waiting... (${i + 1}s)');
-        } catch (e) {
-          debugPrint(
-              '[SecureHLS] Playlist check failed: $e, waiting... (${i + 1}s)');
-        }
-
-        await Future.delayed(const Duration(seconds: 1));
-      }
-
-      if (!playlistReady) {
-        throw Exception('播放列表生成超时（已等待 60 秒），请检查服务器 ffmpeg 配置');
-      }
+      // ===== 策略 1：直接 HTTP Range 流式传输（最快） =====
+      // media_kit (mpv) 原生支持 Range 请求 + httpHeaders 传递 JWT 认证
+      // 对于 MP4/MKV/AVI/WebM/FLV 等常见格式，即时播放、支持快进快退
+      final directSuccess = await _tryDirectStreaming();
+      if (directSuccess) return;
 
       if (!mounted) return;
 
-      // 创建 media_kit 播放器（mpv 后端，支持广泛的编解码器）
-      setState(() => _loadingStatus = '正在初始化播放器...');
-      debugPrint('[SecureHLS] Creating media_kit player with direct URL');
+      // ===== 策略 2：SAE + HLS 安全播放（回退） =====
+      // 对于需要转码的格式或直接播放失败的场景，走 HLS 管道
+      debugPrint(
+          '[VideoPlayer] Direct streaming failed, falling back to HLS...');
+      await _tryHlsStreaming();
+    } catch (e, stack) {
+      debugPrint('[VideoPlayer] Error: $e');
+      debugPrint('[VideoPlayer] Stack: $stack');
+      _setError('播放失败: ${_formatError(e.toString())}');
+    }
+  }
 
+  /// 策略 1：直接 HTTP Range 流式传输
+  ///
+  /// 使用 /api/v1/filemanager/media/stream 端点
+  /// media_kit (mpv) 通过 HTTP headers 传递 JWT 认证
+  /// 支持所有 mpv 支持的容器/编解码器格式
+  /// 无需 ffmpeg 分片，无需 SAE 握手，延迟 < 1 秒
+  Future<bool> _tryDirectStreaming() async {
+    try {
+      setState(() {
+        _loadingStatus = '正在连接视频流...';
+        _playbackMode = 'direct';
+      });
+
+      final filePath = widget.filePath ?? '';
+      final streamUrl =
+          '${widget.baseUrl}/api/v1/filemanager/media/stream?path=${Uri.encodeComponent(filePath)}';
+
+      debugPrint('[VideoPlayer] Trying direct streaming: $streamUrl');
+
+      // 先验证 URL 可访问（HEAD 请求检查，避免播放器黑屏卡死）
+      try {
+        final checkResponse = await http.head(
+          Uri.parse(streamUrl),
+          headers: {
+            'Authorization': 'Bearer $_authToken',
+            'Accept': '*/*',
+          },
+        ).timeout(const Duration(seconds: 8));
+
+        if (checkResponse.statusCode != 200 &&
+            checkResponse.statusCode != 206 &&
+            checkResponse.statusCode != 416) {
+          debugPrint(
+              '[VideoPlayer] Direct stream not available (status: ${checkResponse.statusCode})');
+          return false;
+        }
+
+        // 检查是否支持 Range 请求
+        final acceptRanges = checkResponse.headers['accept-ranges'] ?? '';
+        final contentLength = checkResponse.headers['content-length'] ?? '0';
+        debugPrint(
+            '[VideoPlayer] Direct stream: Accept-Ranges=$acceptRanges, Content-Length=$contentLength');
+      } catch (e) {
+        debugPrint('[VideoPlayer] Direct stream HEAD check failed: $e');
+        return false;
+      }
+
+      if (!mounted) return false;
+
+      setState(() => _loadingStatus = '正在初始化播放器...');
+
+      // 创建 media_kit 播放器
       _player = Player(
         configuration: const PlayerConfiguration(
-          bufferSize: 64 * 1024 * 1024, // 64MB 缓冲
+          bufferSize: 96 * 1024 * 1024, // 96MB 缓冲 - 适合大文件
         ),
       );
 
@@ -194,24 +200,172 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       // 设置播放器事件监听
       _setupPlayerListeners();
 
-      // 使用 media_kit 直接打开 HLS URL（mpv 原生支持 HLS）
+      // 监听第一个错误，如果播放器无法解码则回退
+      final errorCompleter = Completer<String?>();
+      StreamSubscription<String>? errorSub;
+      errorSub = _player!.stream.error.listen((error) {
+        if (error.isNotEmpty && !errorCompleter.isCompleted) {
+          errorCompleter.complete(error);
+          errorSub?.cancel();
+        }
+      });
+
+      // 监听成功开始播放
+      final playingCompleter = Completer<bool>();
+      StreamSubscription<bool>? playingSub;
+      playingSub = _player!.stream.playing.listen((playing) {
+        if (playing && !playingCompleter.isCompleted) {
+          playingCompleter.complete(true);
+          playingSub?.cancel();
+        }
+      });
+
+      // 使用 media_kit 直接打开流媒体 URL，传递 JWT 认证头
       await _player!.open(
-        Media(playlistUrl),
+        Media(
+          streamUrl,
+          httpHeaders: {
+            'Authorization': 'Bearer $_authToken',
+          },
+        ),
         play: true,
       );
 
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+      // 等待播放器开始播放或报错（最多 10 秒）
+      final result = await Future.any([
+        playingCompleter.future.then((_) => 'playing'),
+        errorCompleter.future.then((e) => 'error:$e'),
+        Future.delayed(const Duration(seconds: 10), () => 'timeout'),
+      ]);
+
+      errorSub.cancel();
+      playingSub.cancel();
+
+      if (result == 'playing') {
+        debugPrint('[VideoPlayer] Direct streaming successful!');
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
+        return true;
       }
 
-      debugPrint('[SecureHLS] Player initialized successfully (direct mode)');
-    } catch (e, stack) {
-      debugPrint('[SecureHLS] Error: $e');
-      debugPrint('[SecureHLS] Stack: $stack');
-      _setError('播放失败: ${_formatError(e.toString())}');
+      // 直接播放失败 - 清理播放器，准备回退
+      debugPrint('[VideoPlayer] Direct playback issue: $result');
+      _cancelSubscriptions();
+      await _player?.stop();
+      await _player?.dispose();
+      _player = null;
+      _videoController = null;
+      return false;
+    } catch (e) {
+      debugPrint('[VideoPlayer] Direct streaming exception: $e');
+      // 清理以便回退
+      _cancelSubscriptions();
+      await _player?.stop();
+      await _player?.dispose();
+      _player = null;
+      _videoController = null;
+      return false;
     }
+  }
+
+  /// 策略 2：SAE 握手 + HLS 安全播放（回退）
+  ///
+  /// 使用 SAE 密码认证握手建立安全会话
+  /// 服务器使用 ffmpeg 渐进式分片（首个片段即可播放，不等待全部分片完成）
+  /// media_kit (mpv) 播放 HLS 流
+  Future<void> _tryHlsStreaming() async {
+    setState(() {
+      _loadingStatus = '正在执行 SAE 安全握手...';
+      _playbackMode = 'hls';
+    });
+
+    debugPrint('[VideoPlayer] Starting SAE handshake for HLS fallback...');
+
+    final handshakeService = SaeHandshakeService(
+      baseUrl: widget.baseUrl,
+      jwtToken: _authToken!,
+    );
+
+    final filePath = widget.filePath ?? '';
+    final (sessionId, _) = await handshakeService.performHandshake(
+      filePath: filePath,
+      password: _userPassword!,
+      userId: _userId!,
+    );
+
+    _hlsSessionId = sessionId;
+
+    // 渐进式分片 - 服务器使用 -hls_playlist_type event，首个片段可用即返回
+    final playlistUrl =
+        '${widget.baseUrl}/api/v1/secure-hls/$_hlsSessionId/playlist.m3u8';
+
+    debugPrint('[VideoPlayer] HLS session: $_hlsSessionId');
+    debugPrint('[VideoPlayer] Playlist URL: $playlistUrl');
+
+    // 等待播放列表就绪（渐进式分片后通常 2-5 秒即可）
+    setState(() => _loadingStatus = '正在等待视频分片...');
+
+    bool playlistReady = false;
+    for (int i = 0; i < 60; i++) {
+      if (!mounted) return;
+
+      try {
+        final checkResponse = await http.get(
+          Uri.parse(playlistUrl),
+          headers: {
+            'Accept': 'application/vnd.apple.mpegurl, */*',
+            'User-Agent': 'RockZeroOS/1.0',
+          },
+        ).timeout(const Duration(seconds: 5));
+
+        if (checkResponse.statusCode == 200) {
+          final content = checkResponse.body;
+          if (content.contains('#EXTM3U') &&
+              (content.contains('#EXTINF') || content.contains('segment_'))) {
+            debugPrint(
+                '[VideoPlayer] HLS playlist ready after ${i + 1} seconds');
+            playlistReady = true;
+            break;
+          }
+        }
+        debugPrint(
+            '[VideoPlayer] HLS playlist not ready (status=${checkResponse.statusCode}), waiting... (${i + 1}s)');
+      } catch (e) {
+        debugPrint(
+            '[VideoPlayer] HLS playlist check failed: $e, waiting... (${i + 1}s)');
+      }
+
+      await Future.delayed(const Duration(seconds: 1));
+    }
+
+    if (!playlistReady) {
+      throw Exception('播放列表生成超时（已等待 60 秒），请检查服务器 ffmpeg 配置');
+    }
+
+    if (!mounted) return;
+
+    setState(() => _loadingStatus = '正在初始化播放器...');
+
+    _player = Player(
+      configuration: const PlayerConfiguration(
+        bufferSize: 64 * 1024 * 1024, // 64MB 缓冲
+      ),
+    );
+
+    _videoController = VideoController(_player!);
+    _setupPlayerListeners();
+
+    await _player!.open(
+      Media(playlistUrl),
+      play: true,
+    );
+
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+
+    debugPrint('[VideoPlayer] HLS player initialized successfully');
   }
 
   void _setupPlayerListeners() {
@@ -289,6 +443,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     await _player?.dispose();
     _player = null;
     _videoController = null;
+    _playbackMode = 'direct';
     await _initPlayer();
   }
 
@@ -631,27 +786,41 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
               ),
             ),
             const SizedBox(width: 8),
-            // SAE 安全标志 - MD3 chip style
+            // 播放模式标志 - MD3 chip style
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
-                color: Colors.green.withValues(alpha: 0.25),
+                color: _playbackMode == 'direct'
+                    ? Colors.blue.withValues(alpha: 0.25)
+                    : Colors.green.withValues(alpha: 0.25),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                  color: Colors.green.withValues(alpha: 0.5),
+                  color: _playbackMode == 'direct'
+                      ? Colors.blue.withValues(alpha: 0.5)
+                      : Colors.green.withValues(alpha: 0.5),
                   width: 1,
                 ),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.lock_rounded, size: 14, color: Colors.greenAccent),
-                  SizedBox(width: 4),
+                  Icon(
+                    _playbackMode == 'direct'
+                        ? Icons.speed_rounded
+                        : Icons.lock_rounded,
+                    size: 14,
+                    color: _playbackMode == 'direct'
+                        ? Colors.lightBlueAccent
+                        : Colors.greenAccent,
+                  ),
+                  const SizedBox(width: 4),
                   Text(
-                    'SAE',
+                    _playbackMode == 'direct' ? '直连' : 'HLS',
                     style: TextStyle(
                       fontSize: 11,
-                      color: Colors.greenAccent,
+                      color: _playbackMode == 'direct'
+                          ? Colors.lightBlueAccent
+                          : Colors.greenAccent,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -898,9 +1067,11 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           const SizedBox(height: 16),
           Text(_loadingStatus, style: const TextStyle(color: Colors.white)),
           const SizedBox(height: 8),
-          const Text(
-            'SAE 握手 → HLS 分片 → 直接播放',
-            style: TextStyle(color: Colors.white54, fontSize: 12),
+          Text(
+            _playbackMode == 'direct'
+                ? '正在尝试直接流式播放...'
+                : '直连失败 → SAE 握手 → HLS 分片播放',
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
             textAlign: TextAlign.center,
           ),
         ],

@@ -126,21 +126,38 @@ class _EnhancedAudioPlayerPageState
   Future<void> _fetchMediaInfo() async {
     try {
       final uri = Uri.parse(widget.mediaUrl);
-      final pathSegments = uri.pathSegments;
-      String infoPath = '';
-      bool foundPlay = false;
-      for (final segment in pathSegments) {
-        if (foundPlay) infoPath += '/$segment';
-        if (segment == 'play' || segment == 'stream') foundPlay = true;
-      }
-      if (infoPath.isEmpty) {
-        infoPath = uri.path.replaceFirst(
-          RegExp(r'/api/v1/(streaming|filemanager)/(play|stream)/'),
-          '/',
-        );
-      }
       final baseUrl = '${uri.scheme}://${uri.host}:${uri.port}';
-      final infoUrl = '$baseUrl/api/v1/streaming/info$infoPath';
+
+      // 从 stream URL 提取原始文件路径
+      // 支持两种 URL 格式：
+      // 1. /api/v1/streaming/play/{path}
+      // 2. /api/v1/filemanager/media/stream?path={encoded_path}
+      String infoPath = '';
+
+      // 优先从 query 参数获取（filemanager 格式）
+      final queryPath = uri.queryParameters['path'];
+      if (queryPath != null && queryPath.isNotEmpty) {
+        infoPath = queryPath;
+        if (!infoPath.startsWith('/')) infoPath = '/$infoPath';
+      } else {
+        // 从 URL 路径提取（streaming 格式）
+        final pathSegments = uri.pathSegments;
+        bool foundPlay = false;
+        for (final segment in pathSegments) {
+          if (foundPlay) infoPath += '/$segment';
+          if (segment == 'play' || segment == 'stream') foundPlay = true;
+        }
+      }
+
+      if (infoPath.isEmpty) {
+        debugPrint('[AudioPlayer] Could not extract file path from URL');
+        return;
+      }
+
+      // URI 编码路径用于 info 请求
+      final encodedPath = Uri.encodeComponent(
+          infoPath.startsWith('/') ? infoPath.substring(1) : infoPath);
+      final infoUrl = '$baseUrl/api/v1/streaming/info/$encodedPath';
       debugPrint('[AudioPlayer] Fetching media info from: $infoUrl');
 
       final response = await http.get(
@@ -200,19 +217,39 @@ class _EnhancedAudioPlayerPageState
       final streamUrl = _getStreamUrl();
       debugPrint('[AudioPlayer] Using stream URL: $streamUrl');
 
-      // Use LockCachingAudioSource for better seek support
-      // ignore: experimental_member_use
-      final audioSource = LockCachingAudioSource(
-        Uri.parse(streamUrl),
-        headers: headers,
-      );
+      // 使用 LockCachingAudioSource 支持更好的 seek（带认证头）
+      // 如果失败则回退到普通 AudioSource.uri
+      try {
+        // ignore: experimental_member_use
+        final audioSource = LockCachingAudioSource(
+          Uri.parse(streamUrl),
+          headers: headers,
+        );
 
-      await _audioPlayer!.setAudioSource(audioSource).timeout(
-        const Duration(seconds: 30),
-        onTimeout: () {
-          throw TimeoutException('Audio initialization timed out');
-        },
-      );
+        await _audioPlayer!.setAudioSource(audioSource).timeout(
+          const Duration(seconds: 30),
+          onTimeout: () {
+            throw TimeoutException('Audio initialization timed out');
+          },
+        );
+      } catch (e) {
+        debugPrint(
+            '[AudioPlayer] LockCachingAudioSource failed: $e, trying AudioSource.uri...');
+        // 回退到普通 URI 音源 - 某些平台或格式不支持缓存音源
+        await _audioPlayer!
+            .setAudioSource(
+          AudioSource.uri(
+            Uri.parse(streamUrl),
+            headers: headers,
+          ),
+        )
+            .timeout(
+          const Duration(seconds: 30),
+          onTimeout: () {
+            throw TimeoutException('Audio initialization timed out');
+          },
+        );
+      }
 
       _setupListeners();
       _startVisualization();

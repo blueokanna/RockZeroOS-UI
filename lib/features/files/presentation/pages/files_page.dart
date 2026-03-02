@@ -745,10 +745,100 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
   Widget _buildUploadProgress() {
     final colorScheme = Theme.of(context).colorScheme;
+    final transportState = ref.watch(downloadManagerProvider);
 
+    // Get active uploads from download manager
+    final activeUploads = transportState.uploads
+        .where((u) =>
+            u.status == DownloadStatus.downloading ||
+            u.status == DownloadStatus.pending)
+        .toList();
+
+    // If no active uploads in download manager, fall back to simple progress
+    if (activeUploads.isEmpty) {
+      return Container(
+        margin: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              colorScheme.primaryContainer,
+              colorScheme.primaryContainer.withValues(alpha: 0.7),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: colorScheme.primary.withValues(alpha: 0.2),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: colorScheme.primary,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.cloud_upload_rounded,
+                    color: colorScheme.onPrimary,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Uploading...',
+                        style: TextStyle(
+                          color: colorScheme.onPrimaryContainer,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Text(
+                        '${(_uploadProgress * 100).toInt()}% complete',
+                        style: TextStyle(
+                          color: colorScheme.onPrimaryContainer.withValues(
+                            alpha: 0.7,
+                          ),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: _uploadProgress,
+                minHeight: 8,
+                backgroundColor: colorScheme.onPrimaryContainer.withValues(
+                  alpha: 0.2,
+                ),
+                valueColor: AlwaysStoppedAnimation(colorScheme.primary),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Per-file upload tracking with details
     return Container(
-      margin: const EdgeInsets.all(16),
-      padding: const EdgeInsets.all(20),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
@@ -761,69 +851,273 @@ class _FilesPageState extends ConsumerState<FilesPage>
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: colorScheme.primary.withValues(alpha: 0.2),
+            color: colorScheme.primary.withValues(alpha: 0.15),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
         ],
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: colorScheme.primary,
-                  borderRadius: BorderRadius.circular(12),
+          // Header
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: colorScheme.primary,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.cloud_upload_rounded,
+                    color: colorScheme.onPrimary,
+                    size: 22,
+                  ),
                 ),
-                child: Icon(
-                  Icons.cloud_upload_rounded,
-                  color: colorScheme.onPrimary,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Uploading...',
-                      style: TextStyle(
-                        color: colorScheme.onPrimaryContainer,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    Text(
-                      '${(_uploadProgress * 100).toInt()}% complete',
-                      style: TextStyle(
-                        color: colorScheme.onPrimaryContainer.withValues(
-                          alpha: 0.7,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Uploading ${activeUploads.length} file(s)',
+                        style: TextStyle(
+                          color: colorScheme.onPrimaryContainer,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
                         ),
-                        fontSize: 12,
                       ),
-                    ),
-                  ],
+                      Text(
+                        '${(_uploadProgress * 100).toInt()}% overall',
+                        style: TextStyle(
+                          color: colorScheme.onPrimaryContainer
+                              .withValues(alpha: 0.7),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: LinearProgressIndicator(
-              value: _uploadProgress,
-              minHeight: 8,
-              backgroundColor: colorScheme.onPrimaryContainer.withValues(
-                alpha: 0.2,
-              ),
-              valueColor: AlwaysStoppedAnimation(colorScheme.primary),
+                // View details button
+                IconButton(
+                  icon: Icon(
+                    Icons.open_in_new_rounded,
+                    size: 20,
+                    color: colorScheme.onPrimaryContainer,
+                  ),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const TransportManagerPage(),
+                      ),
+                    );
+                  },
+                  tooltip: 'View all transfers',
+                ),
+              ],
             ),
           ),
+          // Overall progress bar
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: _uploadProgress,
+                minHeight: 6,
+                backgroundColor:
+                    colorScheme.onPrimaryContainer.withValues(alpha: 0.15),
+                valueColor: AlwaysStoppedAnimation(colorScheme.primary),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          // Per-file list (max 3 visible, scrollable)
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 180),
+            child: ListView.separated(
+              shrinkWrap: true,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: activeUploads.length.clamp(0, 5),
+              separatorBuilder: (_, __) => Divider(
+                  height: 1,
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+              itemBuilder: (context, index) {
+                final upload = activeUploads[index];
+                final progress = upload.progress;
+                final speed = upload.uploadSpeed;
+                final speedStr = speed > 0 ? '${_formatBytes(speed)}/s' : '';
+
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    children: [
+                      // File type icon
+                      Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: colorScheme.primary.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          _getUploadFileIcon(upload.fileName),
+                          size: 18,
+                          color: colorScheme.primary,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      // File name & progress
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              upload.fileName,
+                              style: TextStyle(
+                                color: colorScheme.onPrimaryContainer,
+                                fontWeight: FontWeight.w500,
+                                fontSize: 13,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(4),
+                              child: LinearProgressIndicator(
+                                value: progress,
+                                minHeight: 4,
+                                backgroundColor: colorScheme.onPrimaryContainer
+                                    .withValues(alpha: 0.1),
+                                valueColor: AlwaysStoppedAnimation(
+                                  colorScheme.primary.withValues(alpha: 0.8),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // Progress percentage & speed
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            '${(progress * 100).toInt()}%',
+                            style: TextStyle(
+                              color: colorScheme.primary,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                          if (speedStr.isNotEmpty)
+                            Text(
+                              speedStr,
+                              style: TextStyle(
+                                color: colorScheme.onPrimaryContainer
+                                    .withValues(alpha: 0.5),
+                                fontSize: 10,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+          if (activeUploads.length > 5)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                '+${activeUploads.length - 5} more file(s)',
+                style: TextStyle(
+                  color: colorScheme.onPrimaryContainer.withValues(alpha: 0.6),
+                  fontSize: 12,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+          const SizedBox(height: 8),
         ],
       ),
     );
+  }
+
+  IconData _getUploadFileIcon(String fileName) {
+    final ext = fileName.split('.').last.toLowerCase();
+    switch (ext) {
+      case 'mp4':
+      case 'mkv':
+      case 'avi':
+      case 'mov':
+      case 'wmv':
+      case 'flv':
+      case 'webm':
+      case 'm4v':
+      case 'ts':
+      case 'm2ts':
+        return Icons.videocam_rounded;
+      case 'mp3':
+      case 'flac':
+      case 'wav':
+      case 'aac':
+      case 'ogg':
+      case 'm4a':
+      case 'opus':
+      case 'wma':
+      case 'ape':
+        return Icons.audiotrack_rounded;
+      case 'jpg':
+      case 'jpeg':
+      case 'png':
+      case 'gif':
+      case 'bmp':
+      case 'webp':
+      case 'svg':
+      case 'ico':
+      case 'tiff':
+      case 'heic':
+      case 'heif':
+        return Icons.image_rounded;
+      case 'pdf':
+        return Icons.picture_as_pdf_rounded;
+      case 'zip':
+      case 'rar':
+      case '7z':
+      case 'tar':
+      case 'gz':
+      case 'bz2':
+      case 'xz':
+        return Icons.folder_zip_rounded;
+      case 'doc':
+      case 'docx':
+      case 'txt':
+      case 'md':
+      case 'rtf':
+        return Icons.description_rounded;
+      case 'xls':
+      case 'xlsx':
+      case 'csv':
+        return Icons.table_chart_rounded;
+      case 'ppt':
+      case 'pptx':
+        return Icons.slideshow_rounded;
+      case 'apk':
+        return Icons.android_rounded;
+      case 'exe':
+      case 'msi':
+        return Icons.computer_rounded;
+      default:
+        return Icons.insert_drive_file_rounded;
+    }
   }
 
   Widget _buildDiskGrid(List<DiskInfo> disks) {
@@ -2064,68 +2358,134 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
     if (result == null || result.files.isEmpty) return;
 
+    if (kIsWeb) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Web upload not yet implemented')),
+        );
+      }
+      return;
+    }
+
+    final uploadFiles = result.files
+        .where((f) => f.path != null)
+        .map((f) => File(f.path!))
+        .toList();
+
+    if (uploadFiles.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('No valid files selected'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Register all files with the download manager for tracking
+    final downloadManagerNotifier = ref.read(downloadManagerProvider.notifier);
+    final uploadTaskIds = <String>[];
+
+    int totalSize = 0;
+    for (final file in uploadFiles) {
+      final fileSize = file.lengthSync();
+      totalSize += fileSize;
+      final fileName = file.path.split(RegExp(r'[/\\]')).last;
+      final task = await downloadManagerNotifier.addUpload(
+        filePath: file.path,
+        uploadUrl: '$currentPath/$fileName',
+      );
+      uploadTaskIds.add(task.id);
+    }
+
+    debugPrint(
+        '[Upload] Uploading ${uploadFiles.length} files, total size: ${_formatBytes(totalSize)}');
+
+    // Show upload started notification
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.cloud_upload_rounded, color: Colors.white),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  '${uploadFiles.length} file(s) uploading... Tap Transport to see details.',
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Theme.of(context).colorScheme.primary,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          duration: const Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'View',
+            textColor: Colors.white,
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const TransportManagerPage(),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+    }
+
     setState(() {
       _isUploading = true;
       _uploadProgress = 0;
     });
 
-    List<File>? uploadedFiles; // 声明在外层
-
     try {
       final api = ref.read(apiServiceProvider);
 
-      if (kIsWeb) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Web upload not yet implemented')),
-          );
-        }
-        return; // 提前返回
-      }
-
-      uploadedFiles = result.files
-          .where((f) => f.path != null)
-          .map((f) => File(f.path!))
-          .toList();
-
-      if (uploadedFiles.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('No valid files selected'),
-              backgroundColor: Theme.of(context).colorScheme.error,
-            ),
-          );
-        }
-        return;
-      }
-
-      // 检查文件大小
-      int totalSize = 0;
-      for (final file in uploadedFiles) {
-        totalSize += file.lengthSync();
-      }
-
-      debugPrint(
-          '[Upload] Uploading ${uploadedFiles.length} files, total size: ${_formatBytes(totalSize)}');
-
       await api.uploadToDirectory(
         currentPath,
-        uploadedFiles,
+        uploadFiles,
         onProgress: (sent, total) {
           if (mounted) {
             setState(() => _uploadProgress = sent / total);
           }
-          debugPrint(
-              '[Upload] Progress: ${(sent / total * 100).toStringAsFixed(1)}%');
+
+          // Update individual upload task progress
+          // Distribute progress across individual tasks proportionally
+          int remaining = sent;
+          for (int i = 0;
+              i < uploadFiles.length && i < uploadTaskIds.length;
+              i++) {
+            final fileSize = uploadFiles[i].lengthSync();
+            final taskSent = remaining.clamp(0, fileSize);
+            remaining -= taskSent;
+
+            downloadManagerNotifier.updateUploadProgress(
+              uploadTaskIds[i],
+              taskSent,
+            );
+
+            if (remaining <= 0) break;
+          }
         },
       );
 
       debugPrint('[Upload] Upload completed successfully');
 
+      // Mark all upload tasks as completed
+      for (final taskId in uploadTaskIds) {
+        downloadManagerNotifier.completeUpload(taskId);
+      }
+
       // 发送文件上传完成事件
       final monitor = ref.read(fileSystemMonitorProvider);
-      for (final file in uploadedFiles) {
+      for (final file in uploadFiles) {
         final fileName = file.path.split(RegExp(r'[/\\]')).last;
         final uploadedPath =
             currentPath.isEmpty ? '/$fileName' : '$currentPath/$fileName';
@@ -2143,11 +2503,15 @@ class _FilesPageState extends ConsumerState<FilesPage>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Row(
+            content: Row(
               children: [
-                Icon(Icons.check_circle_rounded, color: Colors.white),
-                SizedBox(width: 12),
-                Text('Files uploaded successfully'),
+                const Icon(Icons.check_circle_rounded, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    '${uploadFiles.length} file(s) uploaded successfully',
+                  ),
+                ),
               ],
             ),
             backgroundColor: Colors.green,
@@ -2161,6 +2525,13 @@ class _FilesPageState extends ConsumerState<FilesPage>
     } on DioException catch (e) {
       debugPrint(
           '[Upload] DioException: ${e.type} - ${e.message} - ${e.error}');
+
+      // Mark all unfinished upload tasks as failed
+      for (final taskId in uploadTaskIds) {
+        downloadManagerNotifier.failUpload(
+            taskId, e.message ?? 'Upload failed');
+      }
+
       if (mounted) {
         String errorMessage = 'Upload failed';
         if (e.type == DioExceptionType.sendTimeout) {
@@ -2170,7 +2541,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
         } else if (e.type == DioExceptionType.connectionError) {
           errorMessage = 'Connection error - check server is running';
         } else if (e.response != null) {
-          // Try to extract message from response body first
           final data = e.response?.data;
           if (data is Map && data['message'] != null) {
             errorMessage = 'Upload failed: ${data['message']}';
@@ -2184,14 +2554,12 @@ class _FilesPageState extends ConsumerState<FilesPage>
             }
           }
         } else if (e.error != null) {
-          // Extract error from ApiException if wrapped
           errorMessage = 'Upload failed: ${e.error}';
         } else {
           final errMsg = e.message;
           errorMessage = 'Upload failed: ${errMsg ?? 'Network error'}';
         }
 
-        // Clear any existing SnackBars before showing new one
         final scaffoldMessenger = ScaffoldMessenger.of(context);
         scaffoldMessenger.clearSnackBars();
         scaffoldMessenger.showSnackBar(
@@ -2200,10 +2568,15 @@ class _FilesPageState extends ConsumerState<FilesPage>
             backgroundColor: Theme.of(context).colorScheme.error,
             duration: const Duration(seconds: 5),
             action: SnackBarAction(
-              label: 'Dismiss',
+              label: 'View Details',
               textColor: Colors.white,
               onPressed: () {
-                scaffoldMessenger.hideCurrentSnackBar();
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const TransportManagerPage(),
+                  ),
+                );
               },
             ),
           ),
@@ -2211,9 +2584,13 @@ class _FilesPageState extends ConsumerState<FilesPage>
       }
     } catch (e) {
       debugPrint('[Upload] Error: $e');
+
+      for (final taskId in uploadTaskIds) {
+        downloadManagerNotifier.failUpload(taskId, e.toString());
+      }
+
       if (mounted) {
         final errorStr = e.toString();
-        // Clear any existing SnackBars before showing new one
         final scaffoldMessenger = ScaffoldMessenger.of(context);
         scaffoldMessenger.clearSnackBars();
         scaffoldMessenger.showSnackBar(
@@ -2223,10 +2600,15 @@ class _FilesPageState extends ConsumerState<FilesPage>
             backgroundColor: Theme.of(context).colorScheme.error,
             duration: const Duration(seconds: 5),
             action: SnackBarAction(
-              label: 'Dismiss',
+              label: 'View Details',
               textColor: Colors.white,
               onPressed: () {
-                scaffoldMessenger.hideCurrentSnackBar();
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const TransportManagerPage(),
+                  ),
+                );
               },
             ),
           ),
