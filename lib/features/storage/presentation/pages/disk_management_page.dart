@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -1054,10 +1055,26 @@ class _InitializeDiskSheetState extends ConsumerState<_InitializeDiskSheet> {
       }
     } catch (e) {
       if (mounted) {
+        String errorMsg;
+        if (e is DioException) {
+          final responseData = e.response?.data;
+          if (responseData is Map<String, dynamic>) {
+            errorMsg = responseData['message'] ??
+                responseData['error'] ??
+                e.message ??
+                'Unknown error';
+          } else if (responseData is String && responseData.isNotEmpty) {
+            errorMsg = responseData;
+          } else {
+            errorMsg = e.message ?? 'Network error';
+          }
+        } else {
+          errorMsg = e.toString();
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-                '${widget.isReformat ? "Format" : "Initialize"} failed: $e'),
+                '${widget.isReformat ? "Format" : "Initialize"} failed: $errorMsg'),
             backgroundColor: Colors.red,
           ),
         );

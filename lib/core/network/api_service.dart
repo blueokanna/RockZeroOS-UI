@@ -1259,6 +1259,36 @@ class ApiService {
     return response.data as Map<String, dynamic>;
   }
 
+  /// 获取 Steam 用户游戏库（含游玩时间）
+  Future<Map<String, dynamic>> getSteamUserLibrary({
+    required String steamId,
+    String? apiKey,
+  }) async {
+    final response = await _dio.get(
+      '/api/v1/wasm-store/steam/library',
+      queryParameters: {
+        'steam_id': steamId,
+        if (apiKey != null) 'api_key': apiKey,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 获取 Steam 用户资料
+  Future<Map<String, dynamic>> getSteamPlayerSummary({
+    required String steamId,
+    String? apiKey,
+  }) async {
+    final response = await _dio.get(
+      '/api/v1/wasm-store/steam/player',
+      queryParameters: {
+        'steam_id': steamId,
+        if (apiKey != null) 'api_key': apiKey,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
   /// 获取 Epic 免费游戏
   Future<Map<String, dynamic>> getEpicFreeGames() async {
     final response = await _dio.get('/api/v1/wasm-store/epic/free');

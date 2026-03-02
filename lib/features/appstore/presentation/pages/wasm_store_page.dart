@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/network/api_service.dart';
@@ -14,31 +16,84 @@ import '../../../../core/network/api_service.dart';
 final wasmStoreOverviewProvider =
     FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
   final api = ref.read(apiServiceProvider);
-  return await api.getWasmStoreOverview().timeout(const Duration(seconds: 30));
+  try {
+    return await api
+        .getWasmStoreOverview()
+        .timeout(const Duration(seconds: 30));
+  } catch (e) {
+    if (e is DioException && e.response?.statusCode == 401) rethrow;
+    return {
+      'featured_games': <dynamic>[],
+      'free_games': <dynamic>[],
+      'wasm_apps': <dynamic>[],
+      'available_plugins': <dynamic>[],
+      'categories': <dynamic>[],
+    };
+  }
 });
 
 final steamFeaturedProvider =
     FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
   final api = ref.read(apiServiceProvider);
-  return await api.getSteamFeatured().timeout(const Duration(seconds: 20));
+  try {
+    return await api.getSteamFeatured().timeout(const Duration(seconds: 20));
+  } catch (e) {
+    return {'items': <dynamic>[], 'total': 0};
+  }
 });
 
 final epicFreeProvider =
     FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
   final api = ref.read(apiServiceProvider);
-  return await api.getEpicFreeGames().timeout(const Duration(seconds: 20));
+  try {
+    return await api.getEpicFreeGames().timeout(const Duration(seconds: 20));
+  } catch (e) {
+    return {'items': <dynamic>[], 'total': 0};
+  }
 });
 
 final gameSearchProvider = FutureProvider.autoDispose
     .family<Map<String, dynamic>, String>((ref, query) async {
   final api = ref.read(apiServiceProvider);
-  return await api
-      .searchGames(query: query)
-      .timeout(const Duration(seconds: 15));
+  try {
+    return await api
+        .searchGames(query: query)
+        .timeout(const Duration(seconds: 15));
+  } catch (e) {
+    return {'items': <dynamic>[], 'total': 0};
+  }
+});
+
+/// Steam 用户游戏库 Provider
+final steamLibraryProvider = FutureProvider.autoDispose
+    .family<Map<String, dynamic>, ({String steamId, String? apiKey})>(
+        (ref, params) async {
+  final api = ref.read(apiServiceProvider);
+  try {
+    return await api
+        .getSteamUserLibrary(steamId: params.steamId, apiKey: params.apiKey)
+        .timeout(const Duration(seconds: 20));
+  } catch (e) {
+    return {'games': <dynamic>[], 'total': 0, 'steam_id': params.steamId};
+  }
+});
+
+/// Steam 用户资料 Provider
+final steamPlayerProvider = FutureProvider.autoDispose
+    .family<Map<String, dynamic>, ({String steamId, String? apiKey})>(
+        (ref, params) async {
+  final api = ref.read(apiServiceProvider);
+  try {
+    return await api
+        .getSteamPlayerSummary(steamId: params.steamId, apiKey: params.apiKey)
+        .timeout(const Duration(seconds: 10));
+  } catch (e) {
+    return <String, dynamic>{};
+  }
 });
 
 // ============================================================================
-// WASM Store Page
+// WASM Store Page - 游戏中心 (Gaming Hub like 小黑盒)
 // ============================================================================
 
 class WasmStorePage extends ConsumerStatefulWidget {
@@ -55,10 +110,15 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
   String? _searchQuery;
   Timer? _searchDebounce;
 
+  // Steam settings
+  String? _steamId;
+  String? _steamApiKey;
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 5, vsync: this);
+    _tabController = TabController(length: 6, vsync: this);
+    _loadSteamSettings();
   }
 
   @override
@@ -67,6 +127,28 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     _searchController.dispose();
     _searchDebounce?.cancel();
     super.dispose();
+  }
+
+  Future<void> _loadSteamSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _steamId = prefs.getString('steam_id');
+        _steamApiKey = prefs.getString('steam_api_key');
+      });
+    }
+  }
+
+  Future<void> _saveSteamSettings(String steamId, String apiKey) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('steam_id', steamId);
+    await prefs.setString('steam_api_key', apiKey);
+    if (mounted) {
+      setState(() {
+        _steamId = steamId;
+        _steamApiKey = apiKey;
+      });
+    }
   }
 
   void _onSearchChanged(String value) {
@@ -96,11 +178,11 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
               title: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.games_rounded,
+                  Icon(Icons.sports_esports_rounded,
                       size: 22, color: colorScheme.primary),
                   const SizedBox(width: 8),
                   Text(
-                    '游戏商店',
+                    '游戏中心',
                     style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
@@ -112,6 +194,11 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
               collapseMode: CollapseMode.pin,
             ),
             actions: [
+              IconButton(
+                icon: const Icon(Icons.person_search_rounded),
+                tooltip: 'Steam 账号设置',
+                onPressed: () => _showSteamSettingsDialog(),
+              ),
               IconButton(
                 icon: const Icon(Icons.refresh_rounded),
                 tooltip: '刷新',
@@ -186,6 +273,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                       ),
                       tabs: const [
                         Tab(text: '推荐'),
+                        Tab(text: '我的游戏库'),
                         Tab(text: 'Steam'),
                         Tab(text: 'Epic 免费'),
                         Tab(text: 'WASM 应用'),
@@ -204,12 +292,109 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                 controller: _tabController,
                 children: [
                   _buildOverviewTab(),
+                  _buildMyLibraryTab(),
                   _buildSteamTab(),
                   _buildEpicTab(),
                   _buildWasmAppsTab(),
                   _buildPluginsTab(),
                 ],
               ),
+      ),
+    );
+  }
+
+  // ============================================================================
+  // Steam 设置对话框
+  // ============================================================================
+
+  void _showSteamSettingsDialog() {
+    final steamIdCtrl = TextEditingController(text: _steamId ?? '');
+    final apiKeyCtrl = TextEditingController(text: _steamApiKey ?? '');
+    final colorScheme = Theme.of(context).colorScheme;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.settings_rounded, color: colorScheme.primary),
+            const SizedBox(width: 8),
+            const Text('Steam 账号设置'),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '绑定你的 Steam 账号以查看游戏库和游玩时间',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: steamIdCtrl,
+                decoration: InputDecoration(
+                  labelText: 'Steam ID (64位)',
+                  hintText: '76561198xxxxxxxxx',
+                  prefixIcon: const Icon(Icons.person_rounded),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: apiKeyCtrl,
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: 'Steam Web API Key',
+                  hintText: '从 steamcommunity.com/dev/apikey 获取',
+                  prefixIcon: const Icon(Icons.key_rounded),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              InkWell(
+                onTap: () => launchUrl(
+                  Uri.parse('https://steamcommunity.com/dev/apikey'),
+                  mode: LaunchMode.externalApplication,
+                ),
+                child: Text(
+                  '获取 Steam API Key →',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colorScheme.primary,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final id = steamIdCtrl.text.trim();
+              final key = apiKeyCtrl.text.trim();
+              if (id.isNotEmpty && key.isNotEmpty) {
+                _saveSteamSettings(id, key);
+                Navigator.pop(ctx);
+                ref.invalidate(wasmStoreOverviewProvider);
+              }
+            },
+            child: const Text('保存'),
+          ),
+        ],
       ),
     );
   }
@@ -264,6 +449,10 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              // Hero Banner
+              _buildHeroBanner(),
+              const SizedBox(height: 20),
+
               // 分类卡片
               if (categories.isNotEmpty) ...[
                 _buildSectionTitle('分类', Icons.category_rounded),
@@ -283,13 +472,13 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                         onTap: () {
                           final id = cat['id'] ?? '';
                           if (id == 'steam') {
-                            _tabController.animateTo(1);
-                          } else if (id == 'epic_free') {
                             _tabController.animateTo(2);
-                          } else if (id == 'wasm_apps') {
+                          } else if (id == 'epic_free') {
                             _tabController.animateTo(3);
-                          } else if (id == 'plugins') {
+                          } else if (id == 'wasm_apps') {
                             _tabController.animateTo(4);
+                          } else if (id == 'plugins') {
+                            _tabController.animateTo(5);
                           }
                         },
                       );
@@ -374,6 +563,408 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
   }
 
   // ============================================================================
+  // Hero Banner
+  // ============================================================================
+
+  Widget _buildHeroBanner() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      height: 160,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            colorScheme.primaryContainer,
+            colorScheme.tertiaryContainer,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      padding: const EdgeInsets.all(20),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  '游戏中心',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.onPrimaryContainer,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '浏览 Steam / Epic 游戏资讯\n查看你的游戏库和游玩时间',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: colorScheme.onPrimaryContainer.withAlpha(180),
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (_steamId == null)
+                  FilledButton.tonalIcon(
+                    onPressed: _showSteamSettingsDialog,
+                    icon: const Icon(Icons.link_rounded, size: 16),
+                    label:
+                        const Text('绑定 Steam', style: TextStyle(fontSize: 12)),
+                  ),
+              ],
+            ),
+          ),
+          Icon(
+            Icons.sports_esports_rounded,
+            size: 80,
+            color: colorScheme.onPrimaryContainer.withAlpha(40),
+          ),
+        ],
+      ),
+    ).animate().fadeIn(duration: 400.ms).scale(
+          begin: const Offset(0.95, 0.95),
+          duration: 400.ms,
+          curve: Curves.easeOutCubic,
+        );
+  }
+
+  // ============================================================================
+  // 我的游戏库 Tab (like 小黑盒)
+  // ============================================================================
+
+  Widget _buildMyLibraryTab() {
+    if (_steamId == null || _steamApiKey == null) {
+      return _buildSteamSetupPrompt();
+    }
+
+    final params = (steamId: _steamId!, apiKey: _steamApiKey);
+    final libraryAsync = ref.watch(steamLibraryProvider(params));
+    final playerAsync = ref.watch(steamPlayerProvider(params));
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        ref.invalidate(steamLibraryProvider(params));
+        ref.invalidate(steamPlayerProvider(params));
+      },
+      child: CustomScrollView(
+        slivers: [
+          // Player profile header
+          SliverToBoxAdapter(
+            child: playerAsync.when(
+              data: (player) => _buildPlayerProfileCard(player),
+              loading: () => _buildPlayerProfileSkeleton(),
+              error: (_, __) => const SizedBox.shrink(),
+            ),
+          ),
+
+          // Game library stats
+          SliverToBoxAdapter(
+            child: libraryAsync.when(
+              data: (data) {
+                final games = (data['games'] as List?) ?? [];
+                return _buildLibraryStats(games);
+              },
+              loading: () => const SizedBox.shrink(),
+              error: (_, __) => const SizedBox.shrink(),
+            ),
+          ),
+
+          // Game list
+          libraryAsync.when(
+            data: (data) {
+              final games = (data['games'] as List?) ?? [];
+              if (games.isEmpty) {
+                return SliverFillRemaining(
+                  child: _buildEmptyState(
+                    '游戏库为空\n请检查 Steam ID 和 API Key 是否正确',
+                    Icons.sports_esports_outlined,
+                  ),
+                );
+              }
+              return SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                sliver: SliverList.builder(
+                  itemCount: games.length,
+                  itemBuilder: (context, index) {
+                    final game = games[index] as Map<String, dynamic>;
+                    return _LibraryGameTile(game: game).animate().fadeIn(
+                          delay: Duration(
+                              milliseconds: (index * 30).clamp(0, 500)),
+                          duration: 200.ms,
+                        );
+                  },
+                ),
+              );
+            },
+            loading: () => const SliverFillRemaining(
+              child: Center(child: CircularProgressIndicator()),
+            ),
+            error: (e, _) => SliverFillRemaining(
+              child: _buildErrorState('加载游戏库失败: $e'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSteamSetupPrompt() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: colorScheme.primaryContainer.withAlpha(50),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.sports_esports_rounded,
+                size: 64,
+                color: colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              '绑定 Steam 账号',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '绑定你的 Steam 账号后，可以查看：\n\n'
+              '🎮  你的完整游戏库\n'
+              '⏱️  每款游戏的游玩时间\n'
+              '📊  游戏时间统计和排行\n'
+              '🕐  最近游玩的游戏',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: colorScheme.onSurfaceVariant,
+                height: 1.6,
+              ),
+            ),
+            const SizedBox(height: 32),
+            FilledButton.icon(
+              onPressed: _showSteamSettingsDialog,
+              icon: const Icon(Icons.link_rounded),
+              label: const Text('绑定 Steam 账号'),
+              style: FilledButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlayerProfileCard(Map<String, dynamic> player) {
+    if (player.isEmpty) return const SizedBox.shrink();
+
+    final colorScheme = Theme.of(context).colorScheme;
+    final name = player['personaname'] ?? 'Unknown';
+    final avatar = player['avatarfull'] ?? player['avatar'] ?? '';
+    final profileUrl = player['profileurl'] ?? '';
+    final personaState = player['personastate'] ?? 0;
+
+    String statusText;
+    Color statusColor;
+    switch (personaState) {
+      case 1:
+        statusText = '在线';
+        statusColor = Colors.green;
+        break;
+      case 2:
+        statusText = '忙碌';
+        statusColor = Colors.red;
+        break;
+      case 3:
+        statusText = '离开';
+        statusColor = Colors.amber;
+        break;
+      case 4:
+        statusText = '打盹';
+        statusColor = Colors.amber.shade700;
+        break;
+      case 5:
+        statusText = '想交易';
+        statusColor = Colors.cyan;
+        break;
+      case 6:
+        statusText = '想玩';
+        statusColor = Colors.lightGreen;
+        break;
+      default:
+        statusText = '离线';
+        statusColor = Colors.grey;
+    }
+
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            colorScheme.primaryContainer,
+            colorScheme.surfaceContainerHighest,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          // Avatar
+          Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: statusColor, width: 3),
+            ),
+            child: CircleAvatar(
+              radius: 32,
+              backgroundImage: avatar.isNotEmpty ? NetworkImage(avatar) : null,
+              child: avatar.isEmpty
+                  ? const Icon(Icons.person_rounded, size: 32)
+                  : null,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.onPrimaryContainer,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: statusColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      statusText,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: statusColor,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (profileUrl.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.open_in_new_rounded, size: 20),
+              onPressed: () => launchUrl(
+                Uri.parse(profileUrl),
+                mode: LaunchMode.externalApplication,
+              ),
+              tooltip: '打开 Steam 主页',
+            ),
+          IconButton(
+            icon: const Icon(Icons.settings_rounded, size: 20),
+            onPressed: _showSteamSettingsDialog,
+            tooltip: '更改账号',
+          ),
+        ],
+      ),
+    ).animate().fadeIn(duration: 300.ms).slideY(begin: -0.1);
+  }
+
+  Widget _buildPlayerProfileSkeleton() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(16),
+      height: 100,
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: const Center(child: CircularProgressIndicator()),
+    );
+  }
+
+  Widget _buildLibraryStats(List<dynamic> games) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    int totalPlaytime = 0;
+    int recentlyPlayed = 0;
+    int neverPlayed = 0;
+
+    for (final g in games) {
+      final game = g as Map<String, dynamic>;
+      final pt = (game['playtime_forever'] as num?)?.toInt() ?? 0;
+      final pt2w = (game['playtime_2weeks'] as num?)?.toInt() ?? 0;
+      totalPlaytime += pt;
+      if (pt2w > 0) recentlyPlayed++;
+      if (pt == 0) neverPlayed++;
+    }
+
+    final totalHours = (totalPlaytime / 60).round();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Row(
+        children: [
+          _StatCard(
+            icon: Icons.games_rounded,
+            label: '总游戏',
+            value: '${games.length}',
+            color: colorScheme.primary,
+          ),
+          const SizedBox(width: 8),
+          _StatCard(
+            icon: Icons.access_time_rounded,
+            label: '总时长',
+            value: '${totalHours}h',
+            color: Colors.blue,
+          ),
+          const SizedBox(width: 8),
+          _StatCard(
+            icon: Icons.play_arrow_rounded,
+            label: '最近游玩',
+            value: '$recentlyPlayed',
+            color: Colors.green,
+          ),
+          const SizedBox(width: 8),
+          _StatCard(
+            icon: Icons.not_started_outlined,
+            label: '未游玩',
+            value: '$neverPlayed',
+            color: Colors.orange,
+          ),
+        ],
+      ),
+    ).animate().fadeIn(delay: 200.ms, duration: 300.ms);
+  }
+
+  // ============================================================================
   // Steam Tab
   // ============================================================================
 
@@ -384,7 +975,8 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
       data: (data) {
         final items = (data['items'] as List?) ?? [];
         if (items.isEmpty) {
-          return _buildEmptyState('暂无 Steam 精选游戏', Icons.games_rounded);
+          return _buildEmptyState(
+              '暂无 Steam 精选游戏\n可能是网络原因，请稍后重试', Icons.games_rounded);
         }
         return RefreshIndicator(
           onRefresh: () async => ref.invalidate(steamFeaturedProvider),
@@ -417,7 +1009,8 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
       data: (data) {
         final items = (data['items'] as List?) ?? [];
         if (items.isEmpty) {
-          return _buildEmptyState('暂无 Epic 免费游戏', Icons.card_giftcard_rounded);
+          return _buildEmptyState(
+              '暂无 Epic 免费游戏\n可能是网络原因，请稍后重试', Icons.card_giftcard_rounded);
         }
         return RefreshIndicator(
           onRefresh: () async => ref.invalidate(epicFreeProvider),
@@ -586,6 +1179,237 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
 // ============================================================================
 // 子组件
 // ============================================================================
+
+/// 统计卡片
+class _StatCard extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  const _StatCard({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(height: 4),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: colorScheme.onSurface,
+              ),
+            ),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 游戏库列表项 (like 小黑盒 style)
+class _LibraryGameTile extends StatelessWidget {
+  final Map<String, dynamic> game;
+
+  const _LibraryGameTile({required this.game});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final name = game['name'] ?? '';
+    final headerImage = game['header_image'] ?? '';
+    final playtimeFormatted = game['playtime_formatted'] ?? '0m';
+    final playtimeHours = (game['playtime_hours'] as num?)?.toDouble() ?? 0;
+    final playtime2weeks = (game['playtime_2weeks'] as num?)?.toInt() ?? 0;
+    final lastPlayed = (game['rtime_last_played'] as num?)?.toInt() ?? 0;
+    final playtimeWindows = (game['playtime_windows'] as num?)?.toInt() ?? 0;
+    final playtimeLinux = (game['playtime_linux'] as num?)?.toInt() ?? 0;
+    final playtimeMac = (game['playtime_mac'] as num?)?.toInt() ?? 0;
+
+    // Last played time formatting
+    String lastPlayedText = '';
+    if (lastPlayed > 0) {
+      final dt = DateTime.fromMillisecondsSinceEpoch(lastPlayed * 1000);
+      final now = DateTime.now();
+      final diff = now.difference(dt);
+      if (diff.inDays == 0) {
+        lastPlayedText = '今天';
+      } else if (diff.inDays == 1) {
+        lastPlayedText = '昨天';
+      } else if (diff.inDays < 7) {
+        lastPlayedText = '${diff.inDays}天前';
+      } else if (diff.inDays < 30) {
+        lastPlayedText = '${(diff.inDays / 7).floor()}周前';
+      } else if (diff.inDays < 365) {
+        lastPlayedText = '${(diff.inDays / 30).floor()}个月前';
+      } else {
+        lastPlayedText = '${(diff.inDays / 365).floor()}年前';
+      }
+    }
+
+    // Platform breakdown
+    final platforms = <String>[];
+    if (playtimeWindows > 0) {
+      platforms.add('Win: ${_formatMinutes(playtimeWindows)}');
+    }
+    if (playtimeLinux > 0) {
+      platforms.add('Linux: ${_formatMinutes(playtimeLinux)}');
+    }
+    if (playtimeMac > 0) {
+      platforms.add('Mac: ${_formatMinutes(playtimeMac)}');
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
+        onTap: () {
+          final url = game['store_url'] ?? '';
+          if (url.isNotEmpty) {
+            launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+          }
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Game header image
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: 100,
+                  height: 47,
+                  child: headerImage.isNotEmpty
+                      ? Image.network(
+                          headerImage,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            color: colorScheme.surfaceContainerLow,
+                            child: const Icon(Icons.games_rounded, size: 20),
+                          ),
+                        )
+                      : Container(
+                          color: colorScheme.surfaceContainerLow,
+                          child: const Icon(Icons.games_rounded, size: 20),
+                        ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Game info
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: colorScheme.onSurface,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(Icons.access_time_rounded,
+                            size: 12, color: colorScheme.onSurfaceVariant),
+                        const SizedBox(width: 4),
+                        Text(
+                          playtimeFormatted,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: playtimeHours > 100
+                                ? Colors.amber
+                                : playtimeHours > 10
+                                    ? colorScheme.primary
+                                    : colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        if (playtime2weeks > 0) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withAlpha(30),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '近2周 ${_formatMinutes(playtime2weeks)}',
+                              style: const TextStyle(
+                                  fontSize: 10, color: Colors.green),
+                            ),
+                          ),
+                        ],
+                        if (lastPlayedText.isNotEmpty) ...[
+                          const Spacer(),
+                          Text(
+                            lastPlayedText,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (platforms.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        platforms.join(' | '),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatMinutes(int minutes) {
+    if (minutes < 60) return '${minutes}m';
+    final h = minutes ~/ 60;
+    final m = minutes % 60;
+    return m > 0 ? '${h}h ${m}m' : '${h}h';
+  }
+}
 
 /// 分类标签
 class _CategoryChip extends StatelessWidget {
@@ -969,7 +1793,7 @@ class _WasmAppTile extends StatelessWidget {
   }
 
   IconData _getCategoryIcon(String category) {
-    switch (category.toLowerCase()) {
+    switch (category.toString().toLowerCase()) {
       case 'game':
         return Icons.sports_esports_rounded;
       case 'tool':
@@ -989,7 +1813,9 @@ class _WasmAppTile extends StatelessWidget {
 
   String _formatBytes(int bytes) {
     if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 }
