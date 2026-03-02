@@ -10,6 +10,16 @@ set(BINARY_NAME "rockzero")
 # versions of CMake.
 cmake_policy(VERSION 3.14...3.25)
 
+# Keep compatibility with plugins that still use legacy add_custom_command
+# signatures under newer CMake versions.
+if(POLICY CMP0175)
+  cmake_policy(SET CMP0175 OLD)
+endif()
+
+# Plugin CMake files can emit developer-only warnings; hide them from normal
+# app builds.
+set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS 1 CACHE INTERNAL "")
+
 # Define build configuration option.
 get_property(IS_MULTICONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 if(IS_MULTICONFIG)

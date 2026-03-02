@@ -85,13 +85,31 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     return Scaffold(
       body: NestedScrollView(
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
-          SliverAppBar.large(
-            title: Row(
-              children: [
-                Icon(Icons.games_rounded, size: 28, color: colorScheme.primary),
-                const SizedBox(width: 12),
-                const Text('游戏商店'),
-              ],
+          SliverAppBar(
+            floating: true,
+            snap: true,
+            pinned: true,
+            expandedHeight: 180,
+            toolbarHeight: 56,
+            flexibleSpace: FlexibleSpaceBar(
+              titlePadding: const EdgeInsets.only(left: 20, bottom: 110),
+              title: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.games_rounded,
+                      size: 22, color: colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    '游戏商店',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                ],
+              ),
+              collapseMode: CollapseMode.pin,
             ),
             actions: [
               IconButton(
@@ -106,53 +124,76 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
               const SizedBox(width: 8),
             ],
             bottom: PreferredSize(
-              preferredSize: const Size.fromHeight(100),
-              child: Column(
-                children: [
-                  // 搜索栏
-                  Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    child: TextField(
-                      controller: _searchController,
-                      onChanged: _onSearchChanged,
-                      decoration: InputDecoration(
-                        hintText: '搜索游戏、应用、插件...',
-                        prefixIcon: const Icon(Icons.search_rounded),
-                        suffixIcon: _searchQuery != null
-                            ? IconButton(
-                                icon: const Icon(Icons.clear_rounded),
-                                onPressed: () {
-                                  _searchController.clear();
-                                  setState(() => _searchQuery = null);
-                                },
-                              )
-                            : null,
-                        filled: true,
-                        fillColor: colorScheme.surfaceContainerHighest,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide.none,
+              preferredSize: const Size.fromHeight(108),
+              child: Material(
+                color: colorScheme.surface,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 搜索栏
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      child: SizedBox(
+                        height: 44,
+                        child: TextField(
+                          controller: _searchController,
+                          onChanged: _onSearchChanged,
+                          style: const TextStyle(fontSize: 14),
+                          decoration: InputDecoration(
+                            hintText: '搜索游戏、应用、插件...',
+                            hintStyle: TextStyle(
+                              fontSize: 14,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                            prefixIcon: Icon(Icons.search_rounded,
+                                size: 20, color: colorScheme.onSurfaceVariant),
+                            suffixIcon: _searchQuery != null
+                                ? IconButton(
+                                    icon: Icon(Icons.clear_rounded,
+                                        size: 18,
+                                        color: colorScheme.onSurfaceVariant),
+                                    onPressed: () {
+                                      _searchController.clear();
+                                      setState(() => _searchQuery = null);
+                                    },
+                                  )
+                                : null,
+                            filled: true,
+                            fillColor: colorScheme.surfaceContainerHighest,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(24),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 0),
+                          ),
                         ),
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 12),
                       ),
                     ),
-                  ),
-                  // Tab 栏
-                  TabBar(
-                    controller: _tabController,
-                    isScrollable: true,
-                    tabAlignment: TabAlignment.start,
-                    tabs: const [
-                      Tab(text: '推荐'),
-                      Tab(text: 'Steam'),
-                      Tab(text: 'Epic 免费'),
-                      Tab(text: 'WASM 应用'),
-                      Tab(text: '插件'),
-                    ],
-                  ),
-                ],
+                    // Tab 栏
+                    TabBar(
+                      controller: _tabController,
+                      isScrollable: true,
+                      tabAlignment: TabAlignment.start,
+                      labelStyle: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      unselectedLabelStyle: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w400,
+                      ),
+                      tabs: const [
+                        Tab(text: '推荐'),
+                        Tab(text: 'Steam'),
+                        Tab(text: 'Epic 免费'),
+                        Tab(text: 'WASM 应用'),
+                        Tab(text: '插件'),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
