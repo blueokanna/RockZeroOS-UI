@@ -26,6 +26,7 @@ class SecureHlsProxyServer {
   final Uint8List pmk; // Pairwise Master Key
   final String password; // User password for ZKP proof generation
   final PasswordRegistration? zkpRegistration; // ZKP registration from server
+  final String? jwtToken; // JWT token for authenticated requests
 
   // Bulletproofs auth context
   late final HlsBulletproofAuth _bulletproofAuth;
@@ -36,6 +37,7 @@ class SecureHlsProxyServer {
     required this.pmk,
     required this.password,
     this.zkpRegistration,
+    this.jwtToken,
   }) {
     _bulletproofAuth = HlsBulletproofAuth();
   }
@@ -146,9 +148,13 @@ class SecureHlsProxyServer {
     try {
       // 从后端获取播放列表
       final playlistUrl = '$baseUrl/api/v1/secure-hls/$sessionId/playlist.m3u8';
-      final response = await HttpClient()
-          .getUrl(Uri.parse(playlistUrl))
-          .then((req) => req.close());
+      final response =
+          await HttpClient().getUrl(Uri.parse(playlistUrl)).then((req) {
+        if (jwtToken != null) {
+          req.headers.add('Authorization', 'Bearer $jwtToken');
+        }
+        return req.close();
+      });
 
       if (response.statusCode == 200) {
         // 读取播放列表内容
@@ -200,6 +206,9 @@ class SecureHlsProxyServer {
       final client = HttpClient();
       final backendRequest = await client.postUrl(Uri.parse(segmentUrl));
       backendRequest.headers.contentType = ContentType.json;
+      if (jwtToken != null) {
+        backendRequest.headers.add('Authorization', 'Bearer $jwtToken');
+      }
 
       // 发送 JSON body（包含 ZKP 证明）
       final body = jsonEncode({'zkp_proof': zkpProof});

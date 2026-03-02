@@ -137,8 +137,8 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
         fileId,
       );
 
-      // 2. 获取代理 URL
-      final proxyUrl = await _securePlayer!.getProxyPlaylistUrl();
+      // 2. 使用直接播放模式（无代理，无加密，适合 ARM 设备）
+      final playUrl = _securePlayer!.getDirectPlaylistUrl();
 
       // 3. 创建播放器
       _player = Player(
@@ -153,7 +153,7 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
       _setupListeners();
 
       // 5. 开始播放
-      await _player!.open(Media(proxyUrl), play: true);
+      await _player!.open(Media(playUrl), play: true);
 
       state = state.copyWith(
         isInitialized: true,

@@ -256,6 +256,7 @@ class SecureHlsPlayer {
       pmk: _pmk!,
       password: _password!,
       zkpRegistration: _zkpRegistration,
+      jwtToken: jwtToken, // 传递 JWT token 给代理
     );
 
     final proxyPlaylistUrl = await _proxy!.start();
@@ -269,6 +270,38 @@ class SecureHlsPlayer {
     await _controller!.initialize();
 
     debugPrint('[SecureHLS] Video player initialized via local proxy');
+
+    return _controller!;
+  }
+
+  /// 直接播放模式（无代理、无加密、无 ZKP）
+  ///
+  /// 视频段通过 GET 请求直接获取，不经过本地代理。
+  /// 安全性由 session_id（随机 UUID）保证。
+  /// 适合 ARM 等低性能设备，避免每段的 ZKP 证明和加解密开销。
+  ///
+  /// 流程：
+  /// 1. 播放器直接 GET playlist.m3u8（session 鉴权）
+  /// 2. 播放器直接 GET segment_N.ts（session 鉴权）
+  /// 3. 服务器返回明文视频段
+  /// 4. 支持随点随播（ffmpeg VOD 分片 + HLS ENDLIST）
+  Future<VideoPlayerController> playDirect() async {
+    if (_sessionId == null) {
+      throw Exception(
+          'SAE handshake not completed. Call initializeSaeHandshake() first.');
+    }
+
+    // 直接使用服务器的播放列表 URL（不需要本地代理）
+    final playlistUrl = '$baseUrl/api/v1/secure-hls/$_sessionId/playlist.m3u8';
+    debugPrint('[SecureHLS] Direct play mode: $playlistUrl');
+
+    _controller = VideoPlayerController.networkUrl(
+      Uri.parse(playlistUrl),
+      httpHeaders: const {},
+    );
+
+    await _controller!.initialize();
+    debugPrint('[SecureHLS] Video player initialized (direct mode, no proxy)');
 
     return _controller!;
   }
@@ -311,9 +344,22 @@ class SecureHlsPlayer {
       pmk: _pmk!,
       password: _password!,
       zkpRegistration: _zkpRegistration,
+      jwtToken: jwtToken,
     );
 
     return await _proxy!.start();
+  }
+
+  /// 获取直接播放列表 URL（无代理模式）
+  ///
+  /// 返回服务器的播放列表 URL，播放器直接通过 GET 请求获取视频段。
+  /// 无需本地代理、ZKP 证明或段加解密，适合 ARM 等低性能设备。
+  /// 支持随点随播（ffmpeg VOD 分片）。
+  String getDirectPlaylistUrl() {
+    if (_sessionId == null) {
+      throw Exception('SAE handshake not completed');
+    }
+    return '$baseUrl/api/v1/secure-hls/$_sessionId/playlist.m3u8';
   }
 
   /// 获取会话 ID
