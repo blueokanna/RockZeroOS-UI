@@ -204,11 +204,34 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
               ),
             ),
           ),
-          // Scaffold
-          Scaffold(
-            backgroundColor: Colors.transparent,
-            body: content,
-            bottomNavigationBar: bottomNav,
+          // Scaffold — 覆盖主题使 Card/AppBar 等组件自动适配壁纸
+          Theme(
+            data: Theme.of(context).copyWith(
+              cardTheme: CardThemeData(
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20)),
+                color: colorScheme.surfaceContainerLow.withValues(alpha: 0.55),
+              ),
+              appBarTheme: Theme.of(context).appBarTheme.copyWith(
+                    backgroundColor: Colors.transparent,
+                    surfaceTintColor: Colors.transparent,
+                    scrolledUnderElevation: 0,
+                  ),
+              dialogTheme: Theme.of(context).dialogTheme.copyWith(
+                    backgroundColor:
+                        colorScheme.surface.withValues(alpha: 0.85),
+                  ),
+              bottomSheetTheme: Theme.of(context).bottomSheetTheme.copyWith(
+                    backgroundColor:
+                        colorScheme.surface.withValues(alpha: 0.85),
+                  ),
+            ),
+            child: Scaffold(
+              backgroundColor: Colors.transparent,
+              body: content,
+              bottomNavigationBar: bottomNav,
+            ),
           ),
           // 浮动小窗视频播放器
           const MiniVideoPlayer(),

@@ -10,6 +10,7 @@ import 'package:thirds/blake3.dart' as blake3;
 import '../../../core/models/api_models.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_service.dart';
+import '../../../core/services/biometric_service.dart';
 
 // Secure storage provider
 final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
@@ -208,6 +209,10 @@ class AuthNotifier extends Notifier<AuthState> {
 
   Future<void> logout() async {
     await _storage.deleteAll();
+    // Disable biometric login so next app launch doesn't try to use deleted tokens
+    try {
+      ref.read(biometricEnabledProvider.notifier).setEnabled(false);
+    } catch (_) {}
     state = const AuthState();
   }
 

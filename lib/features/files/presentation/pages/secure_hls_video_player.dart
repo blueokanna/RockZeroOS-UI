@@ -1015,245 +1015,18 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     );
   }
 
-  /// 显示加密协议详情弹窗
+  /// 显示加密协议详情弹窗 — 带流水线动画
   void _showEncryptionDetails() {
     final isHls = _playbackMode != 'direct';
     final sessionId = _hlsSessionId;
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1A1A2E),
+      backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 20),
-                  decoration: BoxDecoration(
-                    color: Colors.white24,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              Row(
-                children: [
-                  Icon(
-                    Icons.shield_rounded,
-                    color: isHls ? Colors.greenAccent : Colors.lightBlueAccent,
-                    size: 24,
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    '端到端加密保护',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                isHls
-                    ? 'SAE + Bulletproofs ZKP + AES-256-GCM'
-                    : 'AES-256-GCM + Blake3 密钥派生',
-                style: TextStyle(
-                  color: isHls ? Colors.greenAccent : Colors.lightBlueAccent,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(height: 20),
-              _buildProtocolItem(
-                icon: Icons.vpn_key_rounded,
-                title: '密钥交换',
-                subtitle: isHls
-                    ? 'WPA3-SAE (Simultaneous Authentication of Equals)'
-                    : 'JWT Token + Blake3 HKDF',
-                detail: isHls
-                    ? 'Dragonfly 密钥交换协议，抵抗离线字典攻击'
-                    : '基于 Blake3 的密钥派生函数生成会话密钥',
-                color: Colors.orangeAccent,
-                active: true,
-              ),
-              if (isHls) ...[
-                const SizedBox(height: 12),
-                _buildProtocolItem(
-                  icon: Icons.verified_user_rounded,
-                  title: '零知识证明',
-                  subtitle: 'Bulletproofs Range Proof',
-                  detail: '每个分片请求附带 ZKP 证明，服务端验证访问权限而无需暴露凭据',
-                  color: Colors.purpleAccent,
-                  active: true,
-                ),
-              ],
-              const SizedBox(height: 12),
-              _buildProtocolItem(
-                icon: Icons.lock_rounded,
-                title: '数据加密',
-                subtitle: 'AES-256-GCM (Galois/Counter Mode)',
-                detail: '每个数据块使用唯一 nonce 加密，提供认证加密和完整性保护',
-                color: Colors.cyanAccent,
-                active: true,
-              ),
-              const SizedBox(height: 12),
-              _buildProtocolItem(
-                icon: Icons.fingerprint_rounded,
-                title: '完整性校验',
-                subtitle: 'Blake3 Cryptographic Hash',
-                detail: '所有传输数据使用 Blake3 哈希验证完整性，防止篡改',
-                color: Colors.tealAccent,
-                active: true,
-              ),
-              if (isHls && sessionId != null) ...[
-                const SizedBox(height: 16),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.05),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.1),
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '会话信息',
-                        style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Session: ${sessionId.length > 16 ? '${sessionId.substring(0, 16)}...' : sessionId}',
-                        style: const TextStyle(
-                          color: Colors.white38,
-                          fontSize: 11,
-                          fontFamily: 'monospace',
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '传输模式: 安全 HLS (UDP 70% + TCP 30%)',
-                        style: const TextStyle(
-                          color: Colors.white38,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProtocolItem({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required String detail,
-    required Color color,
-    required bool active,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: color.withValues(alpha: 0.2),
-          width: 1,
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(icon, color: color, size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.greenAccent.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Text(
-                        '已启用',
-                        style: TextStyle(
-                          color: Colors.greenAccent,
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    color: color.withValues(alpha: 0.9),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  detail,
-                  style: const TextStyle(
-                    color: Colors.white54,
-                    fontSize: 11,
-                    height: 1.4,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+      builder: (context) => _EncryptionPipelineSheet(
+        isHls: isHls,
+        sessionId: sessionId,
       ),
     );
   }
@@ -1392,4 +1165,683 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       ),
     );
   }
+}
+
+// ============================================================
+// 加密流水线动画底部弹窗
+// ============================================================
+
+/// 数据模型 —— 流水线中的每个协议节点
+class _ProtocolNode {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String detail;
+  final Color color;
+
+  const _ProtocolNode({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.detail,
+    required this.color,
+  });
+}
+
+/// 动画加密详情面板 —— 工厂流水线风格
+class _EncryptionPipelineSheet extends StatefulWidget {
+  final bool isHls;
+  final String? sessionId;
+
+  const _EncryptionPipelineSheet({
+    required this.isHls,
+    this.sessionId,
+  });
+
+  @override
+  State<_EncryptionPipelineSheet> createState() =>
+      _EncryptionPipelineSheetState();
+}
+
+class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
+    with TickerProviderStateMixin {
+  // 主时间线控制器（驱动所有卡片的出场）
+  late final AnimationController _masterController;
+  // 盾牌脉冲
+  late final AnimationController _shieldPulseController;
+  // 数据粒子流动
+  late final AnimationController _particleController;
+  // 节点激活闪光
+  late final AnimationController _glowController;
+
+  late final List<_ProtocolNode> _nodes;
+
+  // 为每个节点计算的入场动画（slide + fade）
+  final List<Animation<double>> _slideAnimations = [];
+  final List<Animation<double>> _fadeAnimations = [];
+  // 连接线动画
+  final List<Animation<double>> _connectorAnimations = [];
+  // 激活状态动画
+  final List<Animation<double>> _activateAnimations = [];
+
+  @override
+  void initState() {
+    super.initState();
+
+    // 构建节点列表
+    _nodes = _buildNodes();
+
+    // ---- 主时间线 ----
+    // 总时长 = 节点数 * 350ms（交错间隔）+ 尾部余量
+    final totalMs = _nodes.length * 350 + 400;
+    _masterController = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: totalMs),
+    );
+
+    // 为每个节点创建交错动画
+    for (int i = 0; i < _nodes.length; i++) {
+      final startFraction = (i * 350) / totalMs;
+      final endFraction = ((i * 350) + 400) / totalMs;
+      final start = startFraction.clamp(0.0, 1.0);
+      final end = endFraction.clamp(0.0, 1.0);
+
+      _slideAnimations.add(
+        Tween<double>(begin: 60.0, end: 0.0).animate(
+          CurvedAnimation(
+            parent: _masterController,
+            curve: Interval(start, end, curve: Curves.easeOutCubic),
+          ),
+        ),
+      );
+      _fadeAnimations.add(
+        Tween<double>(begin: 0.0, end: 1.0).animate(
+          CurvedAnimation(
+            parent: _masterController,
+            curve: Interval(start, end, curve: Curves.easeOut),
+          ),
+        ),
+      );
+
+      // 激活动画（卡片出现后 → 光环扩散）
+      final activateStart = (end + 0.02).clamp(0.0, 1.0);
+      final activateEnd = (activateStart + 0.15).clamp(0.0, 1.0);
+      _activateAnimations.add(
+        Tween<double>(begin: 0.0, end: 1.0).animate(
+          CurvedAnimation(
+            parent: _masterController,
+            curve: Interval(activateStart, activateEnd, curve: Curves.easeOut),
+          ),
+        ),
+      );
+
+      // 连接线（从上一个节点到当前节点之间的管道）
+      if (i > 0) {
+        final connStart = ((i * 350) - 100) / totalMs;
+        final connEnd = ((i * 350) + 100) / totalMs;
+        _connectorAnimations.add(
+          Tween<double>(begin: 0.0, end: 1.0).animate(
+            CurvedAnimation(
+              parent: _masterController,
+              curve: Interval(
+                connStart.clamp(0.0, 1.0),
+                connEnd.clamp(0.0, 1.0),
+                curve: Curves.easeInOut,
+              ),
+            ),
+          ),
+        );
+      }
+    }
+
+    // ---- 盾牌脉冲 ----
+    _shieldPulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat(reverse: true);
+
+    // ---- 数据粒子 ----
+    _particleController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    )..repeat();
+
+    // ---- 光效 ----
+    _glowController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    )..repeat(reverse: true);
+
+    // 启动主时间线
+    _masterController.forward();
+  }
+
+  List<_ProtocolNode> _buildNodes() {
+    final List<_ProtocolNode> nodes = [];
+    nodes.add(_ProtocolNode(
+      icon: Icons.vpn_key_rounded,
+      title: '密钥交换',
+      subtitle: widget.isHls
+          ? 'WPA3-SAE (Simultaneous Authentication of Equals)'
+          : 'JWT Token + Blake3 HKDF',
+      detail: widget.isHls
+          ? 'Dragonfly 密钥交换协议，抵抗离线字典攻击'
+          : '基于 Blake3 的密钥派生函数生成会话密钥',
+      color: Colors.orangeAccent,
+    ));
+    if (widget.isHls) {
+      nodes.add(const _ProtocolNode(
+        icon: Icons.verified_user_rounded,
+        title: '零知识证明',
+        subtitle: 'Bulletproofs Range Proof',
+        detail: '每个分片请求附带 ZKP 证明，服务端验证访问权限而无需暴露凭据',
+        color: Colors.purpleAccent,
+      ));
+    }
+    nodes.add(const _ProtocolNode(
+      icon: Icons.lock_rounded,
+      title: '数据加密',
+      subtitle: 'AES-256-GCM (Galois/Counter Mode)',
+      detail: '每个数据块使用唯一 nonce 加密，提供认证加密和完整性保护',
+      color: Colors.cyanAccent,
+    ));
+    nodes.add(const _ProtocolNode(
+      icon: Icons.fingerprint_rounded,
+      title: '完整性校验',
+      subtitle: 'Blake3 Cryptographic Hash',
+      detail: '所有传输数据使用 Blake3 哈希验证完整性，防止篡改',
+      color: Colors.tealAccent,
+    ));
+    return nodes;
+  }
+
+  @override
+  void dispose() {
+    _masterController.dispose();
+    _shieldPulseController.dispose();
+    _particleController.dispose();
+    _glowController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF0D0D1A),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 拖拽指示条
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 20),
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              // 盾牌标题行
+              _buildAnimatedHeader(),
+              const SizedBox(height: 6),
+              _buildSubtitleRow(),
+              const SizedBox(height: 24),
+              // 流水线节点列表
+              ..._buildPipelineNodes(),
+              // 会话信息卡
+              if (widget.isHls && widget.sessionId != null) ...[
+                const SizedBox(height: 20),
+                _buildSessionInfo(),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 盾牌标题 — 带脉冲光效
+  Widget _buildAnimatedHeader() {
+    final themeColor =
+        widget.isHls ? Colors.greenAccent : Colors.lightBlueAccent;
+    return AnimatedBuilder(
+      animation: _shieldPulseController,
+      builder: (context, child) {
+        final pulse = _shieldPulseController.value;
+        return Row(
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: themeColor.withValues(alpha: 0.3 + pulse * 0.3),
+                    blurRadius: 12 + pulse * 8,
+                    spreadRadius: pulse * 4,
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.shield_rounded,
+                color: themeColor,
+                size: 28,
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Text(
+              '端到端加密保护',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildSubtitleRow() {
+    final themeColor =
+        widget.isHls ? Colors.greenAccent : Colors.lightBlueAccent;
+    return Text(
+      widget.isHls
+          ? 'SAE + Bulletproofs ZKP + AES-256-GCM'
+          : 'AES-256-GCM + Blake3 密钥派生',
+      style: TextStyle(
+        color: themeColor,
+        fontSize: 13,
+        fontWeight: FontWeight.w500,
+      ),
+    );
+  }
+
+  /// 构建流水线节点列表（卡片 + 连接线交替排列）
+  List<Widget> _buildPipelineNodes() {
+    final List<Widget> widgets = [];
+    for (int i = 0; i < _nodes.length; i++) {
+      // 连接线（除了第一个节点之前）
+      if (i > 0) {
+        widgets.add(_buildAnimatedConnector(i - 1));
+      }
+      // 节点卡片
+      widgets.add(_buildAnimatedNode(i));
+    }
+    return widgets;
+  }
+
+  /// 带动画的连接管道线
+  Widget _buildAnimatedConnector(int connectorIndex) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([
+        _connectorAnimations[connectorIndex],
+        _particleController,
+      ]),
+      builder: (context, _) {
+        final progress = _connectorAnimations[connectorIndex].value;
+        if (progress <= 0) return const SizedBox(height: 8);
+
+        return SizedBox(
+          height: 32,
+          child: CustomPaint(
+            size: const Size(double.infinity, 32),
+            painter: _PipelineConnectorPainter(
+              progress: progress,
+              particlePhase: _particleController.value,
+              fromColor: _nodes[connectorIndex].color,
+              toColor: _nodes[connectorIndex + 1].color,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 带动画的协议节点卡片
+  Widget _buildAnimatedNode(int index) {
+    final node = _nodes[index];
+    return AnimatedBuilder(
+      animation: _masterController,
+      builder: (context, _) {
+        final slide = _slideAnimations[index].value;
+        final fade = _fadeAnimations[index].value;
+        final activate = _activateAnimations[index].value;
+
+        if (fade <= 0) return const SizedBox.shrink();
+
+        return Transform.translate(
+          offset: Offset(slide, 0),
+          child: Opacity(
+            opacity: fade,
+            child: _NodeCard(
+              node: node,
+              activateProgress: activate,
+              glowAnimation: _glowController,
+              particleAnimation: _particleController,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 会话信息卡片
+  Widget _buildSessionInfo() {
+    final sessionId = widget.sessionId!;
+    return AnimatedBuilder(
+      animation: _masterController,
+      builder: (context, _) {
+        // 在所有节点出现后再显示
+        final showProgress = _masterController.value > 0.85
+            ? ((_masterController.value - 0.85) / 0.15).clamp(0.0, 1.0)
+            : 0.0;
+        if (showProgress <= 0) return const SizedBox.shrink();
+
+        return Opacity(
+          opacity: showProgress,
+          child: Transform.translate(
+            offset: Offset(0, 20 * (1 - showProgress)),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.1),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.info_outline_rounded,
+                          color: Colors.white54, size: 14),
+                      const SizedBox(width: 6),
+                      const Text(
+                        '会话信息',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Session: ${sessionId.length > 20 ? '${sessionId.substring(0, 20)}...' : sessionId}',
+                    style: const TextStyle(
+                      color: Colors.white38,
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    '传输模式: 安全 HLS (UDP 70% + TCP 30%)',
+                    style: TextStyle(
+                      color: Colors.white38,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// 单个协议节点卡片 —— 带激活动效和光粒子
+class _NodeCard extends StatelessWidget {
+  final _ProtocolNode node;
+  final double activateProgress;
+  final AnimationController glowAnimation;
+  final AnimationController particleAnimation;
+
+  const _NodeCard({
+    required this.node,
+    required this.activateProgress,
+    required this.glowAnimation,
+    required this.particleAnimation,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([glowAnimation, particleAnimation]),
+      builder: (context, _) {
+        final glow = glowAnimation.value;
+        final borderAlpha = 0.15 + activateProgress * 0.25 + glow * 0.1;
+
+        return Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: node.color.withValues(alpha: 0.06 + activateProgress * 0.04),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: node.color.withValues(alpha: borderAlpha.clamp(0.0, 1.0)),
+              width: 1.2,
+            ),
+            boxShadow: activateProgress > 0.5
+                ? [
+                    BoxShadow(
+                      color: node.color.withValues(alpha: 0.08 + glow * 0.06),
+                      blurRadius: 16,
+                      spreadRadius: 1,
+                    ),
+                  ]
+                : null,
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 图标 + 激活光环
+              _buildIconWithGlow(glow),
+              const SizedBox(width: 14),
+              // 文字区域
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          node.title,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        _buildStatusBadge(),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      node.subtitle,
+                      style: TextStyle(
+                        color: node.color.withValues(alpha: 0.9),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      node.detail,
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 11,
+                        height: 1.45,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildIconWithGlow(double glow) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: node.color.withValues(alpha: 0.12 + activateProgress * 0.08),
+        borderRadius: BorderRadius.circular(10),
+        boxShadow: activateProgress > 0.3
+            ? [
+                BoxShadow(
+                  color: node.color.withValues(alpha: 0.2 + glow * 0.15),
+                  blurRadius: 10 + glow * 6,
+                  spreadRadius: glow * 2,
+                ),
+              ]
+            : null,
+      ),
+      child: Icon(node.icon, color: node.color, size: 22),
+    );
+  }
+
+  Widget _buildStatusBadge() {
+    return AnimatedOpacity(
+      opacity: activateProgress,
+      duration: Duration.zero,
+      child: Transform.scale(
+        scale: 0.8 + activateProgress * 0.2,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.greenAccent.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(
+              color: Colors.greenAccent.withValues(alpha: 0.3),
+              width: 0.8,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.check_circle_rounded,
+                  color: Colors.greenAccent, size: 10),
+              const SizedBox(width: 3),
+              const Text(
+                '已启用',
+                style: TextStyle(
+                  color: Colors.greenAccent,
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 流水线连接管道绘制器 —— 带流动粒子
+class _PipelineConnectorPainter extends CustomPainter {
+  final double progress;
+  final double particlePhase;
+  final Color fromColor;
+  final Color toColor;
+
+  _PipelineConnectorPainter({
+    required this.progress,
+    required this.particlePhase,
+    required this.fromColor,
+    required this.toColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final centerX = size.width / 2;
+    final top = 0.0;
+    final bottom = size.height * progress;
+
+    // 管道线（渐变）
+    final linePaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          fromColor.withValues(alpha: 0.6),
+          toColor.withValues(alpha: 0.6),
+        ],
+      ).createShader(Rect.fromLTRB(centerX - 1, top, centerX + 1, bottom))
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+
+    canvas.drawLine(Offset(centerX, top), Offset(centerX, bottom), linePaint);
+
+    // 发光管道背景
+    final glowPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          fromColor.withValues(alpha: 0.08),
+          toColor.withValues(alpha: 0.08),
+        ],
+      ).createShader(Rect.fromLTRB(centerX - 6, top, centerX + 6, bottom))
+      ..strokeWidth = 12
+      ..style = PaintingStyle.stroke
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+
+    canvas.drawLine(Offset(centerX, top), Offset(centerX, bottom), glowPaint);
+
+    // 流动粒子（3 个粒子沿管道上下流动）
+    if (progress > 0.5) {
+      for (int i = 0; i < 3; i++) {
+        final phase = (particlePhase + i / 3.0) % 1.0;
+        final y = top + (bottom - top) * phase;
+        final opacity = (1.0 - (phase - 0.5).abs() * 2).clamp(0.0, 1.0);
+        final blendColor = Color.lerp(fromColor, toColor, phase)!;
+        final particlePaint = Paint()
+          ..color = blendColor.withValues(alpha: opacity * 0.8)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+
+        canvas.drawCircle(Offset(centerX, y), 3, particlePaint);
+      }
+    }
+
+    // 箭头 (▽) 在管道末端
+    if (progress > 0.9) {
+      final arrowPaint = Paint()
+        ..color = toColor.withValues(alpha: 0.7)
+        ..style = PaintingStyle.fill;
+
+      final arrowPath = Path()
+        ..moveTo(centerX - 5, bottom - 6)
+        ..lineTo(centerX + 5, bottom - 6)
+        ..lineTo(centerX, bottom)
+        ..close();
+
+      canvas.drawPath(arrowPath, arrowPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _PipelineConnectorPainter old) =>
+      old.progress != progress || old.particlePhase != particlePhase;
 }

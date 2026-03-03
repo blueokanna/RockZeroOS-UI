@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/network/api_service.dart';
 import '../../../../core/services/wallpaper_service.dart';
+import '../../../files/presentation/pages/lan_transfer_page.dart';
 import 'in_app_browser_page.dart';
 
 // ============================================================================
@@ -214,6 +215,11 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
             ),
             actions: [
               IconButton(
+                icon: const Icon(Icons.swap_horiz_rounded),
+                tooltip: '局域网传输',
+                onPressed: () => LanTransferPage.open(context),
+              ),
+              IconButton(
                 icon: const Icon(Icons.download_rounded),
                 tooltip: 'GitHub 导入',
                 onPressed: () => _showGitHubImportDialog(),
@@ -242,7 +248,9 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
             bottom: PreferredSize(
               preferredSize: const Size.fromHeight(108),
               child: Material(
-                color: colorScheme.surface,
+                color: hasWallpaper
+                    ? colorScheme.surface.withValues(alpha: 0.65)
+                    : colorScheme.surface,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -1540,7 +1548,10 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
             itemCount: wasmApps.length,
             itemBuilder: (context, index) {
               final app = wasmApps[index] as Map<String, dynamic>;
-              return _WasmAppTile(app: app).animate().fadeIn(
+              return _WasmAppTile(
+                app: app,
+                onTap: () => _openBuiltinApp(app),
+              ).animate().fadeIn(
                     delay: Duration(milliseconds: index * 30),
                     duration: 200.ms,
                   );
@@ -1551,6 +1562,407 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => _buildErrorState('加载 WASM 应用失败: $e'),
     );
+  }
+
+  /// 打开内置 WASM 应用的交互界面
+  void _openBuiltinApp(Map<String, dynamic> app) {
+    final appId = app['id'] as String? ?? '';
+    switch (appId) {
+      case 'steamdb-viewer':
+        _showSteamDbDialog();
+        break;
+      case 'm3u8-downloader':
+        _showM3u8DownloaderDialog();
+        break;
+      case 'steam-p2p-info':
+        _showSteamP2PInfoDialog();
+        break;
+    }
+  }
+
+  /// SteamDB 数据查看器对话框
+  void _showSteamDbDialog() {
+    final appIdCtrl = TextEditingController();
+    final colorScheme = Theme.of(context).colorScheme;
+    Map<String, dynamic>? data;
+    bool isLoading = false;
+    String? error;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return AlertDialog(
+            title: Row(
+              children: [
+                Icon(Icons.storage_rounded, color: colorScheme.primary),
+                const SizedBox(width: 8),
+                const Text('SteamDB 数据查看器'),
+              ],
+            ),
+            content: SizedBox(
+              width: MediaQuery.of(context).size.width * 0.85,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: appIdCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Steam App ID',
+                      hintText: '例如: 730 (CS2), 570 (Dota 2)',
+                      prefixIcon: Icon(Icons.search_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (isLoading) const LinearProgressIndicator(),
+                  if (error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(error!,
+                          style: TextStyle(color: colorScheme.error)),
+                    ),
+                  if (data != null) ...[
+                    const SizedBox(height: 12),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        child: _SteamDbResultCard(data: data!),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('关闭'),
+              ),
+              FilledButton.icon(
+                onPressed: isLoading
+                    ? null
+                    : () async {
+                        final id = appIdCtrl.text.trim();
+                        if (id.isEmpty) return;
+                        setDialogState(() {
+                          isLoading = true;
+                          error = null;
+                          data = null;
+                        });
+                        try {
+                          final api = ref.read(apiServiceProvider);
+                          final response = await api.get(
+                            '/api/v1/wasm-store/builtin/steamdb-viewer/run?app_id=$id',
+                          );
+                          setDialogState(() {
+                            isLoading = false;
+                            data = response.data is Map<String, dynamic>
+                                ? response.data as Map<String, dynamic>
+                                : null;
+                          });
+                        } catch (e) {
+                          setDialogState(() {
+                            isLoading = false;
+                            error = e.toString();
+                          });
+                        }
+                      },
+                icon: const Icon(Icons.search_rounded),
+                label: const Text('查询'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// M3U8 下载器对话框
+  void _showM3u8DownloaderDialog() {
+    final urlCtrl = TextEditingController();
+    final nameCtrl = TextEditingController();
+    final colorScheme = Theme.of(context).colorScheme;
+    Map<String, dynamic>? parseResult;
+    bool isParsing = false;
+    bool isDownloading = false;
+    String? error;
+    String? downloadStatus;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return AlertDialog(
+            title: Row(
+              children: [
+                Icon(Icons.download_rounded, color: colorScheme.primary),
+                const SizedBox(width: 8),
+                const Text('M3U8 视频下载器'),
+              ],
+            ),
+            content: SizedBox(
+              width: MediaQuery.of(context).size.width * 0.85,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: urlCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'M3U8 URL',
+                        hintText: 'https://example.com/video/index.m3u8',
+                        prefixIcon: Icon(Icons.link_rounded),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: nameCtrl,
+                      decoration: const InputDecoration(
+                        labelText: '输出文件名（可选）',
+                        hintText: 'video.ts',
+                        prefixIcon: Icon(Icons.drive_file_rename_outline),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    if (isParsing || isDownloading)
+                      const LinearProgressIndicator(),
+                    if (error != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(error!,
+                            style: TextStyle(color: colorScheme.error)),
+                      ),
+                    if (downloadStatus != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(downloadStatus!,
+                            style: TextStyle(color: colorScheme.primary)),
+                      ),
+                    if (parseResult != null) ...[
+                      const SizedBox(height: 12),
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('解析结果',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: colorScheme.primary)),
+                              const SizedBox(height: 8),
+                              Text(
+                                  '分片数: ${parseResult!['total_segments'] ?? 0}'),
+                              Text(
+                                  '总时长: ${(parseResult!['total_duration'] as num?)?.toStringAsFixed(1) ?? '0'} 秒'),
+                              if (parseResult!['encryption'] != null &&
+                                  parseResult!['encryption']['encrypted'] ==
+                                      true)
+                                Text(
+                                    '加密: ${parseResult!['encryption']['method']}',
+                                    style: TextStyle(color: colorScheme.error)),
+                              if (parseResult!['is_master_playlist'] == true)
+                                Text(
+                                    '变体流: ${(parseResult!['variant_streams'] as List?)?.length ?? 0} 个',
+                                    style:
+                                        TextStyle(color: colorScheme.tertiary)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('关闭'),
+              ),
+              OutlinedButton.icon(
+                onPressed: isParsing
+                    ? null
+                    : () async {
+                        final url = urlCtrl.text.trim();
+                        if (url.isEmpty) return;
+                        setDialogState(() {
+                          isParsing = true;
+                          error = null;
+                          parseResult = null;
+                        });
+                        try {
+                          final api = ref.read(apiServiceProvider);
+                          final response = await api.get(
+                            '/api/v1/wasm-store/builtin/m3u8-downloader/run?url=${Uri.encodeComponent(url)}',
+                          );
+                          setDialogState(() {
+                            isParsing = false;
+                            parseResult = response.data is Map<String, dynamic>
+                                ? response.data as Map<String, dynamic>
+                                : null;
+                          });
+                        } catch (e) {
+                          setDialogState(() {
+                            isParsing = false;
+                            error = e.toString();
+                          });
+                        }
+                      },
+                icon: const Icon(Icons.analytics_rounded),
+                label: const Text('解析'),
+              ),
+              FilledButton.icon(
+                onPressed: isDownloading
+                    ? null
+                    : () async {
+                        final url = urlCtrl.text.trim();
+                        if (url.isEmpty) return;
+                        setDialogState(() {
+                          isDownloading = true;
+                          error = null;
+                          downloadStatus = '正在下载分片...';
+                        });
+                        try {
+                          final api = ref.read(apiServiceProvider);
+                          final response = await api.post(
+                            '/api/v1/wasm-store/builtin/m3u8-downloader/download',
+                            data: {
+                              'url': url,
+                              if (nameCtrl.text.trim().isNotEmpty)
+                                'output_name': nameCtrl.text.trim(),
+                            },
+                          );
+                          final result =
+                              response.data as Map<String, dynamic>? ?? {};
+                          setDialogState(() {
+                            isDownloading = false;
+                            downloadStatus =
+                                '下载完成: ${result['downloaded_segments']}/${result['total_segments']} 分片\n'
+                                '文件大小: ${_formatFileSize(result['file_size'] ?? 0)}';
+                          });
+                        } catch (e) {
+                          setDialogState(() {
+                            isDownloading = false;
+                            error = e.toString();
+                            downloadStatus = null;
+                          });
+                        }
+                      },
+                icon: const Icon(Icons.download_rounded),
+                label: const Text('下载'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// Steam P2P 连接信息对话框
+  void _showSteamP2PInfoDialog() {
+    final steamIdCtrl = TextEditingController();
+    final colorScheme = Theme.of(context).colorScheme;
+    Map<String, dynamic>? data;
+    bool isLoading = false;
+    String? error;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return AlertDialog(
+            title: Row(
+              children: [
+                Icon(Icons.lan_rounded, color: colorScheme.primary),
+                const SizedBox(width: 8),
+                const Text('Steam P2P 信息'),
+              ],
+            ),
+            content: SizedBox(
+              width: MediaQuery.of(context).size.width * 0.85,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: steamIdCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Steam ID',
+                      hintText: '例如: 76561198000000000',
+                      prefixIcon: Icon(Icons.person_search_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (isLoading) const LinearProgressIndicator(),
+                  if (error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(error!,
+                          style: TextStyle(color: colorScheme.error)),
+                    ),
+                  if (data != null) ...[
+                    const SizedBox(height: 12),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        child: _SteamP2PResultCard(data: data!),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('关闭'),
+              ),
+              FilledButton.icon(
+                onPressed: isLoading
+                    ? null
+                    : () async {
+                        final id = steamIdCtrl.text.trim();
+                        if (id.isEmpty) return;
+                        setDialogState(() {
+                          isLoading = true;
+                          error = null;
+                          data = null;
+                        });
+                        try {
+                          final api = ref.read(apiServiceProvider);
+                          final response = await api.get(
+                            '/api/v1/wasm-store/builtin/steam-p2p-info/run?steam_id=$id',
+                          );
+                          setDialogState(() {
+                            isLoading = false;
+                            data = response.data is Map<String, dynamic>
+                                ? response.data as Map<String, dynamic>
+                                : null;
+                          });
+                        } catch (e) {
+                          setDialogState(() {
+                            isLoading = false;
+                            error = e.toString();
+                          });
+                        }
+                      },
+                icon: const Icon(Icons.search_rounded),
+                label: const Text('查询'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 
   // ============================================================================
@@ -2269,30 +2681,35 @@ class _RecommendationTile extends StatelessWidget {
                         _PlatformBadge(platform: platform),
                         const SizedBox(width: 6),
                         // 推荐来源
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 5, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: sourceColor.withAlpha(20),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(sourceIcon, size: 10, color: sourceColor),
-                              const SizedBox(width: 3),
-                              Text(
-                                sourceLabel,
-                                style: TextStyle(
-                                  fontSize: 9,
-                                  color: sourceColor,
-                                  fontWeight: FontWeight.w500,
+                        Flexible(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 5, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: sourceColor.withAlpha(20),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(sourceIcon, size: 10, color: sourceColor),
+                                const SizedBox(width: 3),
+                                Flexible(
+                                  child: Text(
+                                    sourceLabel,
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      color: sourceColor,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
-                        const Spacer(),
+                        const SizedBox(width: 6),
                         // 价格
                         Text(
                           isFree ? '免费' : price?['formatted'] ?? '',
@@ -2530,8 +2947,9 @@ class _GameListTile extends StatelessWidget {
 /// WASM 应用列表项
 class _WasmAppTile extends StatelessWidget {
   final Map<String, dynamic> app;
+  final VoidCallback? onTap;
 
-  const _WasmAppTile({required this.app});
+  const _WasmAppTile({required this.app, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -2546,6 +2964,7 @@ class _WasmAppTile extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
+        onTap: onTap,
         leading: Container(
           width: 48,
           height: 48,
@@ -2682,6 +3101,721 @@ class _PluginTile extends StatelessWidget {
           ],
         ),
         trailing: const Icon(Icons.chevron_right_rounded),
+      ),
+    );
+  }
+}
+
+/// SteamDB 查询结果展示卡片
+class _SteamDbResultCard extends StatelessWidget {
+  final Map<String, dynamic> data;
+
+  const _SteamDbResultCard({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final name = data['name'] as String? ?? '未知';
+    final headerImage = data['header_image'] as String? ?? '';
+    final shortDesc = data['short_description'] as String? ?? '';
+    final isFree = data['is_free'] == true;
+    final currentPlayers = data['current_players'];
+    final reviewDesc = data['review_score_desc'] as String?;
+    final totalPositive = data['total_positive'] as int? ?? 0;
+    final totalNegative = data['total_negative'] as int? ?? 0;
+    final totalReviews = data['total_reviews'] as int? ?? 0;
+    final dlcCount = data['dlc_count'] as int? ?? 0;
+    final developers =
+        (data['developers'] as List?)?.cast<String>().join(', ') ?? '';
+    final publishers =
+        (data['publishers'] as List?)?.cast<String>().join(', ') ?? '';
+    final metacritic = data['metacritic'] as Map<String, dynamic>?;
+    final releaseDate = data['release_date'] as Map<String, dynamic>?;
+    final platforms = data['platforms'] as Map<String, dynamic>?;
+    final price = data['price'] as Map<String, dynamic>?;
+    final genres = data['genres'] as List?;
+    final categories = data['categories'] as List?;
+
+    // 好评率
+    final positiveRate =
+        totalReviews > 0 ? (totalPositive * 100 ~/ totalReviews) : 0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 头部图片
+        if (headerImage.isNotEmpty)
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.network(
+              headerImage,
+              width: double.infinity,
+              height: 120,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(
+                height: 120,
+                color: colorScheme.surfaceContainerLow,
+                child: const Center(child: Icon(Icons.image_not_supported)),
+              ),
+            ),
+          ),
+        const SizedBox(height: 12),
+
+        // 游戏名称
+        Text(
+          name,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: colorScheme.onSurface,
+          ),
+        ),
+        const SizedBox(height: 4),
+
+        // 简介
+        if (shortDesc.isNotEmpty)
+          Text(
+            shortDesc,
+            style: TextStyle(
+              fontSize: 12,
+              color: colorScheme.onSurfaceVariant,
+            ),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+        const SizedBox(height: 12),
+
+        // 核心数据网格
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _StatChip(
+              icon: Icons.people_alt_rounded,
+              label: '在线',
+              value: currentPlayers != null
+                  ? _formatNumber(currentPlayers as int)
+                  : 'N/A',
+              color: Colors.blue,
+            ),
+            if (reviewDesc != null)
+              _StatChip(
+                icon: Icons.thumb_up_rounded,
+                label: reviewDesc,
+                value: '$positiveRate%',
+                color: positiveRate >= 70
+                    ? Colors.green
+                    : positiveRate >= 40
+                        ? Colors.orange
+                        : Colors.red,
+              ),
+            if (metacritic != null && metacritic['score'] != null)
+              _StatChip(
+                icon: Icons.star_rounded,
+                label: 'Metacritic',
+                value: '${metacritic['score']}',
+                color: Colors.amber,
+              ),
+            _StatChip(
+              icon: Icons.monetization_on_rounded,
+              label: '价格',
+              value: isFree
+                  ? '免费'
+                  : price?['final_formatted'] as String? ??
+                      (price != null
+                          ? '¥${((price['final'] as int? ?? 0) / 100).toStringAsFixed(0)}'
+                          : 'N/A'),
+              color: isFree ? Colors.green : colorScheme.primary,
+            ),
+            if (dlcCount > 0)
+              _StatChip(
+                icon: Icons.extension_rounded,
+                label: 'DLC',
+                value: '$dlcCount',
+                color: Colors.purple,
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+
+        // 平台支持
+        if (platforms != null)
+          Row(
+            children: [
+              Text('平台: ',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: colorScheme.onSurface)),
+              if (platforms['windows'] == true)
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: Icon(Icons.desktop_windows_rounded,
+                      size: 16, color: colorScheme.primary),
+                ),
+              if (platforms['mac'] == true)
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: Icon(Icons.laptop_mac_rounded,
+                      size: 16, color: colorScheme.primary),
+                ),
+              if (platforms['linux'] == true)
+                Icon(Icons.computer_rounded,
+                    size: 16, color: colorScheme.primary),
+            ],
+          ),
+        const SizedBox(height: 8),
+
+        // 开发者/发行商
+        if (developers.isNotEmpty) _InfoRow(label: '开发', value: developers),
+        if (publishers.isNotEmpty) _InfoRow(label: '发行', value: publishers),
+        if (releaseDate != null)
+          _InfoRow(label: '发售', value: releaseDate['date'] as String? ?? ''),
+
+        // 类别标签
+        if (genres != null && genres.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: genres.take(6).map((g) {
+              final desc =
+                  g is Map<String, dynamic> ? (g['description'] ?? '') : '$g';
+              return Chip(
+                label:
+                    Text(desc.toString(), style: const TextStyle(fontSize: 10)),
+                padding: EdgeInsets.zero,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              );
+            }).toList(),
+          ),
+        ],
+
+        // 功能特性标签
+        if (categories != null && categories.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text('功能',
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: colorScheme.onSurface)),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: categories.take(8).map((c) {
+              final desc =
+                  c is Map<String, dynamic> ? (c['description'] ?? '') : '$c';
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: colorScheme.secondaryContainer.withAlpha(100),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(desc.toString(),
+                    style: TextStyle(
+                        fontSize: 10, color: colorScheme.onSecondaryContainer)),
+              );
+            }).toList(),
+          ),
+        ],
+
+        // 评价详情
+        if (totalReviews > 0) ...[
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Icon(Icons.thumb_up_alt_rounded,
+                  size: 14, color: Colors.green.shade700),
+              const SizedBox(width: 4),
+              Text('$totalPositive',
+                  style: TextStyle(fontSize: 12, color: Colors.green.shade700)),
+              const SizedBox(width: 12),
+              Icon(Icons.thumb_down_alt_rounded,
+                  size: 14, color: Colors.red.shade700),
+              const SizedBox(width: 4),
+              Text('$totalNegative',
+                  style: TextStyle(fontSize: 12, color: Colors.red.shade700)),
+              const SizedBox(width: 12),
+              Text('共 $totalReviews 条评价',
+                  style: TextStyle(
+                      fontSize: 11, color: colorScheme.onSurfaceVariant)),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  String _formatNumber(int n) {
+    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
+    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
+    return '$n';
+  }
+}
+
+/// Steam P2P 连接信息结果卡片
+class _SteamP2PResultCard extends StatelessWidget {
+  final Map<String, dynamic> data;
+
+  const _SteamP2PResultCard({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final player = data['player'] as Map<String, dynamic>?;
+    final friendsCount = data['friends_count'] as int?;
+    final recentGames = data['recent_games'] as List?;
+    final p2pInfo = data['p2p_info'] as Map<String, dynamic>?;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 玩家信息卡
+        if (player != null) ...[
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  // 头像
+                  CircleAvatar(
+                    radius: 28,
+                    backgroundImage: player['avatar'] != null
+                        ? NetworkImage(player['avatar'] as String)
+                        : null,
+                    child: player['avatar'] == null
+                        ? const Icon(Icons.person)
+                        : null,
+                  ),
+                  const SizedBox(width: 12),
+                  // 信息
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          player['name'] as String? ?? '未知玩家',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(
+                              _getStatusIcon(player['status']),
+                              size: 12,
+                              color: _getStatusColor(player['status']),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              _getStatusText(player['status']),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: _getStatusColor(player['status']),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (player['game_name'] != null) ...[
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Icon(Icons.sports_esports_rounded,
+                                  size: 12, color: Colors.green),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  '正在玩: ${player['game_name']}',
+                                  style: const TextStyle(
+                                      fontSize: 12, color: Colors.green),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  // 好友数
+                  if (friendsCount != null)
+                    Column(
+                      children: [
+                        Text(
+                          '$friendsCount',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                        Text(
+                          '好友',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+
+        // 最近游戏
+        if (recentGames != null && recentGames.isNotEmpty) ...[
+          Text(
+            '最近游玩',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ...recentGames.take(5).map((game) {
+            final g = game as Map<String, dynamic>;
+            final gameName = g['name'] as String? ?? '未知游戏';
+            final playtime2w = g['playtime_2weeks'] as int? ?? 0;
+            final playtimeForever = g['playtime_forever'] as int? ?? 0;
+            final hasP2p = g['has_p2p'] == true;
+            final appid = g['appid'] as int? ?? 0;
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  // 游戏图标
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: g['img_icon_url'] != null
+                          ? Image.network(
+                              'https://media.steampowered.com/steamcommunity/public/images/apps/$appid/${g['img_icon_url']}.jpg',
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                color: colorScheme.surfaceContainerLow,
+                                child: const Icon(Icons.sports_esports_rounded,
+                                    size: 16),
+                              ),
+                            )
+                          : Container(
+                              color: colorScheme.surfaceContainerLow,
+                              child: const Icon(Icons.sports_esports_rounded,
+                                  size: 16),
+                            ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  // 游戏名和时长
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          gameName,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Row(
+                          children: [
+                            Text(
+                              '近2周 ${(playtime2w / 60).toStringAsFixed(1)}h',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '总计 ${(playtimeForever / 60).toStringAsFixed(1)}h',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  // P2P 标记
+                  if (hasP2p)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.teal.withAlpha(25),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Colors.teal.withAlpha(80)),
+                      ),
+                      child: const Text(
+                        'P2P',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.teal,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            );
+          }),
+          const SizedBox(height: 12),
+        ],
+
+        // P2P 连接类型
+        if (p2pInfo != null) ...[
+          Text(
+            'P2P 连接模式',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (p2pInfo['connection_types'] is List)
+            ...((p2pInfo['connection_types'] as List).map((ct) {
+              final c = ct as Map<String, dynamic>;
+              final type_ = c['type'] as String? ?? '';
+              final desc = c['description'] as String? ?? '';
+              IconData icon;
+              Color color;
+              switch (type_) {
+                case 'lan':
+                  icon = Icons.lan_rounded;
+                  color = Colors.green;
+                  break;
+                case 'direct':
+                  icon = Icons.swap_horiz_rounded;
+                  color = Colors.blue;
+                  break;
+                case 'relay':
+                  icon = Icons.cloud_rounded;
+                  color = Colors.orange;
+                  break;
+                default:
+                  icon = Icons.help_outline;
+                  color = Colors.grey;
+              }
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    Icon(icon, size: 16, color: color),
+                    const SizedBox(width: 8),
+                    Text(
+                      type_.toUpperCase(),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: color,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        desc,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            })),
+          const SizedBox(height: 8),
+          // 提示
+          if (p2pInfo['note'] != null)
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: colorScheme.secondaryContainer.withAlpha(80),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline_rounded,
+                      size: 14, color: colorScheme.onSecondaryContainer),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      p2pInfo['note'] as String,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: colorScheme.onSecondaryContainer,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+
+  IconData _getStatusIcon(dynamic status) {
+    switch (status) {
+      case 1:
+        return Icons.circle;
+      case 2:
+        return Icons.do_not_disturb_on_rounded;
+      case 3:
+        return Icons.access_time_rounded;
+      case 4:
+        return Icons.snooze_rounded;
+      default:
+        return Icons.circle_outlined;
+    }
+  }
+
+  Color _getStatusColor(dynamic status) {
+    switch (status) {
+      case 1:
+        return Colors.green;
+      case 2:
+        return Colors.red;
+      case 3:
+        return Colors.orange;
+      case 4:
+        return Colors.grey;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  String _getStatusText(dynamic status) {
+    switch (status) {
+      case 0:
+        return '离线';
+      case 1:
+        return '在线';
+      case 2:
+        return '忙碌';
+      case 3:
+        return '离开';
+      case 4:
+        return '打盹';
+      case 5:
+        return '想交易';
+      case 6:
+        return '想玩';
+      default:
+        return '离线';
+    }
+  }
+}
+
+/// 数据统计小标签
+class _StatChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  const _StatChip({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withAlpha(50)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 4),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 9,
+                  color: color.withAlpha(180),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 信息行（标签 + 值）
+class _InfoRow extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _InfoRow({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 40,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(fontSize: 12, color: colorScheme.onSurface),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
       ),
     );
   }
