@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
+import '../../../../core/services/wallpaper_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../storage/presentation/pages/disk_management_page.dart';
 
@@ -69,8 +70,12 @@ class SystemPage extends ConsumerWidget {
     final memoryInfo = ref.watch(memoryInfoProvider);
     final diskInfo = ref.watch(diskInfoProvider);
     final usbDevices = ref.watch(usbDevicesProvider);
+    final hasWallpaper =
+        ref.watch(backgroundModeProvider) == BackgroundMode.customWallpaper &&
+            (ref.watch(customWallpaperPathProvider)?.isNotEmpty ?? false);
 
     return Scaffold(
+      backgroundColor: hasWallpaper ? Colors.transparent : null,
       body: CustomScrollView(
         slivers: [
           SliverAppBar.large(

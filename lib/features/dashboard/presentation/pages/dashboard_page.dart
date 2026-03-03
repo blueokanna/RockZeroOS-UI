@@ -6,11 +6,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
+import '../../../../core/services/wallpaper_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../widgets/system_status_card.dart';
 import '../widgets/storage_card.dart';
 import '../widgets/network_status_card.dart';
-import '../widgets/app_storage_stats_card.dart';
 
 // Auto-refresh providers with timers
 final hardwareInfoProvider = FutureProvider.autoDispose<HardwareInfo?>((
@@ -259,7 +259,12 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         ? AsyncValue.data(networkInfo)
         : const AsyncValue<NetworkInfo?>.loading();
 
+    final hasWallpaper =
+        ref.watch(backgroundModeProvider) == BackgroundMode.customWallpaper &&
+            (ref.watch(customWallpaperPathProvider)?.isNotEmpty ?? false);
+
     return Scaffold(
+      backgroundColor: hasWallpaper ? Colors.transparent : null,
       body: RefreshIndicator(
         onRefresh: () async {
           ref.invalidate(hardwareInfoProvider);
@@ -384,14 +389,6 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                       )
                       .slideX(begin: 0.03, curve: M3Curves.emphasized),
                   const SizedBox(height: 16),
-                  const AppStorageStatsCard()
-                      .animate()
-                      .fadeIn(
-                        delay: 180.ms,
-                        curve: M3Curves.emphasizedDecelerate,
-                      )
-                      .slideX(begin: 0.03, curve: M3Curves.emphasized),
-                  const SizedBox(height: 16),
                   NetworkStatusCard(networkInfo: networkInfo)
                       .animate()
                       .fadeIn(
@@ -439,11 +436,6 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
             ),
           ],
         ),
-        const SizedBox(height: 16),
-        const AppStorageStatsCard()
-            .animate()
-            .fadeIn(delay: 250.ms, curve: M3Curves.emphasizedDecelerate)
-            .slideY(begin: 0.03, curve: M3Curves.emphasized),
       ],
     );
   }
@@ -464,11 +456,6 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         TotalStorageCard(storageInfo: storageInfo)
             .animate()
             .fadeIn(delay: 150.ms, curve: M3Curves.emphasizedDecelerate)
-            .slideY(begin: 0.03, curve: M3Curves.emphasized),
-        const SizedBox(height: 16),
-        const AppStorageStatsCard()
-            .animate()
-            .fadeIn(delay: 180.ms, curve: M3Curves.emphasizedDecelerate)
             .slideY(begin: 0.03, curve: M3Curves.emphasized),
         const SizedBox(height: 16),
         NetworkStatusCard(networkInfo: networkInfo)

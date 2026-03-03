@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/network/api_service.dart';
+import '../../../../core/services/wallpaper_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../widgets/app_install_dialog.dart' as install_dialog;
 import 'app_webview_page.dart';
@@ -84,7 +85,12 @@ class _AppStorePageState extends ConsumerState<AppStorePage>
 
   @override
   Widget build(BuildContext context) {
+    final hasWallpaper =
+        ref.watch(backgroundModeProvider) == BackgroundMode.customWallpaper &&
+            (ref.watch(customWallpaperPathProvider)?.isNotEmpty ?? false);
+
     return Scaffold(
+      backgroundColor: hasWallpaper ? Colors.transparent : null,
       body: NestedScrollView(
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           SliverAppBar.large(

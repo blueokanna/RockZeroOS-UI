@@ -8,6 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../core/network/api_service.dart';
+import '../../../../core/services/wallpaper_service.dart';
+import 'in_app_browser_page.dart';
 
 // ============================================================================
 // Providers
@@ -176,8 +178,12 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final hasWallpaper =
+        ref.watch(backgroundModeProvider) == BackgroundMode.customWallpaper &&
+            ref.watch(customWallpaperPathProvider) != null;
 
     return Scaffold(
+      backgroundColor: hasWallpaper ? Colors.transparent : null,
       body: NestedScrollView(
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           SliverAppBar(
@@ -905,9 +911,10 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
           if (profileUrl.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.open_in_new_rounded, size: 20),
-              onPressed: () => launchUrl(
-                Uri.parse(profileUrl),
-                mode: LaunchMode.externalApplication,
+              onPressed: () => InAppBrowserPage.open(
+                context,
+                url: profileUrl,
+                title: 'Steam Profile',
               ),
               tooltip: '打开 Steam 主页',
             ),
@@ -1767,7 +1774,11 @@ class _LibraryGameTile extends StatelessWidget {
         onTap: () {
           final url = game['store_url'] ?? '';
           if (url.isNotEmpty) {
-            launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+            InAppBrowserPage.open(
+              context,
+              url: url,
+              title: game['name'] ?? '',
+            );
           }
         },
         borderRadius: BorderRadius.circular(12),
@@ -2081,7 +2092,11 @@ class _GameCard extends StatelessWidget {
   void _openStoreUrl(BuildContext context) {
     final url = game['store_url'] ?? '';
     if (url.isNotEmpty) {
-      launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      InAppBrowserPage.open(
+        context,
+        url: url,
+        title: game['name'] ?? '',
+      );
     }
   }
 }
@@ -2145,7 +2160,11 @@ class _RecommendationTile extends StatelessWidget {
         onTap: () {
           final url = game['store_url'] ?? '';
           if (url.isNotEmpty) {
-            launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+            InAppBrowserPage.open(
+              context,
+              url: url,
+              title: game['name'] ?? '',
+            );
           }
         },
         borderRadius: BorderRadius.circular(12),
@@ -2380,7 +2399,11 @@ class _GameListTile extends StatelessWidget {
         onTap: () {
           final url = game['store_url'] ?? '';
           if (url.isNotEmpty) {
-            launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+            InAppBrowserPage.open(
+              context,
+              url: url,
+              title: game['name'] ?? '',
+            );
           }
         },
         borderRadius: BorderRadius.circular(12),

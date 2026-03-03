@@ -17,6 +17,7 @@ import '../../../../core/services/biometric_service.dart';
 import '../../../../core/services/device_discovery_service.dart';
 import '../../../../core/services/filesystem_monitor_service.dart';
 import '../../../../core/services/download_manager.dart';
+import '../../../../core/services/wallpaper_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../storage/presentation/pages/disk_management_page.dart';
 import '../widgets/transport_manager_page.dart';
@@ -341,6 +342,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
     final errorMessage = ref.watch(fileErrorProvider);
 
     final showDiskView = _showDisks && currentPath.isEmpty;
+    final hasWallpaper =
+        ref.watch(backgroundModeProvider) == BackgroundMode.customWallpaper &&
+            (ref.watch(customWallpaperPathProvider)?.isNotEmpty ?? false);
 
     return PopScope(
       canPop: _canPop(),
@@ -357,6 +361,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
           }
         },
         child: Scaffold(
+          backgroundColor: hasWallpaper ? Colors.transparent : null,
           body: CustomScrollView(
             controller: _scrollController,
             slivers: [

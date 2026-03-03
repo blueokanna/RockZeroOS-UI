@@ -177,6 +177,7 @@ class SecureHlsPlayer {
       body: jsonEncode({
         'temp_session_id': tempSessionId,
         'file_id': fileId,
+        'direct_mode': true, // 请求明文段，让 libmpv 直接播放
       }),
     );
 
@@ -187,9 +188,11 @@ class SecureHlsPlayer {
     final sessionData = jsonDecode(sessionResponse.body);
     _sessionId = sessionData['session_id'];
     final zkpEnabled = sessionData['zkp_enabled'] ?? false;
+    final directMode = sessionData['direct_mode'] ?? false;
 
     debugPrint(
-        '[SecureHLS] HLS session created: $_sessionId (ZKP enabled: $zkpEnabled)');
+        '[SecureHLS] HLS session created: $_sessionId '
+        '(ZKP: $zkpEnabled, direct: $directMode)');
 
     // 10. 获取或生成 ZKP 注册数据（完整 Bulletproofs）
     await _ensureZkpRegistration(userId);

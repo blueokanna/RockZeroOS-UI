@@ -35,6 +35,9 @@ class SettingsPage extends ConsumerWidget {
     final authState = ref.watch(authStateProvider);
     final device = ref.watch(connectedDeviceProvider);
     final biometricEnabled = ref.watch(biometricEnabledProvider);
+    final hasWallpaper =
+        ref.watch(backgroundModeProvider) == BackgroundMode.customWallpaper &&
+            (ref.watch(customWallpaperPathProvider)?.isNotEmpty ?? false);
 
     // Use system color if dynamic color is enabled
     final effectiveColor = dynamicColorEnabled && systemAccentColor != null
@@ -42,6 +45,7 @@ class SettingsPage extends ConsumerWidget {
         : seedColor;
 
     return Scaffold(
+      backgroundColor: hasWallpaper ? Colors.transparent : null,
       body: CustomScrollView(
         slivers: [
           const SliverAppBar.large(title: Text('Settings')),
