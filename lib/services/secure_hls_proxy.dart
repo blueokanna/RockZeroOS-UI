@@ -6,7 +6,6 @@ import 'package:flutter/foundation.dart';
 import 'package:pointycastle/export.dart';
 
 import 'hkdf_blake3.dart';
-import 'zkp/hls_bulletproof_auth.dart';
 
 /// 安全 HLS 代理服务器
 ///
@@ -23,25 +22,22 @@ class SecureHlsProxyServer {
   HttpServer? _server;
   int? _port;
   final String baseUrl;
-  final String sessionId;
-  final Uint8List pmk; // Pairwise Master Key
+  String _sessionId;
+  Uint8List _pmk; // Pairwise Master Key
   final String password; // User password for ZKP proof generation
-  final PasswordRegistration? zkpRegistration; // ZKP registration from server
   final String? jwtToken; // JWT token for authenticated requests
-
-  // Bulletproofs auth context
-  late final HlsBulletproofAuth _bulletproofAuth;
+  final Future<(String, Uint8List)> Function()? onSessionRebuild;
+  Future<(String, Uint8List)>? _sessionRebuildFuture;
 
   SecureHlsProxyServer({
     required this.baseUrl,
-    required this.sessionId,
-    required this.pmk,
+    required String sessionId,
+    required Uint8List pmk,
     required this.password,
-    this.zkpRegistration,
     this.jwtToken,
-  }) {
-    _bulletproofAuth = HlsBulletproofAuth();
-  }
+    this.onSessionRebuild,
+  })  : _sessionId = sessionId,
+        _pmk = pmk;
 
   /// 启动代理服务器
   Future<String> start() async {
@@ -87,23 +83,26 @@ class SecureHlsProxyServer {
 
     for (int i = start; i <= end; i++) {
       final segmentName = 'segment_$i.ts';
-      final segmentUrl = '$baseUrl/api/v1/secure-hls/$sessionId/$segmentName';
 
       // 异步预取，不阻塞当前操作
-      _prefetchSegment(segmentUrl, segmentName).catchError((e) {
+      _prefetchSegment(segmentName).catchError((e) {
         debugPrint('[SecureHLS Proxy] Prefetch failed for $segmentName: $e');
       });
     }
   }
 
   /// 异步预取单个视频段
-  Future<void> _prefetchSegment(String url, String segmentName) async {
+  Future<void> _prefetchSegment(String segmentName) async {
     try {
-      final zkpProof = _generateBulletproofZkpProof();
+      final zkpProof = await _generateBulletproofZkpProof();
+      final segmentUrl = '$baseUrl/api/v1/secure-hls/$_sessionId/$segmentName';
 
       final client = HttpClient();
-      final request = await client.postUrl(Uri.parse(url));
+      final request = await client.postUrl(Uri.parse(segmentUrl));
       request.headers.contentType = ContentType.json;
+      if (jwtToken != null) {
+        request.headers.add('Authorization', 'Bearer $jwtToken');
+      }
       request.write(jsonEncode({'zkp_proof': zkpProof}));
 
       final response = await request.close();
@@ -147,31 +146,42 @@ class SecureHlsProxyServer {
   /// 处理播放列表请求
   Future<void> _handlePlaylistRequest(HttpRequest request) async {
     try {
-      // 从后端获取播放列表
-      final playlistUrl = '$baseUrl/api/v1/secure-hls/$sessionId/playlist.m3u8';
-      final response =
-          await HttpClient().getUrl(Uri.parse(playlistUrl)).then((req) {
-        if (jwtToken != null) {
-          req.headers.add('Authorization', 'Bearer $jwtToken');
+      for (int attempt = 0; attempt < 2; attempt++) {
+        final playlistUrl =
+            '$baseUrl/api/v1/secure-hls/$_sessionId/playlist.m3u8';
+        final response =
+            await HttpClient().getUrl(Uri.parse(playlistUrl)).then((req) {
+          if (jwtToken != null) {
+            req.headers.add('Authorization', 'Bearer $jwtToken');
+          }
+          return req.close();
+        });
+
+        if (response.statusCode == 200) {
+          final content = await response.transform(utf8.decoder).join();
+          final modifiedContent = _modifyPlaylist(content);
+
+          request.response.statusCode = HttpStatus.ok;
+          request.response.headers.contentType =
+              ContentType('application', 'vnd.apple.mpegurl', charset: 'utf-8');
+          request.response.write(modifiedContent);
+          return;
         }
-        return req.close();
-      });
 
-      if (response.statusCode == 200) {
-        // 读取播放列表内容
-        final content = await response.transform(utf8.decoder).join();
+        final errorBody = await response.transform(utf8.decoder).join();
+        final rebuilt = await _rebuildSessionIfNeeded(
+          statusCode: response.statusCode,
+          errorBody: errorBody,
+          trigger: 'playlist',
+        );
 
-        // 修改播放列表，将视频段 URL 替换为代理服务器的 URL
-        final modifiedContent = _modifyPlaylist(content);
+        if (rebuilt && attempt == 0) {
+          continue;
+        }
 
-        // 返回修改后的播放列表
-        request.response.statusCode = HttpStatus.ok;
-        request.response.headers.contentType =
-            ContentType('application', 'vnd.apple.mpegurl', charset: 'utf-8');
-        request.response.write(modifiedContent);
-      } else {
         request.response.statusCode = response.statusCode;
-        request.response.write('Failed to fetch playlist');
+        request.response.write('Failed to fetch playlist: $errorBody');
+        return;
       }
     } catch (e) {
       debugPrint('[SecureHLS Proxy] Playlist error: $e');
@@ -198,48 +208,56 @@ class SecureHlsProxyServer {
 
       debugPrint('[SecureHLS Proxy] Fetching segment: $segmentName');
 
-      // 1. 生成 Bulletproofs ZKP 证明
-      final zkpProof = _generateBulletproofZkpProof();
+      for (int attempt = 0; attempt < 2; attempt++) {
+        final zkpProof = await _generateBulletproofZkpProof();
+        final segmentUrl =
+            '$baseUrl/api/v1/secure-hls/$_sessionId/$segmentName';
 
-      // 2. 向后端发送 POST 请求（带 ZKP 证明）
-      final segmentUrl = '$baseUrl/api/v1/secure-hls/$sessionId/$segmentName';
+        final client = HttpClient();
+        final backendRequest = await client.postUrl(Uri.parse(segmentUrl));
+        backendRequest.headers.contentType = ContentType.json;
+        if (jwtToken != null) {
+          backendRequest.headers.add('Authorization', 'Bearer $jwtToken');
+        }
 
-      final client = HttpClient();
-      final backendRequest = await client.postUrl(Uri.parse(segmentUrl));
-      backendRequest.headers.contentType = ContentType.json;
-      if (jwtToken != null) {
-        backendRequest.headers.add('Authorization', 'Bearer $jwtToken');
-      }
+        final body = jsonEncode({'zkp_proof': zkpProof});
+        backendRequest.write(body);
 
-      // 发送 JSON body（包含 ZKP 证明）
-      final body = jsonEncode({'zkp_proof': zkpProof});
-      backendRequest.write(body);
+        final backendResponse = await backendRequest.close();
 
-      final backendResponse = await backendRequest.close();
+        if (backendResponse.statusCode == 200) {
+          final encryptedData = await backendResponse.fold<List<int>>(
+              [], (previous, element) => previous..addAll(element));
+          final decryptedData =
+              _decryptSegment(Uint8List.fromList(encryptedData));
 
-      if (backendResponse.statusCode == 200) {
-        // 3. 读取加密的视频段
-        final encryptedData = await backendResponse.fold<List<int>>(
-            [], (previous, element) => previous..addAll(element));
+          request.response.statusCode = HttpStatus.ok;
+          request.response.headers.contentType = ContentType('video', 'mp2t');
+          request.response.headers.contentLength = decryptedData.length;
+          request.response.add(decryptedData);
 
-        // 4. 解密视频段（使用 AES-256-GCM）
-        final decryptedData =
-            _decryptSegment(Uint8List.fromList(encryptedData));
+          debugPrint(
+              '[SecureHLS Proxy] Segment served: $segmentName (${decryptedData.length} bytes)');
+          return;
+        }
 
-        // 5. 返回明文视频段给播放器
-        request.response.statusCode = HttpStatus.ok;
-        request.response.headers.contentType = ContentType('video', 'mp2t');
-        request.response.headers.contentLength = decryptedData.length;
-        request.response.add(decryptedData);
-
-        debugPrint(
-            '[SecureHLS Proxy] Segment served: $segmentName (${decryptedData.length} bytes)');
-      } else {
         final errorBody = await backendResponse.transform(utf8.decoder).join();
         debugPrint(
             '[SecureHLS Proxy] Backend error: ${backendResponse.statusCode} - $errorBody');
+
+        final rebuilt = await _rebuildSessionIfNeeded(
+          statusCode: backendResponse.statusCode,
+          errorBody: errorBody,
+          trigger: segmentName,
+        );
+
+        if (rebuilt && attempt == 0) {
+          continue;
+        }
+
         request.response.statusCode = backendResponse.statusCode;
         request.response.write('Backend error: $errorBody');
+        return;
       }
     } catch (e, stack) {
       debugPrint('[SecureHLS Proxy] Segment error: $e');
@@ -251,52 +269,59 @@ class SecureHlsProxyServer {
     }
   }
 
-  /// 生成完整的 Bulletproofs ZKP 证明
+  /// 生成完整的 Bulletproofs ZKP 证明（由后端 Rust 统一生成）
   ///
-  /// 使用 Rust FFI 调用完整的 Bulletproofs 实现，
-  /// 证明用户知道密码，而不泄露密码本身。
-  ///
-  /// 证明结构包含：
-  /// - Schnorr 证明：证明知道密码和 blinding factor
-  /// - Bulletproofs 范围证明：密码熵值 >= 28 bits（密码学证明）
-  /// - 时间戳和 nonce：防止重放攻击
-  /// - 上下文绑定：固定为 "hls_segment_access"
-  String _generateBulletproofZkpProof() {
-    if (zkpRegistration == null) {
-      throw StateError(
-        'ZKP registration data is required for authentication. '
-        'Please ensure the user has completed registration.',
-      );
+  /// 通过受保护接口 `/api/v1/zkp/proof/generate` 调用服务端
+  /// `rockzero_crypto::ZkpContext::generate_enhanced_proof`，确保前后端证明格式完全一致。
+  Future<String> _generateBulletproofZkpProof() async {
+    if (jwtToken == null || jwtToken!.isEmpty) {
+      throw StateError('JWT token is required for ZKP proof generation');
     }
 
-    // 确保 FFI 已初始化
-    if (!_bulletproofAuth.isInitialized) {
-      if (!_bulletproofAuth.initializeAuto()) {
+    final client = HttpClient();
+    try {
+      final uri = Uri.parse('$baseUrl/api/v1/zkp/proof/generate');
+      final request = await client.postUrl(uri);
+      request.headers.contentType = ContentType.json;
+      request.headers.add('Authorization', 'Bearer $jwtToken');
+      request.write(jsonEncode({
+        'password': password,
+        'context': 'hls_segment_access',
+      }));
+
+      final response = await request.close();
+      final responseBody = await response.transform(utf8.decoder).join();
+
+      if (response.statusCode != 200) {
         throw StateError(
-          'Failed to initialize Bulletproofs FFI. '
-          'Ensure the native library is available.',
+          'Backend proof generation failed: ${response.statusCode} - $responseBody',
         );
       }
-    }
 
-    try {
-      debugPrint('[SecureHLS Proxy] Generating full Bulletproofs ZKP proof...');
+      final payload = jsonDecode(responseBody);
+      if (payload is! Map<String, dynamic>) {
+        throw StateError('Invalid proof response payload format');
+      }
 
-      // 生成完整的 Bulletproofs 证明（Schnorr + 范围证明）
-      final proofBase64 = _bulletproofAuth.generateProof(
-        password,
-        zkpRegistration!,
-        context: 'hls_segment_access',
-      );
+      final success = payload['success'] == true;
+      if (!success) {
+        final error = payload['error']?.toString() ?? 'unknown error';
+        throw StateError('Backend proof generation failed: $error');
+      }
 
-      debugPrint('[SecureHLS Proxy] ✅ Full Bulletproofs ZKP proof generated');
-      debugPrint(
-          '[SecureHLS Proxy]   - Proof size: ${proofBase64.length} chars (base64)');
+      final proof = payload['proof'];
+      if (proof is String) {
+        return proof;
+      }
 
-      return proofBase64;
-    } catch (e) {
-      debugPrint('[SecureHLS Proxy] Failed to generate Bulletproofs proof: $e');
-      rethrow;
+      if (proof is Map) {
+        final proofJson = jsonEncode(Map<String, dynamic>.from(proof));
+        return base64Encode(utf8.encode(proofJson));
+      }
+
+      throw StateError('Invalid proof field type from backend');
+    } finally {
+      client.close(force: true);
     }
   }
 
@@ -322,7 +347,7 @@ class SecureHlsProxyServer {
 
       // 从 PMK 派生解密密钥（AES-256 需要 32 字节）
       // 使用与 Rust 端完全一致的 info 参数："hls-master-key"
-      final decryptionKey = _deriveKey(pmk, 'hls-master-key');
+      final decryptionKey = _deriveKey(_pmk, 'hls-master-key');
 
       // 使用完整的 AES-256-GCM 解密
       // pointycastle 的 GCM 实现会自动处理附加在末尾的 tag
@@ -421,7 +446,58 @@ class SecureHlsProxyServer {
   ///
   /// 返回：32 字节的派生密钥
   Uint8List _deriveKey(Uint8List key, String info) {
-    final hkdf = HkdfBlake3.withSessionSalt(sessionId, key);
+    final hkdf = HkdfBlake3.withSessionSalt(_sessionId, key);
     return hkdf.expand(Uint8List.fromList(utf8.encode(info)), 32);
+  }
+
+  bool _shouldRebuildSession(int statusCode, String errorBody) {
+    if (statusCode == HttpStatus.unauthorized ||
+        statusCode == HttpStatus.notFound ||
+        statusCode == HttpStatus.gone) {
+      return true;
+    }
+
+    final lower = errorBody.toLowerCase();
+    return lower.contains('session not found') ||
+        lower.contains('session expired') ||
+        lower.contains('invalid zkp proof') ||
+        lower.contains('does not have zkp registration');
+  }
+
+  Future<bool> _rebuildSessionIfNeeded({
+    required int statusCode,
+    required String errorBody,
+    required String trigger,
+  }) async {
+    if (onSessionRebuild == null) {
+      return false;
+    }
+    if (!_shouldRebuildSession(statusCode, errorBody)) {
+      return false;
+    }
+
+    if (_sessionRebuildFuture != null) {
+      final rebuilt = await _sessionRebuildFuture!;
+      _sessionId = rebuilt.$1;
+      _pmk = rebuilt.$2;
+      return true;
+    }
+
+    debugPrint(
+        '[SecureHLS Proxy] Session appears stale during $trigger, rebuilding chain...');
+
+    _sessionRebuildFuture = onSessionRebuild!.call();
+    try {
+      final rebuilt = await _sessionRebuildFuture!;
+      _sessionId = rebuilt.$1;
+      _pmk = rebuilt.$2;
+      debugPrint('[SecureHLS Proxy] Session rebuilt: $_sessionId');
+      return true;
+    } catch (e) {
+      debugPrint('[SecureHLS Proxy] Session rebuild failed: $e');
+      return false;
+    } finally {
+      _sessionRebuildFuture = null;
+    }
   }
 }

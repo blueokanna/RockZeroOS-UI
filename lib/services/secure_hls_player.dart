@@ -151,9 +151,6 @@ class SecureHlsPlayer {
     debugPrint('[SecureHLS] SAE handshake completed, PMK obtained');
 
     // 10. 创建 HLS 会话（不使用 direct_mode，所有段加密传输）
-    // 先生成 ZKP 注册数据
-    _bulletproofAuth.initializeAuto();
-    _zkpRegistration = _bulletproofAuth.registerPassword(password);
 
     final sessionResponse = await http.post(
       Uri.parse('$baseUrl/api/v1/secure-hls/session/create'),
@@ -164,7 +161,6 @@ class SecureHlsPlayer {
       body: jsonEncode({
         'temp_session_id': tempSessionId,
         'file_id': fileId,
-        'zkp_registration': jsonEncode(_zkpRegistration!.toJson()),
       }),
     );
 
@@ -214,7 +210,6 @@ class SecureHlsPlayer {
       sessionId: _sessionId!,
       pmk: _pmk!,
       password: _password!,
-      zkpRegistration: _zkpRegistration,
       jwtToken: jwtToken, // 传递 JWT token 给代理
     );
 
@@ -302,7 +297,6 @@ class SecureHlsPlayer {
       sessionId: _sessionId!,
       pmk: _pmk!,
       password: _password!,
-      zkpRegistration: _zkpRegistration,
       jwtToken: jwtToken,
     );
 

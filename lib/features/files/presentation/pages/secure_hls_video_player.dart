@@ -130,10 +130,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
     final filePath = widget.filePath ?? '';
 
-    // ── Step 1: SAE 握手 + ZKP 注册 ────────────────────────
+    // ── Step 1: SAE 握手 + 会话创建 ─────────────────────────
     late final String sessionId;
     late final Uint8List pmk;
-    late final dynamic zkpRegistration;
 
     try {
       final result = await handshakeService.performHandshake(
@@ -144,7 +143,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
       sessionId = result.$1;
       pmk = result.$2;
-      zkpRegistration = result.$3;
       _hlsSessionId = sessionId;
     } catch (e) {
       debugPrint('[VideoPlayer] SAE handshake failed: $e');
@@ -179,8 +177,27 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         sessionId: sessionId,
         pmk: pmk,
         password: _userPassword!,
-        zkpRegistration: zkpRegistration,
         jwtToken: _authToken,
+        onSessionRebuild: () async {
+          final previousSessionId = _hlsSessionId;
+          debugPrint(
+              '[VideoPlayer] Session invalidated, rebuilding SAE+HLS chain...');
+
+          final rebuilt = await handshakeService.performHandshake(
+            filePath: filePath,
+            password: _userPassword!,
+            userId: _userId!,
+          );
+
+          _hlsSessionId = rebuilt.$1;
+          debugPrint('[VideoPlayer] Session rebuilt: ${rebuilt.$1}');
+
+          if (previousSessionId != null && previousSessionId != rebuilt.$1) {
+            await _stopSessionById(previousSessionId);
+          }
+
+          return rebuilt;
+        },
       );
       proxyPlaylistUrl = await _hlsProxy!.start();
       debugPrint('[VideoPlayer] Proxy started: $proxyPlaylistUrl');
@@ -427,16 +444,22 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   Future<void> _cleanupHlsSession() async {
     if (_hlsSessionId != null && _authToken != null) {
       try {
-        await http.post(
-          Uri.parse('${widget.baseUrl}/api/v1/secure-hls/$_hlsSessionId/stop'),
-          headers: {'Authorization': 'Bearer $_authToken'},
-        );
-        debugPrint('[SecureHLS] HLS session stopped: $_hlsSessionId');
+        await _stopSessionById(_hlsSessionId!);
       } catch (e) {
         debugPrint('[SecureHLS] Failed to stop HLS session: $e');
       }
       _hlsSessionId = null;
     }
+  }
+
+  Future<void> _stopSessionById(String sessionId) async {
+    if (_authToken == null || _authToken!.isEmpty) return;
+
+    await http.post(
+      Uri.parse('${widget.baseUrl}/api/v1/secure-hls/$sessionId/stop'),
+      headers: {'Authorization': 'Bearer $_authToken'},
+    );
+    debugPrint('[SecureHLS] HLS session stopped: $sessionId');
   }
 
   @override
