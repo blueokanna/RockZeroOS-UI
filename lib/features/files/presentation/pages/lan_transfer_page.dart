@@ -7,14 +7,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/network/api_service.dart';
 import '../../../../core/services/device_discovery_service.dart';
 
-/// LAN 内高速游戏/文件传输页面
-///
-/// 功能:
-/// - 自动发现局域网内的 RockZero 设备
-/// - 扫描本机 Steam 游戏库
-/// - 共享特定文件/目录给其他设备
-/// - 从其他设备拉取共享文件
-/// - 实时传输进度和速度显示
 class LanTransferPage extends ConsumerStatefulWidget {
   const LanTransferPage({super.key});
 

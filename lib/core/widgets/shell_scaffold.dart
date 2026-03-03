@@ -214,7 +214,9 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
                 color: colorScheme.surfaceContainerLow.withValues(alpha: 0.55),
               ),
               appBarTheme: Theme.of(context).appBarTheme.copyWith(
-                    backgroundColor: Colors.transparent,
+                    // 半透明背景让壁纸若隐若现，同时确保标题不与内容重叠
+                    backgroundColor:
+                        colorScheme.surface.withValues(alpha: 0.75),
                     surfaceTintColor: Colors.transparent,
                     scrolledUnderElevation: 0,
                   ),

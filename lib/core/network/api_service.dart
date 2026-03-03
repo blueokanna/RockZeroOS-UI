@@ -416,6 +416,17 @@ class ApiService {
     return HardwareInfo.fromJson(response.data);
   }
 
+  /// 获取服务器公网 IP（后端通过 ip.sb 等服务检测）
+  Future<String?> getPublicIp() async {
+    try {
+      final response = await _dio.get('/api/v1/system/public-ip');
+      final data = response.data as Map<String, dynamic>;
+      return data['public_ip'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ============ Disk Manager API ============
 
   Future<List<DiskDetail>> listDisks() async {

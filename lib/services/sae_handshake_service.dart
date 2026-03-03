@@ -7,6 +7,7 @@ import 'package:thirds/blake3.dart' as blake3;
 
 import 'hkdf_blake3.dart';
 import 'sae_client_curve25519.dart';
+import 'zkp/hls_bulletproof_auth.dart';
 
 class SaeHandshakeService {
   final String baseUrl;
@@ -19,7 +20,7 @@ class SaeHandshakeService {
     required this.jwtToken,
   });
 
-  Future<(String, Uint8List)> performHandshake({
+  Future<(String, Uint8List, PasswordRegistration)> performHandshake({
     required String filePath,
     required String password,
     required String userId,
@@ -59,16 +60,21 @@ class SaeHandshakeService {
           serverConfirmResponse['server_confirm'] as Map<String, dynamic>;
       saeClient.verifyConfirm(serverConfirm);
 
-      // Step 4: Create session
+      // Step 4: Generate ZKP registration from password
+      final bulletproofAuth = HlsBulletproofAuth()..initializeAuto();
+      final zkpRegistration = bulletproofAuth.registerPassword(password);
+
+      // Step 5: Create session (with ZKP registration, no direct_mode)
       final sessionResponse = await _createHlsSession(
         tempSessionId: tempSessionId,
         filePath: filePath,
+        zkpRegistration: zkpRegistration,
       );
 
       final sessionId = sessionResponse['session_id'] as String;
       final pmk = saeClient.getPmk();
 
-      // Step 5: Verify key
+      // Step 6: Verify key
       final serverKeyVerification =
           sessionResponse['key_verification'] as String?;
       if (serverKeyVerification != null) {
@@ -78,7 +84,7 @@ class SaeHandshakeService {
         }
       }
 
-      return (sessionId, pmk);
+      return (sessionId, pmk, zkpRegistration);
     } catch (e) {
       if (e.toString().contains('timeout')) {
         throw Exception('连接超时，请检查网络');
@@ -169,6 +175,7 @@ class SaeHandshakeService {
   Future<Map<String, dynamic>> _createHlsSession({
     required String tempSessionId,
     required String filePath,
+    required PasswordRegistration zkpRegistration,
   }) async {
     final response = await http
         .post(
@@ -180,6 +187,11 @@ class SaeHandshakeService {
           body: jsonEncode({
             'temp_session_id': tempSessionId,
             'file_path': filePath,
+            // 发送 ZKP 注册数据（JSON 字符串），服务端将其存储在会话中
+            // 用于后续 POST 段请求的 Bulletproofs 证明验证
+            'zkp_registration': jsonEncode(zkpRegistration.toJson()),
+            // 不发送 direct_mode — 所有段以 AES-256-GCM 加密传输
+            // 客户端通过本地代理解密后提供给 libmpv
           }),
         )
         .timeout(_requestTimeout);

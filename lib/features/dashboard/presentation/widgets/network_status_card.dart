@@ -4,13 +4,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../pages/dashboard_page.dart';
 import '../pages/speed_test_page.dart';
 
-class NetworkStatusCard extends StatelessWidget {
+class NetworkStatusCard extends ConsumerWidget {
   final AsyncValue<NetworkInfo?> networkInfo;
 
   const NetworkStatusCard({super.key, required this.networkInfo});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final publicIp = ref.watch(publicIpProvider);
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
@@ -109,7 +110,11 @@ class NetworkStatusCard extends StatelessWidget {
               networkInfo.when(
                 data: (info) {
                   if (info == null) return _buildErrorState(context);
-                  return _buildContent(context, info);
+                  return _buildContent(
+                    context,
+                    info,
+                    publicIp: publicIp.value,
+                  );
                 },
                 loading: () => _buildLoadingState(context),
                 error: (e, s) => _buildErrorState(context),
@@ -121,7 +126,7 @@ class NetworkStatusCard extends StatelessWidget {
     );
   }
 
-  Widget _buildContent(BuildContext context, NetworkInfo info) {
+  Widget _buildContent(BuildContext context, NetworkInfo info, {String? publicIp}) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
@@ -305,10 +310,11 @@ class NetworkStatusCard extends StatelessWidget {
                 ),
                 if (primaryInterface.ipAddresses.isNotEmpty) ...[
                   const SizedBox(height: 12),
+                  // LAN IP
                   Row(
                     children: [
                       Icon(
-                        Icons.language_rounded,
+                        Icons.lan_rounded,
                         size: 16,
                         color: colorScheme.onSurfaceVariant,
                       ),
@@ -328,6 +334,52 @@ class NetworkStatusCard extends StatelessWidget {
                             fontFamily: 'monospace',
                             fontWeight: FontWeight.w500,
                           ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'LAN',
+                        style: textTheme.labelSmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                // 公网 IP
+                if (publicIp != null && publicIp.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.public_rounded,
+                        size: 16,
+                        color: colorScheme.primary,
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colorScheme.primaryContainer.withValues(alpha: 0.5),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          publicIp,
+                          style: textTheme.bodyMedium?.copyWith(
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.w500,
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'WAN',
+                        style: textTheme.labelSmall?.copyWith(
+                          color: colorScheme.primary,
                         ),
                       ),
                     ],

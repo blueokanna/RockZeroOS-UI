@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/network/api_service.dart';
 import '../../../../core/services/wallpaper_service.dart';
 import '../../../files/presentation/pages/lan_transfer_page.dart';
+import '../widgets/platform_game_tab.dart';
 import 'in_app_browser_page.dart';
 
 // ============================================================================
@@ -133,7 +134,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 7, vsync: this);
+    _tabController = TabController(length: 10, vsync: this);
     _loadSteamSettings();
   }
 
@@ -191,10 +192,10 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
             floating: true,
             snap: true,
             pinned: true,
-            expandedHeight: 180,
+            expandedHeight: 110,
             toolbarHeight: 56,
             flexibleSpace: FlexibleSpaceBar(
-              titlePadding: const EdgeInsets.only(left: 20, bottom: 110),
+              titlePadding: const EdgeInsets.only(left: 20, bottom: 60),
               title: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -215,26 +216,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
             ),
             actions: [
               IconButton(
-                icon: const Icon(Icons.swap_horiz_rounded),
-                tooltip: '局域网传输',
-                onPressed: () => LanTransferPage.open(context),
-              ),
-              IconButton(
-                icon: const Icon(Icons.download_rounded),
-                tooltip: 'GitHub 导入',
-                onPressed: () => _showGitHubImportDialog(),
-              ),
-              IconButton(
-                icon: const Icon(Icons.terminal_rounded),
-                tooltip: 'WASM 脚本执行',
-                onPressed: () => _showRunScriptDialog(),
-              ),
-              IconButton(
-                icon: const Icon(Icons.person_search_rounded),
-                tooltip: 'Steam 账号设置',
-                onPressed: () => _showSteamSettingsDialog(),
-              ),
-              IconButton(
                 icon: const Icon(Icons.refresh_rounded),
                 tooltip: '刷新',
                 onPressed: () {
@@ -243,7 +224,61 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                   ref.invalidate(epicFreeProvider);
                 },
               ),
-              const SizedBox(width: 8),
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert_rounded),
+                tooltip: '更多',
+                onSelected: (value) {
+                  switch (value) {
+                    case 'lan_transfer':
+                      LanTransferPage.open(context);
+                    case 'github_import':
+                      _showGitHubImportDialog();
+                    case 'wasm_script':
+                      _showRunScriptDialog();
+                    case 'steam_settings':
+                      _showSteamSettingsDialog();
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'lan_transfer',
+                    child: ListTile(
+                      leading: Icon(Icons.swap_horiz_rounded),
+                      title: Text('局域网传输'),
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'github_import',
+                    child: ListTile(
+                      leading: Icon(Icons.download_rounded),
+                      title: Text('GitHub 导入'),
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'wasm_script',
+                    child: ListTile(
+                      leading: Icon(Icons.terminal_rounded),
+                      title: Text('WASM 脚本执行'),
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'steam_settings',
+                    child: ListTile(
+                      leading: Icon(Icons.person_search_rounded),
+                      title: Text('Steam 账号设置'),
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 4),
             ],
             bottom: PreferredSize(
               preferredSize: const Size.fromHeight(108),
@@ -313,7 +348,10 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                         Tab(text: '每日Top30'),
                         Tab(text: '我的游戏库'),
                         Tab(text: 'Steam'),
-                        Tab(text: 'Epic 免费'),
+                        Tab(text: 'Epic Game'),
+                        Tab(text: 'WeGame'),
+                        Tab(text: 'Ubisoft'),
+                        Tab(text: 'Xbox'),
                         Tab(text: 'WASM 应用'),
                         Tab(text: '插件'),
                       ],
@@ -334,6 +372,9 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                   _buildMyLibraryTab(),
                   _buildSteamTab(),
                   _buildEpicTab(),
+                  const PlatformGameTab(platform: GamePlatform.wegame),
+                  const PlatformGameTab(platform: GamePlatform.ubisoft),
+                  const PlatformGameTab(platform: GamePlatform.xbox),
                   _buildWasmAppsTab(),
                   _buildPluginsTab(),
                 ],
@@ -481,7 +522,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
         final freeGames = (data['free_games'] as List?) ?? [];
         final wasmApps = (data['wasm_apps'] as List?) ?? [];
         final plugins = (data['available_plugins'] as List?) ?? [];
-        final categories = (data['categories'] as List?) ?? [];
 
         return RefreshIndicator(
           onRefresh: () async => ref.invalidate(wasmStoreOverviewProvider),
@@ -491,41 +531,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
               // Hero Banner
               _buildHeroBanner(),
               const SizedBox(height: 20),
-
-              // 分类卡片
-              if (categories.isNotEmpty) ...[
-                _buildSectionTitle('分类', Icons.category_rounded),
-                const SizedBox(height: 8),
-                SizedBox(
-                  height: 80,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: categories.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 12),
-                    itemBuilder: (context, index) {
-                      final cat = categories[index] as Map<String, dynamic>;
-                      return _CategoryChip(
-                        icon: cat['icon'] ?? '📦',
-                        name: cat['name'] ?? '',
-                        count: cat['count'] ?? 0,
-                        onTap: () {
-                          final id = cat['id'] ?? '';
-                          if (id == 'steam') {
-                            _tabController.animateTo(3);
-                          } else if (id == 'epic_free') {
-                            _tabController.animateTo(4);
-                          } else if (id == 'wasm_apps') {
-                            _tabController.animateTo(5);
-                          } else if (id == 'plugins') {
-                            _tabController.animateTo(6);
-                          }
-                        },
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 24),
-              ],
 
               // Steam 精选
               if (featured.isNotEmpty) ...[
@@ -671,83 +676,202 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
   }
 
   // ============================================================================
-  // 我的游戏库 Tab (like 小黑盒)
+  // 我的游戏库 Tab — 多平台游戏库
   // ============================================================================
 
   Widget _buildMyLibraryTab() {
-    if (_steamId == null || _steamApiKey == null) {
-      return _buildSteamSetupPrompt();
-    }
+    final colorScheme = Theme.of(context).colorScheme;
+    final hasSteam = _steamId != null && _steamApiKey != null;
 
+    return CustomScrollView(
+      slivers: [
+        // 多平台快捷入口
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '游戏平台账号',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: colorScheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '登录各平台账号查看游戏库和管理游戏',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: SizedBox(
+            height: 100,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              children: [
+                _PlatformLoginCard(
+                  name: 'Steam',
+                  icon: Icons.games_rounded,
+                  color: const Color(0xFF1B2838),
+                  isConnected: hasSteam,
+                  onTap: hasSteam
+                      ? () => _tabController.animateTo(3)
+                      : _showSteamSettingsDialog,
+                ),
+                _PlatformLoginCard(
+                  name: 'Epic Game',
+                  icon: Icons.sports_esports_rounded,
+                  color: const Color(0xFF2A2A2A),
+                  isConnected: false,
+                  onTap: () => InAppBrowserPage.open(
+                    context,
+                    url: 'https://store.epicgames.com/',
+                    title: 'Epic Games',
+                  ),
+                ),
+                _PlatformLoginCard(
+                  name: 'WeGame',
+                  icon: Icons.videogame_asset_rounded,
+                  color: const Color(0xFFFF6600),
+                  isConnected: false,
+                  onTap: () => InAppBrowserPage.open(
+                    context,
+                    url: 'https://www.wegame.com.cn/store',
+                    title: 'WeGame',
+                  ),
+                ),
+                _PlatformLoginCard(
+                  name: 'Ubisoft',
+                  icon: Icons.gamepad_rounded,
+                  color: const Color(0xFF0070FF),
+                  isConnected: false,
+                  onTap: () => InAppBrowserPage.open(
+                    context,
+                    url: 'https://store.ubisoft.com/sea/home',
+                    title: 'Ubisoft Connect',
+                  ),
+                ),
+                _PlatformLoginCard(
+                  name: 'Xbox',
+                  icon: Icons.sports_esports_outlined,
+                  color: const Color(0xFF107C10),
+                  isConnected: false,
+                  onTap: () => InAppBrowserPage.open(
+                    context,
+                    url: 'https://www.xbox.com/zh-CN/games/browse',
+                    title: 'Xbox',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // Steam 游戏库区域
+        if (hasSteam) ...[
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: Row(
+                children: [
+                  Icon(Icons.games_rounded,
+                      size: 20, color: colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Steam 游戏库',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          ..._buildSteamLibrarySection(),
+        ] else ...[
+          SliverFillRemaining(
+            child: _buildSteamSetupPrompt(),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Steam 游戏库详细内容（profile + stats + game list）
+  List<Widget> _buildSteamLibrarySection() {
     final params = (steamId: _steamId!, apiKey: _steamApiKey);
     final libraryAsync = ref.watch(steamLibraryProvider(params));
     final playerAsync = ref.watch(steamPlayerProvider(params));
 
-    return RefreshIndicator(
-      onRefresh: () async {
-        ref.invalidate(steamLibraryProvider(params));
-        ref.invalidate(steamPlayerProvider(params));
-      },
-      child: CustomScrollView(
-        slivers: [
-          // Player profile header
-          SliverToBoxAdapter(
-            child: playerAsync.when(
-              data: (player) => _buildPlayerProfileCard(player),
-              loading: () => _buildPlayerProfileSkeleton(),
-              error: (_, __) => const SizedBox.shrink(),
-            ),
-          ),
-
-          // Game library stats
-          SliverToBoxAdapter(
-            child: libraryAsync.when(
-              data: (data) {
-                final games = (data['games'] as List?) ?? [];
-                return _buildLibraryStats(games);
-              },
-              loading: () => const SizedBox.shrink(),
-              error: (_, __) => const SizedBox.shrink(),
-            ),
-          ),
-
-          // Game list
-          libraryAsync.when(
-            data: (data) {
-              final games = (data['games'] as List?) ?? [];
-              if (games.isEmpty) {
-                return SliverFillRemaining(
-                  child: _buildEmptyState(
-                    '游戏库为空\n请检查 Steam ID 和 API Key 是否正确',
-                    Icons.sports_esports_outlined,
-                  ),
-                );
-              }
-              return SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                sliver: SliverList.builder(
-                  itemCount: games.length,
-                  itemBuilder: (context, index) {
-                    final game = games[index] as Map<String, dynamic>;
-                    return _LibraryGameTile(game: game).animate().fadeIn(
-                          delay: Duration(
-                              milliseconds: (index * 30).clamp(0, 500)),
-                          duration: 200.ms,
-                        );
-                  },
-                ),
-              );
-            },
-            loading: () => const SliverFillRemaining(
-              child: Center(child: CircularProgressIndicator()),
-            ),
-            error: (e, _) => SliverFillRemaining(
-              child: _buildErrorState('加载游戏库失败: $e'),
-            ),
-          ),
-        ],
+    return [
+      // Player profile header
+      SliverToBoxAdapter(
+        child: playerAsync.when(
+          data: (player) => _buildPlayerProfileCard(player),
+          loading: () => _buildPlayerProfileSkeleton(),
+          error: (_, __) => const SizedBox.shrink(),
+        ),
       ),
-    );
+
+      // Game library stats
+      SliverToBoxAdapter(
+        child: libraryAsync.when(
+          data: (data) {
+            final games = (data['games'] as List?) ?? [];
+            return _buildLibraryStats(games);
+          },
+          loading: () => const SizedBox.shrink(),
+          error: (_, __) => const SizedBox.shrink(),
+        ),
+      ),
+
+      // Game list
+      libraryAsync.when(
+        data: (data) {
+          final games = (data['games'] as List?) ?? [];
+          if (games.isEmpty) {
+            return SliverFillRemaining(
+              child: _buildEmptyState(
+                '游戏库为空\n请检查 Steam ID 和 API Key 是否正确',
+                Icons.sports_esports_outlined,
+              ),
+            );
+          }
+          return SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            sliver: SliverList.builder(
+              itemCount: games.length,
+              itemBuilder: (context, index) {
+                final game = games[index] as Map<String, dynamic>;
+                return _LibraryGameTile(game: game).animate().fadeIn(
+                      delay: Duration(
+                          milliseconds: (index * 30).clamp(0, 500)),
+                      duration: 200.ms,
+                    );
+              },
+            ),
+          );
+        },
+        loading: () => const SliverFillRemaining(
+          child: Center(child: CircularProgressIndicator()),
+        ),
+        error: (e, _) => SliverFillRemaining(
+          child: _buildErrorState('加载游戏库失败: $e'),
+        ),
+      ),
+    ];
   }
 
   Widget _buildSteamSetupPrompt() {
@@ -2312,53 +2436,81 @@ class _LibraryGameTile extends StatelessWidget {
   }
 }
 
-/// 分类标签
-class _CategoryChip extends StatelessWidget {
-  final String icon;
+/// 平台登录卡片 — 多平台游戏库入口
+class _PlatformLoginCard extends StatelessWidget {
   final String name;
-  final int count;
-  final VoidCallback? onTap;
+  final IconData icon;
+  final Color color;
+  final bool isConnected;
+  final VoidCallback onTap;
 
-  const _CategoryChip({
-    required this.icon,
+  const _PlatformLoginCard({
     required this.name,
-    required this.count,
-    this.onTap,
+    required this.icon,
+    required this.color,
+    required this.isConnected,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return InkWell(
+    return GestureDetector(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
       child: Container(
         width: 100,
-        padding: const EdgeInsets.all(12),
+        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(12),
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isConnected
+                ? Colors.greenAccent.withValues(alpha: 0.5)
+                : colorScheme.outlineVariant.withValues(alpha: 0.3),
+            width: isConnected ? 1.5 : 1,
+          ),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(icon, style: const TextStyle(fontSize: 24)),
-            const SizedBox(height: 4),
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(icon, size: 28, color: color),
+                if (isConnected)
+                  Positioned(
+                    right: -4,
+                    top: -4,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: const BoxDecoration(
+                        color: Colors.green,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.check, size: 10,
+                          color: Colors.white),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
             Text(
               name,
               style: TextStyle(
                 fontSize: 11,
+                fontWeight: FontWeight.w600,
                 color: colorScheme.onSurface,
-                fontWeight: FontWeight.w500,
               ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
             Text(
-              '$count',
+              isConnected ? '已连接' : '登录',
               style: TextStyle(
-                fontSize: 10,
-                color: colorScheme.onSurfaceVariant,
+                fontSize: 9,
+                color: isConnected ? Colors.green : colorScheme.onSurfaceVariant,
+                fontWeight: isConnected ? FontWeight.w600 : FontWeight.normal,
               ),
             ),
           ],

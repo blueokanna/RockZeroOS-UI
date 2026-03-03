@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:pointycastle/export.dart';
 
+import 'hkdf_blake3.dart';
 import 'zkp/hls_bulletproof_auth.dart';
 
 /// 安全 HLS 代理服务器
@@ -406,14 +407,12 @@ class SecureHlsProxyServer {
     }
   }
 
-  /// 从密钥派生子密钥（使用 HKDF-SHA3-256）
-  ///
-  /// 生产级实现：使用 HKDF-SHA3-256 进行密钥派生，与 Rust 端完全一致
+  /// 从密钥派生子密钥（使用 HKDF-Blake3，与 Rust 端完全一致）
   ///
   /// Rust 端使用：
   /// ```rust
-  /// let hk = Hkdf::<Sha3_256>::new(None, &pmk);
-  /// hk.expand(b"hls-master-key", &mut encryption_key)
+  /// let hkdf = HkdfBlake3::new_with_session_salt(&session_id, &pmk);
+  /// hkdf.expand(b"hls-master-key", &mut encryption_key);
   /// ```
   ///
   /// 参数：
@@ -422,21 +421,7 @@ class SecureHlsProxyServer {
   ///
   /// 返回：32 字节的派生密钥
   Uint8List _deriveKey(Uint8List key, String info) {
-    // 使用 HKDF-SHA3-256 派生密钥（与 Rust 端一致）
-    final hkdf = HKDFKeyDerivator(SHA3Digest(256));
-
-    // HKDF 参数：
-    // - salt: None（与 Rust 端的 Hkdf::new(None, &pmk) 一致）
-    // - info: 上下文信息
-    final infoBytes = Uint8List.fromList(utf8.encode(info));
-
-    // 初始化 HKDF（salt 为 null 表示使用零值 salt）
-    hkdf.init(HkdfParameters(key, 32, null, infoBytes));
-
-    // 派生 32 字节的密钥
-    final derivedKey = Uint8List(32);
-    hkdf.deriveKey(null, 0, derivedKey, 0);
-
-    return derivedKey;
+    final hkdf = HkdfBlake3.withSessionSalt(sessionId, key);
+    return hkdf.expand(Uint8List.fromList(utf8.encode(info)), 32);
   }
 }

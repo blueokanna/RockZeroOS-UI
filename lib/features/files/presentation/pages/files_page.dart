@@ -21,6 +21,7 @@ import '../../../../core/services/wallpaper_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../storage/presentation/pages/disk_management_page.dart';
 import '../widgets/transport_manager_page.dart';
+import '../widgets/upload_progress_sheet.dart';
 import 'secure_hls_video_player.dart';
 import 'enhanced_audio_player_page.dart';
 import 'image_viewer_page.dart';
@@ -308,15 +309,53 @@ class _FilesPageState extends ConsumerState<FilesPage>
       return;
     }
 
-    final parts = currentPath.split('/').where((p) => p.isNotEmpty).toList();
-    if (parts.isEmpty) {
+    // 获取已挂载的磁盘列表
+    final disksAsync = ref.read(diskInfoProvider);
+    final disks = disksAsync.asData?.value ?? [];
+    final mountedDisks =
+        disks.where((d) => d.mountPoint != 'Not mounted').toList();
+
+    // 检查是否在某个磁盘的挂载点根目录
+    final isAtDiskRoot =
+        mountedDisks.any((d) => currentPath == d.mountPoint);
+    if (isAtDiskRoot) {
+      // 从磁盘根目录 → 直接返回 Storage 视图
       ref.read(currentPathProvider.notifier).setPath('');
       setState(() => _showDisks = true);
-    } else if (parts.length == 1) {
-      ref.read(currentPathProvider.notifier).setPath('/');
+      return;
+    }
+
+    // 检查是否在某个磁盘内部的子目录
+    DiskInfo? currentDisk;
+    for (final disk in mountedDisks) {
+      if (currentPath.startsWith('${disk.mountPoint}/')) {
+        currentDisk = disk;
+        break;
+      }
+    }
+
+    if (currentDisk != null) {
+      // 在磁盘内部 → 导航到上级目录（但不超过磁盘根目录）
+      final relativePath =
+          currentPath.substring(currentDisk.mountPoint.length);
+      final parts =
+          relativePath.split('/').where((p) => p.isNotEmpty).toList();
+      if (parts.length <= 1) {
+        // 回到磁盘根目录
+        ref
+            .read(currentPathProvider.notifier)
+            .setPath(currentDisk.mountPoint);
+      } else {
+        final parentRelative =
+            parts.sublist(0, parts.length - 1).join('/');
+        ref
+            .read(currentPathProvider.notifier)
+            .setPath('${currentDisk.mountPoint}/$parentRelative');
+      }
     } else {
-      final parentPath = '/${parts.sublist(0, parts.length - 1).join('/')}';
-      ref.read(currentPathProvider.notifier).setPath(parentPath);
+      // 不在已知磁盘内 → 直接返回 Storage 视图
+      ref.read(currentPathProvider.notifier).setPath('');
+      setState(() => _showDisks = true);
     }
   }
 
@@ -551,14 +590,66 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 
   Widget _buildBreadcrumb(String path) {
-    final parts = path.isEmpty
-        ? <String>[]
-        : path.split('/').where((p) => p.isNotEmpty).toList();
     final colorScheme = Theme.of(context).colorScheme;
-    final isAtRoot = path == '/' || (path.isNotEmpty && parts.isEmpty);
 
-    // Decode path parts for display (handles Chinese characters)
-    final decodedParts = parts.map((p) => safeDisplayName(p)).toList();
+    // 获取已挂载磁盘列表，用于简化路径显示
+    final disksAsync = ref.read(diskInfoProvider);
+    final disks = disksAsync.asData?.value ?? [];
+    final mountedDisks =
+        disks.where((d) => d.mountPoint != 'Not mounted').toList();
+
+    // 检测当前路径是否在某个磁盘内
+    DiskInfo? currentDisk;
+    for (final disk in mountedDisks) {
+      if (path == disk.mountPoint || path.startsWith('${disk.mountPoint}/')) {
+        currentDisk = disk;
+        break;
+      }
+    }
+
+    // 构建面包屑片段
+    List<_BreadcrumbEntry> crumbs = [];
+
+    if (currentDisk != null) {
+      // 在磁盘内：显示 Storage > 磁盘名 > 相对路径
+      final diskLabel = currentDisk.name; // e.g. "sdb1"
+      crumbs.add(_BreadcrumbEntry(
+        label: diskLabel,
+        icon: Icons.storage_rounded,
+        path: currentDisk.mountPoint,
+        isActive: path == currentDisk.mountPoint,
+      ));
+
+      // 获取相对于磁盘根目录的路径部分
+      if (path != currentDisk.mountPoint) {
+        final relativePath =
+            path.substring(currentDisk.mountPoint.length);
+        final relParts =
+            relativePath.split('/').where((p) => p.isNotEmpty).toList();
+        for (int i = 0; i < relParts.length; i++) {
+          final fullPath =
+              '${currentDisk.mountPoint}/${relParts.sublist(0, i + 1).join('/')}';
+          crumbs.add(_BreadcrumbEntry(
+            label: safeDisplayName(relParts[i]),
+            path: fullPath,
+            isActive: i == relParts.length - 1,
+          ));
+        }
+      }
+    } else {
+      // 不在磁盘内的路径：显示 Storage > 完整路径
+      final parts = path.isEmpty
+          ? <String>[]
+          : path.split('/').where((p) => p.isNotEmpty).toList();
+      for (int i = 0; i < parts.length; i++) {
+        final fullPath = '/${parts.sublist(0, i + 1).join('/')}';
+        crumbs.add(_BreadcrumbEntry(
+          label: safeDisplayName(parts[i]),
+          path: fullPath,
+          isActive: i == parts.length - 1,
+        ));
+      }
+    }
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -569,22 +660,14 @@ class _FilesPageState extends ConsumerState<FilesPage>
       ),
       child: Row(
         children: [
-          if (path.isNotEmpty && path != '/')
+          if (path.isNotEmpty)
             IconButton(
               icon: Icon(
                 Icons.arrow_back_rounded,
                 size: 20,
                 color: colorScheme.primary,
               ),
-              onPressed: () {
-                if (parts.length <= 1) {
-                  ref.read(currentPathProvider.notifier).setPath('/');
-                } else {
-                  final parentPath =
-                      '/${parts.sublist(0, parts.length - 1).join('/')}';
-                  ref.read(currentPathProvider.notifier).setPath(parentPath);
-                }
-              },
+              onPressed: _handleBackNavigation,
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
               tooltip: 'Go back',
@@ -605,32 +688,13 @@ class _FilesPageState extends ConsumerState<FilesPage>
                       setState(() => _showDisks = true);
                     },
                   ),
-                  if (path.isNotEmpty) ...[
+                  if (crumbs.length > 3) ...[
+                    // 路径过长时使用省略菜单
                     Icon(
                       Icons.chevron_right_rounded,
                       size: 20,
-                      color: colorScheme.onSurfaceVariant.withValues(
-                        alpha: 0.5,
-                      ),
-                    ),
-                    _BreadcrumbChip(
-                      icon: Icons.folder_rounded,
-                      label: '/',
-                      isActive: isAtRoot && parts.isEmpty,
-                      onTap: isAtRoot && parts.isEmpty
-                          ? null
-                          : () => ref
-                              .read(currentPathProvider.notifier)
-                              .setPath('/'),
-                    ),
-                  ],
-                  if (decodedParts.length > 3) ...[
-                    Icon(
-                      Icons.chevron_right_rounded,
-                      size: 20,
-                      color: colorScheme.onSurfaceVariant.withValues(
-                        alpha: 0.5,
-                      ),
+                      color: colorScheme.onSurfaceVariant
+                          .withValues(alpha: 0.5),
                     ),
                     PopupMenuButton<int>(
                       child: Container(
@@ -651,14 +715,12 @@ class _FilesPageState extends ConsumerState<FilesPage>
                         ),
                       ),
                       onSelected: (index) {
-                        final fullPath =
-                            '/${parts.sublist(0, index + 1).join('/')}';
                         ref
                             .read(currentPathProvider.notifier)
-                            .setPath(fullPath);
+                            .setPath(crumbs[index].path);
                       },
                       itemBuilder: (context) => List.generate(
-                        decodedParts.length - 2,
+                        crumbs.length - 2,
                         (index) => PopupMenuItem(
                           value: index,
                           child: Row(
@@ -669,71 +731,59 @@ class _FilesPageState extends ConsumerState<FilesPage>
                                 color: colorScheme.primary,
                               ),
                               const SizedBox(width: 8),
-                              Text(decodedParts[index]),
+                              Text(crumbs[index].label),
                             ],
                           ),
                         ),
                       ),
                     ),
-                    ...decodedParts
-                        .sublist(decodedParts.length - 2)
-                        .asMap()
-                        .entries
-                        .map((entry) {
-                      final actualIndex = decodedParts.length - 2 + entry.key;
-                      final part = entry.value;
-                      final fullPath =
-                          '/${parts.sublist(0, actualIndex + 1).join('/')}';
-                      final isLast = actualIndex == decodedParts.length - 1;
-
+                    // 显示最后两个片段
+                    ...crumbs
+                        .sublist(crumbs.length - 2)
+                        .map((crumb) {
                       return Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
                             Icons.chevron_right_rounded,
                             size: 20,
-                            color: colorScheme.onSurfaceVariant.withValues(
-                              alpha: 0.5,
-                            ),
+                            color: colorScheme.onSurfaceVariant
+                                .withValues(alpha: 0.5),
                           ),
                           _BreadcrumbChip(
-                            label: part,
-                            isActive: isLast,
-                            onTap: isLast
+                            label: crumb.label,
+                            icon: crumb.icon,
+                            isActive: crumb.isActive,
+                            onTap: crumb.isActive
                                 ? null
                                 : () => ref
                                     .read(currentPathProvider.notifier)
-                                    .setPath(fullPath),
+                                    .setPath(crumb.path),
                           ),
                         ],
                       );
                     }),
                   ] else ...[
-                    ...decodedParts.asMap().entries.map((entry) {
-                      final index = entry.key;
-                      final part = entry.value;
-                      final fullPath =
-                          '/${parts.sublist(0, index + 1).join('/')}';
-                      final isLast = index == decodedParts.length - 1;
-
+                    // 直接显示所有片段
+                    ...crumbs.map((crumb) {
                       return Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
                             Icons.chevron_right_rounded,
                             size: 20,
-                            color: colorScheme.onSurfaceVariant.withValues(
-                              alpha: 0.5,
-                            ),
+                            color: colorScheme.onSurfaceVariant
+                                .withValues(alpha: 0.5),
                           ),
                           _BreadcrumbChip(
-                            label: part,
-                            isActive: isLast,
-                            onTap: isLast
+                            label: crumb.label,
+                            icon: crumb.icon,
+                            isActive: crumb.isActive,
+                            onTap: crumb.isActive
                                 ? null
                                 : () => ref
                                     .read(currentPathProvider.notifier)
-                                    .setPath(fullPath),
+                                    .setPath(crumb.path),
                           ),
                         ],
                       );
@@ -914,14 +964,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     size: 20,
                     color: colorScheme.onPrimaryContainer,
                   ),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const TransportManagerPage(),
-                      ),
-                    );
-                  },
+                  onPressed: () => _showUploadProgressSheet(),
                   tooltip: 'View all transfers',
                 ),
               ],
@@ -2327,11 +2370,57 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 
   Future<void> _pickAndUploadFiles() async {
+    // 选择上传类型：文件 or 文件夹
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(top: 8, bottom: 16),
+              decoration: BoxDecoration(
+                color: Colors.grey.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.insert_drive_file_rounded),
+              title: const Text('选择文件'),
+              subtitle: const Text('选择一个或多个文件上传'),
+              onTap: () => Navigator.pop(ctx, 'files'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_rounded),
+              title: const Text('选择文件夹'),
+              subtitle: const Text('上传整个文件夹（含子目录）'),
+              onTap: () => Navigator.pop(ctx, 'folder'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (choice == null) return;
+
+    if (choice == 'folder') {
+      await _pickAndUploadFolder();
+      return;
+    }
+
+    // 原有文件选择逻辑
     // 获取当前路径
     final currentPath = ref.read(currentPathProvider);
 
     // 如果路径为空，提示用户选择目录（但不阻止上传）
     if (currentPath.isEmpty) {
+      if (!mounted) return;
       final shouldContinue = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -2615,6 +2704,262 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   ),
                 );
               },
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploading = false);
+      }
+    }
+  }
+
+  void _showUploadProgressSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.75,
+        minChildSize: 0.4,
+        maxChildSize: 0.95,
+        builder: (_, scrollController) => const UploadProgressSheet(),
+      ),
+    );
+  }
+
+  /// 选择文件夹并递归上传其中所有文件（保持目录结构）
+  Future<void> _pickAndUploadFolder() async {
+    final currentPath = ref.read(currentPathProvider);
+
+    final folderPath = await FilePicker.platform.getDirectoryPath();
+    if (folderPath == null) return;
+
+    final dir = Directory(folderPath);
+    if (!dir.existsSync()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('选择的文件夹不存在'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+      return;
+    }
+
+    // 递归列出所有文件
+    final allFiles = dir
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((f) {
+          // 过滤隐藏文件和系统文件
+          final name = f.path.split(RegExp(r'[/\\]')).last;
+          return !name.startsWith('.');
+        })
+        .toList();
+
+    if (allFiles.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('文件夹为空，无文件可上传')),
+        );
+      }
+      return;
+    }
+
+    // 确认上传
+    final folderName = folderPath.split(RegExp(r'[/\\]')).last;
+    int totalSize = 0;
+    for (final f in allFiles) {
+      totalSize += f.lengthSync();
+    }
+
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.folder_rounded, size: 36),
+        title: Text('上传文件夹 "$folderName"'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('共 ${allFiles.length} 个文件'),
+            const SizedBox(height: 4),
+            Text('总大小: ${_formatBytes(totalSize)}'),
+            const SizedBox(height: 12),
+            Text(
+              '所有文件将上传至: $currentPath/$folderName/',
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('开始上传'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    // 注册上传任务
+    final downloadManagerNotifier = ref.read(downloadManagerProvider.notifier);
+    final uploadTaskIds = <String>[];
+
+    for (final file in allFiles) {
+      // 计算相对路径以保持目录结构
+      final relativePath =
+          file.path.substring(folderPath.length).replaceAll('\\', '/');
+      final uploadTarget = '$currentPath/$folderName$relativePath';
+
+      final task = await downloadManagerNotifier.addUpload(
+        filePath: file.path,
+        uploadUrl: uploadTarget,
+      );
+      uploadTaskIds.add(task.id);
+    }
+
+    debugPrint(
+        '[Upload] Uploading folder "$folderName": ${allFiles.length} files, total size: ${_formatBytes(totalSize)}');
+
+    // 显示上传进度面板
+    if (mounted) {
+      _showUploadProgressSheet();
+    }
+
+    setState(() {
+      _isUploading = true;
+      _uploadProgress = 0;
+    });
+
+    try {
+      final api = ref.read(apiServiceProvider);
+
+      // 逐文件上传，保持目录结构
+      int completedFiles = 0;
+      int totalSent = 0;
+
+      for (int i = 0; i < allFiles.length; i++) {
+        final file = allFiles[i];
+        final relativePath =
+            file.path.substring(folderPath.length).replaceAll('\\', '/');
+        // 获取此文件应上传到的目录路径
+        final targetDir = '$currentPath/$folderName${relativePath.substring(0, relativePath.lastIndexOf('/'))}';
+
+        await api.uploadToDirectory(
+          targetDir,
+          [file],
+          onProgress: (sent, total) {
+            final globalSent = totalSent + sent;
+            if (mounted) {
+              setState(
+                  () => _uploadProgress = globalSent / totalSize.toDouble());
+            }
+            downloadManagerNotifier.updateUploadProgress(
+              uploadTaskIds[i],
+              sent,
+            );
+          },
+        );
+
+        totalSent += file.lengthSync();
+        completedFiles++;
+        downloadManagerNotifier.completeUpload(uploadTaskIds[i]);
+
+        if (mounted) {
+          setState(() => _uploadProgress = totalSent / totalSize.toDouble());
+        }
+      }
+
+      debugPrint(
+          '[Upload] Folder upload completed: $completedFiles/${allFiles.length} files');
+
+      // 发送事件
+      final monitor = ref.read(fileSystemMonitorProvider);
+      for (final file in allFiles) {
+        final relativePath =
+            file.path.substring(folderPath.length).replaceAll('\\', '/');
+        final uploadedPath = '$currentPath/$folderName$relativePath';
+        monitor.emitUploadCompleted(
+          uploadedPath,
+          metadata: {
+            'filename': file.path.split(RegExp(r'[/\\]')).last,
+            'size': file.lengthSync(),
+          },
+        );
+      }
+
+      ref.invalidate(directoryListingProvider(currentPath));
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle_rounded, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    '文件夹 "$folderName" 上传完成 ($completedFiles 个文件)',
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        );
+      }
+    } on DioException catch (e) {
+      debugPrint('[Upload] Folder upload DioException: ${e.message}');
+      for (final taskId in uploadTaskIds) {
+        downloadManagerNotifier.failUpload(
+            taskId, e.message ?? 'Upload failed');
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('文件夹上传失败: ${e.message ?? 'Network error'}'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: '查看详情',
+              textColor: Colors.white,
+              onPressed: _showUploadProgressSheet,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[Upload] Folder upload error: $e');
+      for (final taskId in uploadTaskIds) {
+        downloadManagerNotifier.failUpload(taskId, e.toString());
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('文件夹上传失败: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: '查看详情',
+              textColor: Colors.white,
+              onPressed: _showUploadProgressSheet,
             ),
           ),
         );
@@ -3331,6 +3676,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
       Navigator.push(
         context,
         PageRouteBuilder(
+          opaque: true,
           pageBuilder: (context, animation, secondaryAnimation) => player,
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return FadeTransition(
@@ -3486,6 +3832,23 @@ class _FilesPageState extends ConsumerState<FilesPage>
     }
     return '$bytes B';
   }
+}
+
+// ============ Helper Classes ============
+
+/// 面包屑条目 — 描述路径中的一个片段
+class _BreadcrumbEntry {
+  final String label;
+  final IconData? icon;
+  final String path;
+  final bool isActive;
+
+  const _BreadcrumbEntry({
+    required this.label,
+    this.icon,
+    required this.path,
+    this.isActive = false,
+  });
 }
 
 // ============ Helper Widgets ============

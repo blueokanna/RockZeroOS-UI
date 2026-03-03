@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
+import '../../features/files/presentation/pages/enhanced_audio_player_page.dart';
 import '../services/audio_player_service.dart';
 
 /// 迷你音频播放器 - 显示在底部导航栏上方
@@ -24,8 +24,33 @@ class MiniAudioPlayer extends ConsumerWidget {
 
     return GestureDetector(
       onTap: () {
-        // 导航到完整播放器页面
-        context.push('/audio-player');
+        // 打开完整播放器页面（使用全局服务的 URL 和文件名）
+        if (audioState.currentUrl != null) {
+          Navigator.push(
+            context,
+            PageRouteBuilder(
+              pageBuilder: (context, animation, secondaryAnimation) =>
+                  EnhancedAudioPlayerPage(
+                mediaUrl: audioState.currentUrl!,
+                fileName: audioState.currentFileName ?? '音频',
+              ),
+              transitionsBuilder:
+                  (context, animation, secondaryAnimation, child) {
+                return SlideTransition(
+                  position: Tween<Offset>(
+                    begin: const Offset(0, 1),
+                    end: Offset.zero,
+                  ).animate(CurvedAnimation(
+                    parent: animation,
+                    curve: Curves.easeOutCubic,
+                  )),
+                  child: child,
+                );
+              },
+              transitionDuration: const Duration(milliseconds: 400),
+            ),
+          );
+        }
       },
       child: Container(
         height: 64,

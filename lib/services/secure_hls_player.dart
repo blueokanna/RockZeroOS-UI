@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:pointycastle/export.dart' as pc;
 import 'package:video_player/video_player.dart';
 
+import 'hkdf_blake3.dart';
 import 'zkp/hls_bulletproof_auth.dart';
 import 'sae_client.dart';
 import 'secure_hls_proxy.dart';
@@ -48,24 +49,6 @@ class SecureHlsPlayer {
     required this.jwtToken,
   }) {
     _bulletproofAuth = HlsBulletproofAuth();
-  }
-
-  /// Ensure we have ZKP registration data (from server or locally generated)
-  Future<void> _ensureZkpRegistration(String userId) async {
-    // Prefer server-provided registration
-    await _fetchZkpRegistration(userId);
-
-    // Fallback: generate locally if server did not return registration
-    if (_zkpRegistration == null && _password != null) {
-      // Initialize FFI once before registration
-      _bulletproofAuth.initializeAuto();
-      _zkpRegistration = _bulletproofAuth.registerPassword(_password!);
-      debugPrint('[SecureHLS] Generated local ZKP registration');
-    }
-
-    if (_zkpRegistration == null) {
-      throw Exception('ZKP registration not available; cannot generate proofs');
-    }
   }
 
   /// 步骤 1: 初始化 SAE 握手
@@ -167,7 +150,11 @@ class SecureHlsPlayer {
     _pmk = saeClient.getPmk();
     debugPrint('[SecureHLS] SAE handshake completed, PMK obtained');
 
-    // 10. 创建 HLS 会话
+    // 10. 创建 HLS 会话（不使用 direct_mode，所有段加密传输）
+    // 先生成 ZKP 注册数据
+    _bulletproofAuth.initializeAuto();
+    _zkpRegistration = _bulletproofAuth.registerPassword(password);
+
     final sessionResponse = await http.post(
       Uri.parse('$baseUrl/api/v1/secure-hls/session/create'),
       headers: {
@@ -177,7 +164,7 @@ class SecureHlsPlayer {
       body: jsonEncode({
         'temp_session_id': tempSessionId,
         'file_id': fileId,
-        'direct_mode': true, // 请求明文段，让 libmpv 直接播放
+        'zkp_registration': jsonEncode(_zkpRegistration!.toJson()),
       }),
     );
 
@@ -193,44 +180,14 @@ class SecureHlsPlayer {
     debugPrint('[SecureHLS] HLS session created: $_sessionId '
         '(ZKP: $zkpEnabled, direct: $directMode)');
 
-    // 10. 获取或生成 ZKP 注册数据（完整 Bulletproofs）
-    await _ensureZkpRegistration(userId);
-
-    // 11. 初始化加密器
+    // 11. 初始化加密器（使用 HKDF-Blake3 派生密钥）
     _encryptor = HlsEncryptor(
       pmk: _pmk!,
+      sessionId: _sessionId!,
       password: password,
       zkpRegistration: _zkpRegistration,
       bulletproofAuth: _bulletproofAuth,
     );
-  }
-
-  /// 获取用户的 ZKP 注册数据
-  Future<void> _fetchZkpRegistration(String userId) async {
-    try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/v1/users/$userId/zkp-registration'),
-        headers: {
-          'Authorization': 'Bearer $jwtToken',
-        },
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        _zkpRegistration = PasswordRegistration.fromJson(data);
-        debugPrint('[SecureHLS] Fetched ZKP registration from server');
-      } else {
-        debugPrint('[SecureHLS] No ZKP registration on server, using local');
-        if (_password != null) {
-          _zkpRegistration = _bulletproofAuth.registerPassword(_password!);
-        }
-      }
-    } catch (e) {
-      debugPrint('[SecureHLS] Failed to fetch ZKP registration: $e');
-      if (_password != null) {
-        _zkpRegistration = _bulletproofAuth.registerPassword(_password!);
-      }
-    }
   }
 
   /// 步骤 2: 播放视频
@@ -381,6 +338,7 @@ class SecureHlsPlayer {
 /// 2. 解密视频段（AES-256-GCM）
 class HlsEncryptor {
   final Uint8List pmk;
+  final String sessionId;
   final String password;
   final PasswordRegistration? zkpRegistration;
   final HlsBulletproofAuth bulletproofAuth;
@@ -388,11 +346,12 @@ class HlsEncryptor {
 
   HlsEncryptor({
     required this.pmk,
+    required this.sessionId,
     required this.password,
     required this.zkpRegistration,
     required this.bulletproofAuth,
   }) {
-    // 从 PMK 派生加密密钥（使用 HKDF-SHA3-256）
+    // 从 PMK 派生加密密钥（使用 HKDF-Blake3，与 Rust 端完全一致）
     _encryptionKey = _deriveKey(pmk, 'hls-master-key');
   }
 
@@ -451,15 +410,10 @@ class HlsEncryptor {
     return _aesGcmDecrypt(_encryptionKey, nonce, ciphertextWithTag);
   }
 
-  /// 从密钥派生子密钥（HKDF-SHA3-256）
+  /// 从密钥派生子密钥（HKDF-Blake3，与 Rust 端完全一致）
   Uint8List _deriveKey(Uint8List key, String info) {
-    final hkdf = pc.HKDFKeyDerivator(pc.SHA3Digest(256));
-    final infoBytes = Uint8List.fromList(utf8.encode(info));
-    hkdf.init(pc.HkdfParameters(key, 32, null, infoBytes));
-
-    final derivedKey = Uint8List(32);
-    hkdf.deriveKey(null, 0, derivedKey, 0);
-    return derivedKey;
+    final hkdf = HkdfBlake3.withSessionSalt(sessionId, key);
+    return hkdf.expand(Uint8List.fromList(utf8.encode(info)), 32);
   }
 
   /// AES-256-GCM 解密

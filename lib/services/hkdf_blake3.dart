@@ -27,14 +27,17 @@ class HkdfBlake3 {
 
   /// 使用 session ID 作为 salt 构造
   ///
-  /// 与 Rust 端 `HkdfBlake3::new_with_session_salt` 一致：
+  /// 与 Rust 端 `HkdfBlake3::new_with_session_salt` 完全一致：
   /// ```rust
-  /// let salt = blake3::hash(session_id.as_bytes());
-  /// HkdfBlake3 { prk: Self::extract(salt.as_bytes(), pmk) }
+  /// let salt_input = format!("hls-session-salt:{}", session_id);
+  /// let salt = blake3::hash(salt_input.as_bytes());
+  /// // PRK = blake3(salt || ikm)
   /// ```
   factory HkdfBlake3.withSessionSalt(String sessionId, Uint8List pmk) {
+    // 与 Rust 端一致：salt = blake3("hls-session-salt:" + session_id)
+    final saltInput = 'hls-session-salt:$sessionId';
     final saltHash =
-        Uint8List.fromList(blake3.blake3(utf8.encode(sessionId), 32));
+        Uint8List.fromList(blake3.blake3(utf8.encode(saltInput), 32));
     return HkdfBlake3(ikm: pmk, salt: saltHash);
   }
 

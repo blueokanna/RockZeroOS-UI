@@ -100,6 +100,16 @@ final networkInfoProvider = FutureProvider.autoDispose<NetworkInfo?>((
   }
 });
 
+/// 服务器公网 IP（缓存 5 分钟）
+final publicIpProvider = FutureProvider.autoDispose<String?>((ref) async {
+  try {
+    final api = ref.read(apiServiceProvider);
+    return await api.getPublicIp();
+  } catch (_) {
+    return null;
+  }
+});
+
 // Total storage info model
 class TotalStorageInfo {
   final int totalSpace;

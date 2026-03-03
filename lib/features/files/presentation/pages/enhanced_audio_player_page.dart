@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../../../../core/services/audio_player_service.dart';
 import '../../../../core/widgets/shell_scaffold.dart';
 
 /// Enhanced audio player with improved stability and seek support
@@ -466,6 +467,44 @@ class _EnhancedAudioPlayerPageState
     _audioPlayer?.setSpeed(speed);
   }
 
+  /// 将当前播放转移到全局 AudioPlayerService（后台播放），然后关闭页面。
+  /// MiniAudioPlayer 会自动出现在底部导航栏上方，系统通知栏也会显示控制按钮。
+  Future<void> _minimizeToBackground() async {
+    final service = ref.read(audioPlayerServiceProvider.notifier);
+
+    // 1. 用同一 URL & 文件名启动全局播放服务
+    final url = _getStreamUrl();
+    await service.play(url, widget.fileName);
+
+    // 2. 恢复当前进度 & 音量/速度
+    if (_position > Duration.zero) {
+      await service.seekTo(_position);
+    }
+    if (_volume != 1.0) {
+      await service.setVolume(_volume);
+    }
+    if (_speed != 1.0) {
+      await service.setSpeed(_speed);
+    }
+    if (_isLooping) {
+      service.toggleLoop();
+    }
+
+    // 3. 停止本地播放器（不触发 dispose 错误）
+    _disposed = true;
+    _visualizationTimer?.cancel();
+    _cancelSubscriptions();
+    await _audioPlayer?.stop();
+    await _audioPlayer?.dispose();
+    _audioPlayer = null;
+
+    // 4. 关闭页面，显示底部导航栏
+    if (mounted) {
+      ref.read(bottomNavVisibleProvider.notifier).show();
+      Navigator.pop(context);
+    }
+  }
+
   String _formatDuration(Duration d) {
     final h = d.inHours;
     final m = d.inMinutes.remainder(60);
@@ -496,6 +535,12 @@ class _EnhancedAudioPlayerPageState
             onPressed: () => Navigator.pop(context),
           ),
           actions: [
+            // 最小化到后台按钮 — 转移播放到全局服务
+            IconButton(
+              icon: const Icon(Icons.picture_in_picture_alt_rounded),
+              tooltip: '后台播放',
+              onPressed: _minimizeToBackground,
+            ),
             PopupMenuButton<double>(
               icon: const Icon(Icons.speed_rounded),
               tooltip: '播放速度',

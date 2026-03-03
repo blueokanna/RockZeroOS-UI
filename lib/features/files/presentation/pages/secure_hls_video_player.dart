@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,21 +15,9 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../../core/widgets/shell_scaffold.dart';
 import '../../../../services/sae_handshake_service.dart';
+import '../../../../services/secure_hls_proxy.dart';
 
-/// 智能视频播放器 - 优先直接流式播放，回退到安全 HLS
-///
-/// 播放策略（快到慢）：
-/// 1. 【直接播放】HTTP Range 流式传输（最快，零延迟）
-///    - media_kit (mpv) 原生支持 Range 请求
-///    - 通过 HTTP headers 传递 JWT 认证
-///    - 支持所有 mpv 支持的格式（MP4/MKV/AVI/WebM 等）
-///    - 即时开始播放，支持快进快退
-///
-/// 2. 【安全 HLS】SAE 握手 + ffmpeg 渐进式分片（回退）
-///    - 仅在直接播放失败时使用（例如需要转码的格式）
-///    - 渐进式分片：ffmpeg 在后台分片，首个片段可用即开始播放
-///    - 不再等待全部分片完成
-/// - ARM 设备友好，无加解密开销
+
 class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
   final String? filePath;
   final String? fileId;
@@ -52,6 +41,7 @@ class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
 class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   Player? _player;
   VideoController? _videoController;
+  SecureHlsProxyServer? _hlsProxy;
 
   bool _isLoading = true;
   String? _error;
@@ -60,16 +50,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   String? _hlsSessionId;
   String? _userId;
   String? _userPassword;
-
   bool _isDownloading = false;
   double _downloadProgress = 0;
 
-  /// 当前播放模式 - 用于 UI 显示
-  /// 'direct' = 直接 HTTP Range 流式传输（最快）
-  /// 'hls'    = SAE + HLS 安全播放（回退）
-  String _playbackMode = 'direct';
-
-  // 播放器状态
   bool _isPlaying = false;
   bool _isBuffering = false;
   bool _showControls = true;
@@ -78,9 +61,17 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   Duration _bufferedPosition = Duration.zero;
   Timer? _hideControlsTimer;
 
-  // 播放速度选项
   double _playbackSpeed = 1.0;
-  static const List<double> _speedOptions = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+  static const List<double> _speedOptions = [
+    0.25,
+    0.5,
+    0.75,
+    1.0,
+    1.25,
+    1.5,
+    2.0,
+    3.0
+  ];
 
   final List<StreamSubscription> _subscriptions = [];
 
@@ -117,18 +108,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         return;
       }
 
-      // ===== 策略 1：直接 HTTP Range 流式传输（最快） =====
-      // media_kit (mpv) 原生支持 Range 请求 + httpHeaders 传递 JWT 认证
-      // 对于 MP4/MKV/AVI/WebM/FLV 等常见格式，即时播放、支持快进快退
-      final directSuccess = await _tryDirectStreaming();
-      if (directSuccess) return;
-
-      if (!mounted) return;
-
-      // ===== 策略 2：SAE + HLS 安全播放（回退） =====
-      // 对于需要转码的格式或直接播放失败的场景，走 HLS 管道
-      debugPrint(
-          '[VideoPlayer] Direct streaming failed, falling back to HLS...');
+      // 所有视频一律通过 SAE + Bulletproofs + AES-256-GCM 安全通道传输
       await _tryHlsStreaming();
     } catch (e, stack) {
       debugPrint('[VideoPlayer] Error: $e');
@@ -137,150 +117,12 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     }
   }
 
-  /// 策略 1：直接 HTTP Range 流式传输
-  ///
-  /// 使用 /api/v1/filemanager/media/stream 端点
-  /// media_kit (mpv) 通过 HTTP headers 传递 JWT 认证
-  /// 支持所有 mpv 支持的容器/编解码器格式
-  /// 无需 ffmpeg 分片，无需 SAE 握手，延迟 < 1 秒
-  Future<bool> _tryDirectStreaming() async {
-    try {
-      setState(() {
-        _loadingStatus = '正在连接视频流...';
-        _playbackMode = 'direct';
-      });
-
-      final filePath = widget.filePath ?? '';
-      final streamUrl =
-          '${widget.baseUrl}/api/v1/filemanager/media/stream?path=${Uri.encodeComponent(filePath)}';
-
-      debugPrint('[VideoPlayer] Trying direct streaming: $streamUrl');
-
-      // 先验证 URL 可访问（HEAD 请求检查，避免播放器黑屏卡死）
-      try {
-        final checkResponse = await http.head(
-          Uri.parse(streamUrl),
-          headers: {
-            'Authorization': 'Bearer $_authToken',
-            'Accept': '*/*',
-          },
-        ).timeout(const Duration(seconds: 8));
-
-        if (checkResponse.statusCode != 200 &&
-            checkResponse.statusCode != 206 &&
-            checkResponse.statusCode != 416) {
-          debugPrint(
-              '[VideoPlayer] Direct stream not available (status: ${checkResponse.statusCode})');
-          return false;
-        }
-
-        // 检查是否支持 Range 请求
-        final acceptRanges = checkResponse.headers['accept-ranges'] ?? '';
-        final contentLength = checkResponse.headers['content-length'] ?? '0';
-        debugPrint(
-            '[VideoPlayer] Direct stream: Accept-Ranges=$acceptRanges, Content-Length=$contentLength');
-      } catch (e) {
-        debugPrint('[VideoPlayer] Direct stream HEAD check failed: $e');
-        return false;
-      }
-
-      if (!mounted) return false;
-
-      setState(() => _loadingStatus = '正在初始化播放器...');
-
-      // 创建 media_kit 播放器
-      _player = Player(
-        configuration: const PlayerConfiguration(
-          bufferSize: 96 * 1024 * 1024, // 96MB 缓冲 - 适合大文件
-        ),
-      );
-
-      _videoController = VideoController(_player!);
-
-      // 设置播放器事件监听
-      _setupPlayerListeners();
-
-      // 监听第一个错误，如果播放器无法解码则回退
-      final errorCompleter = Completer<String?>();
-      StreamSubscription<String>? errorSub;
-      errorSub = _player!.stream.error.listen((error) {
-        if (error.isNotEmpty && !errorCompleter.isCompleted) {
-          errorCompleter.complete(error);
-          errorSub?.cancel();
-        }
-      });
-
-      // 监听成功开始播放
-      final playingCompleter = Completer<bool>();
-      StreamSubscription<bool>? playingSub;
-      playingSub = _player!.stream.playing.listen((playing) {
-        if (playing && !playingCompleter.isCompleted) {
-          playingCompleter.complete(true);
-          playingSub?.cancel();
-        }
-      });
-
-      // 使用 media_kit 直接打开流媒体 URL，传递 JWT 认证头
-      await _player!.open(
-        Media(
-          streamUrl,
-          httpHeaders: {
-            'Authorization': 'Bearer $_authToken',
-          },
-        ),
-        play: true,
-      );
-
-      // 等待播放器开始播放或报错（最多 10 秒）
-      final result = await Future.any([
-        playingCompleter.future.then((_) => 'playing'),
-        errorCompleter.future.then((e) => 'error:$e'),
-        Future.delayed(const Duration(seconds: 10), () => 'timeout'),
-      ]);
-
-      errorSub.cancel();
-      playingSub.cancel();
-
-      if (result == 'playing') {
-        debugPrint('[VideoPlayer] Direct streaming successful!');
-        if (mounted) {
-          setState(() => _isLoading = false);
-        }
-        return true;
-      }
-
-      // 直接播放失败 - 清理播放器，准备回退
-      debugPrint('[VideoPlayer] Direct playback issue: $result');
-      _cancelSubscriptions();
-      await _player?.stop();
-      await _player?.dispose();
-      _player = null;
-      _videoController = null;
-      return false;
-    } catch (e) {
-      debugPrint('[VideoPlayer] Direct streaming exception: $e');
-      // 清理以便回退
-      _cancelSubscriptions();
-      await _player?.stop();
-      await _player?.dispose();
-      _player = null;
-      _videoController = null;
-      return false;
-    }
-  }
-
-  /// 策略 2：SAE 握手 + HLS 安全播放（回退）
-  ///
-  /// 使用 SAE 密码认证握手建立安全会话
-  /// 服务器使用 ffmpeg 渐进式分片（首个片段即可播放，不等待全部分片完成）
-  /// media_kit (mpv) 播放 HLS 流
   Future<void> _tryHlsStreaming() async {
     setState(() {
       _loadingStatus = '正在执行 SAE 安全握手...';
-      _playbackMode = 'hls';
     });
 
-    debugPrint('[VideoPlayer] Starting SAE handshake for HLS fallback...');
+    debugPrint('[VideoPlayer] Starting SAE handshake for secure HLS...');
 
     final handshakeService = SaeHandshakeService(
       baseUrl: widget.baseUrl,
@@ -288,36 +130,79 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     );
 
     final filePath = widget.filePath ?? '';
-    final (sessionId, _) = await handshakeService.performHandshake(
-      filePath: filePath,
-      password: _userPassword!,
-      userId: _userId!,
-    );
 
-    _hlsSessionId = sessionId;
+    // ── Step 1: SAE 握手 + ZKP 注册 ────────────────────────
+    late final String sessionId;
+    late final Uint8List pmk;
+    late final dynamic zkpRegistration;
 
-    // 渐进式分片 - 服务器使用 -hls_playlist_type event，首个片段可用即返回
-    final playlistUrl =
-        '${widget.baseUrl}/api/v1/secure-hls/$_hlsSessionId/playlist.m3u8';
+    try {
+      final result = await handshakeService.performHandshake(
+        filePath: filePath,
+        password: _userPassword!,
+        userId: _userId!,
+      );
 
-    debugPrint('[VideoPlayer] HLS session: $_hlsSessionId');
-    debugPrint('[VideoPlayer] Playlist URL: $playlistUrl');
+      sessionId = result.$1;
+      pmk = result.$2;
+      zkpRegistration = result.$3;
+      _hlsSessionId = sessionId;
+    } catch (e) {
+      debugPrint('[VideoPlayer] SAE handshake failed: $e');
+      _setError('SAE 安全握手失败: ${_formatError(e.toString())}');
+      return;
+    }
 
-    // 等待播放列表就绪（渐进式分片后通常 2-5 秒即可）
+    debugPrint('[VideoPlayer] HLS session: $sessionId');
+
+    // ── Step 2: 启动本地安全代理 ────────────────────────────
+    //
+    // 本地代理在 127.0.0.1:{随机端口} 上运行，完成：
+    //   1. 拦截 media_kit 对 .ts 段的 GET 请求
+    //   2. 为每个段生成 Bulletproofs ZKP 证明
+    //   3. 使用 POST + ZKP 证明向后端请求加密段
+    //   4. 使用 AES-256-GCM 解密段
+    //   5. 返回明文 MPEG-TS 数据给 media_kit/libmpv
+    //
+    // 这样保证：
+    //   - 每个段在传输过程中以 AES-256-GCM 加密（不可破解）
+    //   - 每个段经过 Bulletproofs ZKP 验证（防篡改）
+    //   - 渐进式传输（代理按段逐个处理）
+    //   - libmpv 只接收已验证的明文段（通过 127.0.0.1 本地环回）
+
+    if (!mounted) return;
+    setState(() => _loadingStatus = '正在启动安全传输代理...');
+
+    late final String proxyPlaylistUrl;
+    try {
+      _hlsProxy = SecureHlsProxyServer(
+        baseUrl: widget.baseUrl,
+        sessionId: sessionId,
+        pmk: pmk,
+        password: _userPassword!,
+        zkpRegistration: zkpRegistration,
+        jwtToken: _authToken,
+      );
+      proxyPlaylistUrl = await _hlsProxy!.start();
+      debugPrint('[VideoPlayer] Proxy started: $proxyPlaylistUrl');
+    } catch (e) {
+      debugPrint('[VideoPlayer] Proxy start failed: $e');
+      _setError('安全代理启动失败: ${_formatError(e.toString())}');
+      return;
+    }
+
+    // ── Step 3: 等待首个分片就绪（渐进式分片） ───────────────
+    if (!mounted) return;
     setState(() => _loadingStatus = '正在等待视频分片...');
 
+    // 通过代理检查播放列表（代理会透传服务端的播放列表并改写 URL）
     bool playlistReady = false;
-    for (int i = 0; i < 60; i++) {
+    for (int i = 0; i < 30; i++) {
       if (!mounted) return;
 
       try {
         final checkResponse = await http.get(
-          Uri.parse(playlistUrl),
-          headers: {
-            'Authorization': 'Bearer $_authToken',
-            'Accept': 'application/vnd.apple.mpegurl, */*',
-            'User-Agent': 'RockZeroOS/1.0',
-          },
+          Uri.parse(proxyPlaylistUrl),
         ).timeout(const Duration(seconds: 5));
 
         if (checkResponse.statusCode == 200) {
@@ -337,41 +222,125 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
             '[VideoPlayer] HLS playlist check failed: $e, waiting... (${i + 1}s)');
       }
 
-      await Future.delayed(const Duration(seconds: 1));
+      if (i < 5) {
+        await Future.delayed(const Duration(milliseconds: 500));
+      } else {
+        await Future.delayed(const Duration(seconds: 1));
+      }
+
+      if (mounted) {
+        setState(() {
+          _loadingStatus = '正在等待视频分片... (${i + 1}s)';
+        });
+      }
     }
 
     if (!playlistReady) {
-      throw Exception('播放列表生成超时（已等待 60 秒），请检查服务器 ffmpeg 配置');
+      _setError('播放列表生成超时（已等待 30 秒），请检查服务器 ffmpeg 配置');
+      return;
     }
 
     if (!mounted) return;
 
     setState(() => _loadingStatus = '正在初始化播放器...');
 
+    // ── Step 4: 创建 media_kit 播放器 ────────────────────────
     _player = Player(
       configuration: const PlayerConfiguration(
-        bufferSize: 64 * 1024 * 1024, // 64MB 缓冲
+        bufferSize: 64 * 1024 * 1024,
       ),
     );
+
+    // libmpv 专用属性：优化 HLS 流播放
+    if (_player!.platform is NativePlayer) {
+      final mpv = _player!.platform as NativePlayer;
+      await mpv.setProperty('demuxer-max-bytes', '64MiB');
+      await mpv.setProperty('demuxer-readahead-secs', '10');
+      await mpv.setProperty('cache', 'yes');
+      await mpv.setProperty('cache-secs', '30');
+    }
 
     _videoController = VideoController(_player!);
     _setupPlayerListeners();
 
+    // 监听播放错误
+    final errorCompleter = Completer<String?>();
+    StreamSubscription<String>? errorSub;
+    errorSub = _player!.stream.error.listen((error) {
+      if (error.isNotEmpty && !errorCompleter.isCompleted) {
+        errorCompleter.complete(error);
+        errorSub?.cancel();
+      }
+    });
+
+    // 监听成功开始播放
+    final playingCompleter = Completer<bool>();
+    StreamSubscription<bool>? playingSub;
+    playingSub = _player!.stream.playing.listen((playing) {
+      if (playing && !playingCompleter.isCompleted) {
+        playingCompleter.complete(true);
+        playingSub?.cancel();
+      }
+    });
+
+    // 监听时长获取（表示媒体元数据已解析）
+    final durationCompleter = Completer<bool>();
+    StreamSubscription<Duration>? durationSub;
+    durationSub = _player!.stream.duration.listen((dur) {
+      if (dur.inMilliseconds > 0 && !durationCompleter.isCompleted) {
+        durationCompleter.complete(true);
+        durationSub?.cancel();
+      }
+    });
+
+    // ── 通过本地安全代理播放 ──────────────────────────────────
+    //
+    // media_kit → GET http://127.0.0.1:{port}/segment_N.ts
+    //          → 代理生成 Bulletproofs ZKP 证明
+    //          → POST 到后端（带 ZKP 证明）
+    //          → 接收 AES-256-GCM 加密段
+    //          → 解密 → 返回明文给 media_kit
+    //
+    // 整条链路保证每个字节在公网传输时都被 AES-256-GCM 加密
+    // 只有 127.0.0.1 本地环回是明文（不经过网络）
     await _player!.open(
-      Media(
-        playlistUrl,
-        httpHeaders: {
-          'Authorization': 'Bearer $_authToken',
-        },
-      ),
+      Media(proxyPlaylistUrl),
       play: true,
     );
 
-    if (mounted) {
-      setState(() => _isLoading = false);
+    // 等待播放信号、时长信号或错误，超时 25 秒
+    final result = await Future.any([
+      playingCompleter.future.then((_) => 'playing'),
+      durationCompleter.future.then((_) => 'duration_ready'),
+      errorCompleter.future.then((e) => 'error:$e'),
+      Future.delayed(const Duration(seconds: 25), () => 'timeout'),
+    ]);
+
+    errorSub.cancel();
+    playingSub.cancel();
+    durationSub.cancel();
+
+    if (result == 'playing' || result == 'duration_ready') {
+      debugPrint('[VideoPlayer] HLS playback started successfully ($result)');
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+      return;
     }
 
-    debugPrint('[VideoPlayer] HLS player initialized successfully');
+    if (result == 'timeout') {
+      // 超时但无错误 — 仍然显示播放器（可能在缓冲大文件）
+      debugPrint(
+          '[VideoPlayer] HLS playback timeout but no error — showing player');
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+      return;
+    }
+
+    // 播放器报错
+    debugPrint('[VideoPlayer] HLS playback error: $result');
+    _setError('播放失败: ${_formatError(result.toString())}');
   }
 
   void _setupPlayerListeners() {
@@ -443,18 +412,18 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   }
 
   Future<void> _retry() async {
+    await _hlsProxy?.stop();
+    _hlsProxy = null;
     await _cleanupHlsSession();
     _cancelSubscriptions();
     await _player?.stop();
     await _player?.dispose();
     _player = null;
     _videoController = null;
-    _playbackMode = 'direct';
     await _initPlayer();
   }
 
   Future<void> _cleanupHlsSession() async {
-    // 停止 HLS 会话
     if (_hlsSessionId != null && _authToken != null) {
       try {
         await http.post(
@@ -474,6 +443,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     _hideControlsTimer?.cancel();
     _cancelSubscriptions();
     _player?.dispose();
+    _hlsProxy?.stop();
     _cleanupHlsSession();
     _exitFullscreen();
     WakelockPlus.disable();
@@ -510,8 +480,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     ]);
     ref.read(bottomNavVisibleProvider.notifier).show();
   }
-
-  // ============ 播放控制 ============
 
   void _togglePlayPause() {
     if (_player == null) return;
@@ -798,35 +766,27 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
-                  color: _playbackMode == 'direct'
-                      ? Colors.blue.withValues(alpha: 0.25)
-                      : Colors.green.withValues(alpha: 0.25),
+                  color: Colors.green.withValues(alpha: 0.25),
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                    color: _playbackMode == 'direct'
-                        ? Colors.blue.withValues(alpha: 0.5)
-                        : Colors.green.withValues(alpha: 0.5),
+                    color: Colors.green.withValues(alpha: 0.5),
                     width: 1,
                   ),
                 ),
-                child: Row(
+                child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
                       Icons.lock_rounded,
                       size: 14,
-                      color: _playbackMode == 'direct'
-                          ? Colors.lightBlueAccent
-                          : Colors.greenAccent,
+                      color: Colors.greenAccent,
                     ),
-                    const SizedBox(width: 4),
+                    SizedBox(width: 4),
                     Text(
-                      _playbackMode == 'direct' ? 'AES256' : 'SAE+AES256',
+                      'SAE+AES256',
                       style: TextStyle(
                         fontSize: 11,
-                        color: _playbackMode == 'direct'
-                            ? Colors.lightBlueAccent
-                            : Colors.greenAccent,
+                        color: Colors.greenAccent,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -1017,16 +977,12 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
   /// 显示加密协议详情弹窗 — 带流水线动画
   void _showEncryptionDetails() {
-    final isHls = _playbackMode != 'direct';
-    final sessionId = _hlsSessionId;
-
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) => _EncryptionPipelineSheet(
-        isHls: isHls,
-        sessionId: sessionId,
+        sessionId: _hlsSessionId,
       ),
     );
   }
@@ -1090,11 +1046,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           const SizedBox(height: 16),
           Text(_loadingStatus, style: const TextStyle(color: Colors.white)),
           const SizedBox(height: 8),
-          Text(
-            _playbackMode == 'direct'
-                ? '正在尝试直接流式播放...'
-                : '直连失败 → SAE 握手 → HLS 分片播放',
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          const Text(
+            'SAE 安全握手 → Bulletproofs ZKP → AES-256 分片加密',
+            style: TextStyle(color: Colors.white54, fontSize: 12),
             textAlign: TextAlign.center,
           ),
         ],
@@ -1190,11 +1144,9 @@ class _ProtocolNode {
 
 /// 动画加密详情面板 —— 工厂流水线风格
 class _EncryptionPipelineSheet extends StatefulWidget {
-  final bool isHls;
   final String? sessionId;
 
   const _EncryptionPipelineSheet({
-    required this.isHls,
     this.sessionId,
   });
 
@@ -1247,10 +1199,10 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
       final end = endFraction.clamp(0.0, 1.0);
 
       _slideAnimations.add(
-        Tween<double>(begin: 60.0, end: 0.0).animate(
+        Tween<double>(begin: 40.0, end: 0.0).animate(
           CurvedAnimation(
             parent: _masterController,
-            curve: Interval(start, end, curve: Curves.easeOutCubic),
+            curve: Interval(start, end, curve: Curves.easeOutExpo),
           ),
         ),
       );
@@ -1258,7 +1210,7 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
         Tween<double>(begin: 0.0, end: 1.0).animate(
           CurvedAnimation(
             parent: _masterController,
-            curve: Interval(start, end, curve: Curves.easeOut),
+            curve: Interval(start, end, curve: Curves.easeOutCubic),
           ),
         ),
       );
@@ -1294,22 +1246,20 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
       }
     }
 
-    // ---- 盾牌脉冲 ----
     _shieldPulseController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1800),
+      duration: const Duration(milliseconds: 2400),
     )..repeat(reverse: true);
 
-    // ---- 数据粒子 ----
     _particleController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2400),
+      duration: const Duration(milliseconds: 3200),
     )..repeat();
 
-    // ---- 光效 ----
+    // ---- 光效（柔和渐变） ----
     _glowController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2000),
+      duration: const Duration(milliseconds: 2800),
     )..repeat(reverse: true);
 
     // 启动主时间线
@@ -1317,42 +1267,36 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
   }
 
   List<_ProtocolNode> _buildNodes() {
-    final List<_ProtocolNode> nodes = [];
-    nodes.add(_ProtocolNode(
-      icon: Icons.vpn_key_rounded,
-      title: '密钥交换',
-      subtitle: widget.isHls
-          ? 'WPA3-SAE (Simultaneous Authentication of Equals)'
-          : 'JWT Token + Blake3 HKDF',
-      detail: widget.isHls
-          ? 'Dragonfly 密钥交换协议，抵抗离线字典攻击'
-          : '基于 Blake3 的密钥派生函数生成会话密钥',
-      color: Colors.orangeAccent,
-    ));
-    if (widget.isHls) {
-      nodes.add(const _ProtocolNode(
+    return const [
+      _ProtocolNode(
+        icon: Icons.vpn_key_rounded,
+        title: '密钥交换',
+        subtitle: 'WPA3-SAE (Simultaneous Authentication of Equals)',
+        detail: 'Dragonfly 密钥交换协议，抵抗离线字典攻击',
+        color: Colors.orangeAccent,
+      ),
+      _ProtocolNode(
         icon: Icons.verified_user_rounded,
         title: '零知识证明',
         subtitle: 'Bulletproofs Range Proof',
         detail: '每个分片请求附带 ZKP 证明，服务端验证访问权限而无需暴露凭据',
         color: Colors.purpleAccent,
-      ));
-    }
-    nodes.add(const _ProtocolNode(
-      icon: Icons.lock_rounded,
-      title: '数据加密',
-      subtitle: 'AES-256-GCM (Galois/Counter Mode)',
-      detail: '每个数据块使用唯一 nonce 加密，提供认证加密和完整性保护',
-      color: Colors.cyanAccent,
-    ));
-    nodes.add(const _ProtocolNode(
-      icon: Icons.fingerprint_rounded,
-      title: '完整性校验',
-      subtitle: 'Blake3 Cryptographic Hash',
-      detail: '所有传输数据使用 Blake3 哈希验证完整性，防止篡改',
-      color: Colors.tealAccent,
-    ));
-    return nodes;
+      ),
+      _ProtocolNode(
+        icon: Icons.lock_rounded,
+        title: '数据加密',
+        subtitle: 'AES-256-GCM (Galois/Counter Mode)',
+        detail: '每个数据块使用唯一 nonce 加密，提供认证加密和完整性保护',
+        color: Colors.cyanAccent,
+      ),
+      _ProtocolNode(
+        icon: Icons.fingerprint_rounded,
+        title: '完整性校验',
+        subtitle: 'Blake3 Cryptographic Hash',
+        detail: '所有传输数据使用 Blake3 哈希验证完整性，防止篡改',
+        color: Colors.tealAccent,
+      ),
+    ];
   }
 
   @override
@@ -1398,7 +1342,8 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
               // 流水线节点列表
               ..._buildPipelineNodes(),
               // 会话信息卡
-              if (widget.isHls && widget.sessionId != null) ...[
+              // 会话信息卡
+              if (widget.sessionId != null) ...[
                 const SizedBox(height: 20),
                 _buildSessionInfo(),
               ],
@@ -1411,8 +1356,7 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
 
   /// 盾牌标题 — 带脉冲光效
   Widget _buildAnimatedHeader() {
-    final themeColor =
-        widget.isHls ? Colors.greenAccent : Colors.lightBlueAccent;
+    const themeColor = Colors.greenAccent;
     return AnimatedBuilder(
       animation: _shieldPulseController,
       builder: (context, child) {
@@ -1453,14 +1397,10 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
   }
 
   Widget _buildSubtitleRow() {
-    final themeColor =
-        widget.isHls ? Colors.greenAccent : Colors.lightBlueAccent;
-    return Text(
-      widget.isHls
-          ? 'SAE + Bulletproofs ZKP + AES-256-GCM'
-          : 'AES-256-GCM + Blake3 密钥派生',
+    return const Text(
+      'SAE + Bulletproofs ZKP + AES-256-GCM',
       style: TextStyle(
-        color: themeColor,
+        color: Colors.greenAccent,
         fontSize: 13,
         fontWeight: FontWeight.w500,
       ),
@@ -1810,18 +1750,23 @@ class _PipelineConnectorPainter extends CustomPainter {
 
     canvas.drawLine(Offset(centerX, top), Offset(centerX, bottom), glowPaint);
 
-    // 流动粒子（3 个粒子沿管道上下流动）
-    if (progress > 0.5) {
-      for (int i = 0; i < 3; i++) {
-        final phase = (particlePhase + i / 3.0) % 1.0;
-        final y = top + (bottom - top) * phase;
-        final opacity = (1.0 - (phase - 0.5).abs() * 2).clamp(0.0, 1.0);
+    // 流动粒子（5 个粒子沿管道流动，使用正弦曲线实现流畅运动）
+    if (progress > 0.3) {
+      for (int i = 0; i < 5; i++) {
+        final phase = (particlePhase + i / 5.0) % 1.0;
+        // 使用 sin 曲线让粒子在端点减速，中间加速（更自然的流动感）
+        final easedPhase = 0.5 - 0.5 * cos(phase * pi);
+        final y = top + (bottom - top) * easedPhase;
+        // 使用 sin² 曲线平滑淡入淡出
+        final opacity = sin(phase * pi);
         final blendColor = Color.lerp(fromColor, toColor, phase)!;
+        // 粒子大小随位置变化（中间最大）
+        final radius = 2.0 + opacity * 1.5;
         final particlePaint = Paint()
-          ..color = blendColor.withValues(alpha: opacity * 0.8)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+          ..color = blendColor.withValues(alpha: opacity * 0.7)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.5);
 
-        canvas.drawCircle(Offset(centerX, y), 3, particlePaint);
+        canvas.drawCircle(Offset(centerX, y), radius, particlePaint);
       }
     }
 
