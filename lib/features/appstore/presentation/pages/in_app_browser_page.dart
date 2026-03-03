@@ -15,6 +15,7 @@ class InAppBrowserPage extends StatefulWidget {
   final String? initialUrl;
   final String title;
   final String? iconUrl;
+
   /// 嵌入模式：不显示 Scaffold / AppBar，仅显示 WebView 内容
   final bool embedded;
 
@@ -179,7 +180,9 @@ class _InAppBrowserPageState extends State<InAppBrowserPage> {
 
       setState(() => _controller = controller);
 
-      controller.loadRequest(Uri.parse(widget.initialUrl ?? widget.url)).catchError((e) {
+      controller
+          .loadRequest(Uri.parse(widget.initialUrl ?? widget.url))
+          .catchError((e) {
         if (mounted) {
           setState(() {
             _error = 'Failed to load: $e';
@@ -448,8 +451,8 @@ class _InAppBrowserPageState extends State<InAppBrowserPage> {
               ),
               IconButton(
                 icon: const Icon(Icons.home_rounded),
-                onPressed: () => _controller?.loadRequest(
-                    Uri.parse(widget.initialUrl ?? widget.url)),
+                onPressed: () => _controller
+                    ?.loadRequest(Uri.parse(widget.initialUrl ?? widget.url)),
                 tooltip: 'Home',
               ),
               IconButton(

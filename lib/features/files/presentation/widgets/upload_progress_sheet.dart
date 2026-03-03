@@ -59,22 +59,19 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
             u.status == DownloadStatus.downloading ||
             u.status == DownloadStatus.pending)
         .toList();
-    final completedUploads = allUploads
-        .where((u) => u.status == DownloadStatus.completed)
-        .toList();
-    final failedUploads = allUploads
-        .where((u) => u.status == DownloadStatus.failed)
-        .toList();
+    final completedUploads =
+        allUploads.where((u) => u.status == DownloadStatus.completed).toList();
+    final failedUploads =
+        allUploads.where((u) => u.status == DownloadStatus.failed).toList();
 
     // 计算整体进度
     double overallProgress = 0;
     if (allUploads.isNotEmpty) {
       final total = allUploads.length;
       final done = completedUploads.length;
-      final activeProgress = activeUploads.fold<double>(
-          0.0, (sum, u) => sum + u.progress);
-      overallProgress =
-          (done + activeProgress) / total;
+      final activeProgress =
+          activeUploads.fold<double>(0.0, (sum, u) => sum + u.progress);
+      overallProgress = (done + activeProgress) / total;
     }
 
     return Container(
@@ -103,8 +100,7 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
             ),
 
             // 标题区
-            _buildHeader(
-                colorScheme, activeUploads.length, overallProgress),
+            _buildHeader(colorScheme, activeUploads.length, overallProgress),
 
             const SizedBox(height: 12),
 
@@ -321,8 +317,7 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
             : Icons.cloud_upload_rounded;
 
     final speed = upload.uploadSpeed;
-    final speedStr =
-        speed > 0 && isActive ? '${_formatBytes(speed)}/s' : '';
+    final speedStr = speed > 0 && isActive ? '${_formatBytes(speed)}/s' : '';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),

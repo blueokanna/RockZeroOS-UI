@@ -856,8 +856,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
               itemBuilder: (context, index) {
                 final game = games[index] as Map<String, dynamic>;
                 return _LibraryGameTile(game: game).animate().fadeIn(
-                      delay: Duration(
-                          milliseconds: (index * 30).clamp(0, 500)),
+                      delay: Duration(milliseconds: (index * 30).clamp(0, 500)),
                       duration: 200.ms,
                     );
               },
@@ -2488,8 +2487,8 @@ class _PlatformLoginCard extends StatelessWidget {
                         color: Colors.green,
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(Icons.check, size: 10,
-                          color: Colors.white),
+                      child: const Icon(Icons.check,
+                          size: 10, color: Colors.white),
                     ),
                   ),
               ],
@@ -2509,7 +2508,8 @@ class _PlatformLoginCard extends StatelessWidget {
               isConnected ? '已连接' : '登录',
               style: TextStyle(
                 fontSize: 9,
-                color: isConnected ? Colors.green : colorScheme.onSurfaceVariant,
+                color:
+                    isConnected ? Colors.green : colorScheme.onSurfaceVariant,
                 fontWeight: isConnected ? FontWeight.w600 : FontWeight.normal,
               ),
             ),

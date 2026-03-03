@@ -17,7 +17,6 @@ import '../../../../core/widgets/shell_scaffold.dart';
 import '../../../../services/sae_handshake_service.dart';
 import '../../../../services/secure_hls_proxy.dart';
 
-
 class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
   final String? filePath;
   final String? fileId;
@@ -201,9 +200,11 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       if (!mounted) return;
 
       try {
-        final checkResponse = await http.get(
-          Uri.parse(proxyPlaylistUrl),
-        ).timeout(const Duration(seconds: 5));
+        final checkResponse = await http
+            .get(
+              Uri.parse(proxyPlaylistUrl),
+            )
+            .timeout(const Duration(seconds: 5));
 
         if (checkResponse.statusCode == 200) {
           final content = checkResponse.body;

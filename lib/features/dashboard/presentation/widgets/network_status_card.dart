@@ -126,7 +126,8 @@ class NetworkStatusCard extends ConsumerWidget {
     );
   }
 
-  Widget _buildContent(BuildContext context, NetworkInfo info, {String? publicIp}) {
+  Widget _buildContent(BuildContext context, NetworkInfo info,
+      {String? publicIp}) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
@@ -363,7 +364,8 @@ class NetworkStatusCard extends ConsumerWidget {
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: colorScheme.primaryContainer.withValues(alpha: 0.5),
+                          color: colorScheme.primaryContainer
+                              .withValues(alpha: 0.5),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(

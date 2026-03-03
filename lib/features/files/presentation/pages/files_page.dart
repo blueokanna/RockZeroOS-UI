@@ -316,8 +316,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
         disks.where((d) => d.mountPoint != 'Not mounted').toList();
 
     // 检查是否在某个磁盘的挂载点根目录
-    final isAtDiskRoot =
-        mountedDisks.any((d) => currentPath == d.mountPoint);
+    final isAtDiskRoot = mountedDisks.any((d) => currentPath == d.mountPoint);
     if (isAtDiskRoot) {
       // 从磁盘根目录 → 直接返回 Storage 视图
       ref.read(currentPathProvider.notifier).setPath('');
@@ -336,18 +335,13 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
     if (currentDisk != null) {
       // 在磁盘内部 → 导航到上级目录（但不超过磁盘根目录）
-      final relativePath =
-          currentPath.substring(currentDisk.mountPoint.length);
-      final parts =
-          relativePath.split('/').where((p) => p.isNotEmpty).toList();
+      final relativePath = currentPath.substring(currentDisk.mountPoint.length);
+      final parts = relativePath.split('/').where((p) => p.isNotEmpty).toList();
       if (parts.length <= 1) {
         // 回到磁盘根目录
-        ref
-            .read(currentPathProvider.notifier)
-            .setPath(currentDisk.mountPoint);
+        ref.read(currentPathProvider.notifier).setPath(currentDisk.mountPoint);
       } else {
-        final parentRelative =
-            parts.sublist(0, parts.length - 1).join('/');
+        final parentRelative = parts.sublist(0, parts.length - 1).join('/');
         ref
             .read(currentPathProvider.notifier)
             .setPath('${currentDisk.mountPoint}/$parentRelative');
@@ -622,8 +616,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
       // 获取相对于磁盘根目录的路径部分
       if (path != currentDisk.mountPoint) {
-        final relativePath =
-            path.substring(currentDisk.mountPoint.length);
+        final relativePath = path.substring(currentDisk.mountPoint.length);
         final relParts =
             relativePath.split('/').where((p) => p.isNotEmpty).toList();
         for (int i = 0; i < relParts.length; i++) {
@@ -693,8 +686,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     Icon(
                       Icons.chevron_right_rounded,
                       size: 20,
-                      color: colorScheme.onSurfaceVariant
-                          .withValues(alpha: 0.5),
+                      color:
+                          colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                     ),
                     PopupMenuButton<int>(
                       child: Container(
@@ -738,9 +731,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
                       ),
                     ),
                     // 显示最后两个片段
-                    ...crumbs
-                        .sublist(crumbs.length - 2)
-                        .map((crumb) {
+                    ...crumbs.sublist(crumbs.length - 2).map((crumb) {
                       return Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -2750,15 +2741,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
     }
 
     // 递归列出所有文件
-    final allFiles = dir
-        .listSync(recursive: true)
-        .whereType<File>()
-        .where((f) {
-          // 过滤隐藏文件和系统文件
-          final name = f.path.split(RegExp(r'[/\\]')).last;
-          return !name.startsWith('.');
-        })
-        .toList();
+    final allFiles = dir.listSync(recursive: true).whereType<File>().where((f) {
+      // 过滤隐藏文件和系统文件
+      final name = f.path.split(RegExp(r'[/\\]')).last;
+      return !name.startsWith('.');
+    }).toList();
 
     if (allFiles.isEmpty) {
       if (mounted) {
@@ -2856,7 +2843,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
         final relativePath =
             file.path.substring(folderPath.length).replaceAll('\\', '/');
         // 获取此文件应上传到的目录路径
-        final targetDir = '$currentPath/$folderName${relativePath.substring(0, relativePath.lastIndexOf('/'))}';
+        final targetDir =
+            '$currentPath/$folderName${relativePath.substring(0, relativePath.lastIndexOf('/'))}';
 
         await api.uploadToDirectory(
           targetDir,

@@ -806,8 +806,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
 
                   // 精选推荐（仅在未筛选分类时展示）
                   if (_selectedCategory == null && _searchQuery.isEmpty) ...[
-                    _buildSectionTitle(
-                        '精选推荐', Icons.star_rounded, cs, tt),
+                    _buildSectionTitle('精选推荐', Icons.star_rounded, cs, tt),
                     const SizedBox(height: 10),
                     _buildFeaturedCarousel(cs, tt),
                     const SizedBox(height: 24),
@@ -823,12 +822,11 @@ class _PlatformGameTabState extends State<PlatformGameTab>
 
                     // 收藏游戏
                     if (_savedGameIds.isNotEmpty) ...[
-                      _buildSectionTitle(
-                          '我的收藏', Icons.favorite_rounded, cs, tt,
+                      _buildSectionTitle('我的收藏', Icons.favorite_rounded, cs, tt,
                           trailing: Text(
                             '${_savedGameIds.length} 款',
-                            style: tt.labelMedium?.copyWith(
-                                color: cs.onSurfaceVariant),
+                            style: tt.labelMedium
+                                ?.copyWith(color: cs.onSurfaceVariant),
                           )),
                       const SizedBox(height: 10),
                       _buildSavedGamesRow(cs, tt),
@@ -852,8 +850,8 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                     tt,
                     trailing: Text(
                       '${displayGames.length} 款',
-                      style: tt.labelMedium
-                          ?.copyWith(color: cs.onSurfaceVariant),
+                      style:
+                          tt.labelMedium?.copyWith(color: cs.onSurfaceVariant),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -872,7 +870,8 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                         children: [
                           Icon(Icons.search_off_rounded,
                               size: 48,
-                              color: cs.onSurfaceVariant.withValues(alpha: 0.4)),
+                              color:
+                                  cs.onSurfaceVariant.withValues(alpha: 0.4)),
                           const SizedBox(height: 12),
                           Text(
                             _searchQuery.isNotEmpty
@@ -890,8 +889,8 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
                   sliver: SliverList.builder(
                     itemCount: displayGames.length,
-                    itemBuilder: (context, index) => _buildGameListItem(
-                        displayGames[index], cs, tt, index),
+                    itemBuilder: (context, index) =>
+                        _buildGameListItem(displayGames[index], cs, tt, index),
                   ),
                 ),
         ],
@@ -1111,8 +1110,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
         scrollDirection: Axis.horizontal,
         children: [
           _buildChip('全部', null, cs),
-          ..._config.categories
-              .map((cat) => _buildChip(cat.name, cat, cs)),
+          ..._config.categories.map((cat) => _buildChip(cat.name, cat, cs)),
         ],
       ),
     );
@@ -1184,16 +1182,15 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                   children: [
                     Text(
                       game.name,
-                      style: tt.titleSmall
-                          ?.copyWith(fontWeight: FontWeight.w600),
+                      style:
+                          tt.titleSmall?.copyWith(fontWeight: FontWeight.w600),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 3),
                     Text(
                       game.developer,
-                      style: tt.bodySmall
-                          ?.copyWith(color: cs.onSurfaceVariant),
+                      style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
                     ),
                     const SizedBox(height: 6),
                     Row(
@@ -1222,8 +1219,8 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
                       color: game.isFree
                           ? Colors.green.withValues(alpha: 0.15)
@@ -1252,9 +1249,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                             ? Icons.favorite_rounded
                             : Icons.favorite_border_rounded,
                         size: 22,
-                        color: isSaved
-                            ? Colors.redAccent
-                            : cs.onSurfaceVariant,
+                        color: isSaved ? Colors.redAccent : cs.onSurfaceVariant,
                       ),
                     ),
                   ),
@@ -1328,8 +1323,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
         builder: (_, scrollController) => Container(
           decoration: BoxDecoration(
             color: cs.surface,
-            borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(24)),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           ),
           child: Column(
             children: [
@@ -1368,8 +1362,8 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                     // 描述
                     Text(
                       '游戏简介',
-                      style: tt.titleSmall
-                          ?.copyWith(fontWeight: FontWeight.w600),
+                      style:
+                          tt.titleSmall?.copyWith(fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(height: 8),
                     Text(
@@ -1420,8 +1414,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
             top: 12,
             left: 12,
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
                 color: Colors.black26,
                 borderRadius: BorderRadius.circular(8),
@@ -1448,8 +1441,8 @@ class _PlatformGameTabState extends State<PlatformGameTab>
               top: 12,
               right: 12,
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 5),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
                   color: Colors.green,
                   borderRadius: BorderRadius.circular(8),
@@ -1479,14 +1472,12 @@ class _PlatformGameTabState extends State<PlatformGameTab>
             children: [
               Text(
                 game.name,
-                style: tt.headlineSmall
-                    ?.copyWith(fontWeight: FontWeight.bold),
+                style: tt.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 4),
               Text(
                 game.developer,
-                style: tt.bodyMedium
-                    ?.copyWith(color: cs.onSurfaceVariant),
+                style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
               ),
             ],
           ),
@@ -1494,15 +1485,13 @@ class _PlatformGameTabState extends State<PlatformGameTab>
         FilledButton(
           onPressed: () {},
           style: FilledButton.styleFrom(
-            backgroundColor:
-                game.isFree ? Colors.green : _config.brandColor,
+            backgroundColor: game.isFree ? Colors.green : _config.brandColor,
             foregroundColor: Colors.white,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
           ),
-          child:
-              Text(game.isFree ? '免费游玩' : (game.price ?? '获取')),
+          child: Text(game.isFree ? '免费游玩' : (game.price ?? '获取')),
         ),
       ],
     );
@@ -1512,29 +1501,26 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     return Row(
       children: [
         Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
             color: Colors.amber.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(10),
           ),
           child: Row(
             children: [
-              const Icon(Icons.star_rounded,
-                  size: 18, color: Colors.amber),
+              const Icon(Icons.star_rounded, size: 18, color: Colors.amber),
               const SizedBox(width: 4),
               Text(
                 game.rating.toStringAsFixed(1),
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 15),
+                style:
+                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
               ),
             ],
           ),
         ),
         const SizedBox(width: 10),
         Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
             color: _config.brandColor.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(10),
@@ -1554,9 +1540,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
             final saved = _savedGameIds.contains(game.id);
             return IconButton(
               icon: Icon(
-                saved
-                    ? Icons.favorite_rounded
-                    : Icons.favorite_border_rounded,
+                saved ? Icons.favorite_rounded : Icons.favorite_border_rounded,
                 color: saved ? Colors.redAccent : cs.onSurfaceVariant,
               ),
               onPressed: () {
@@ -1588,12 +1572,10 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     );
   }
 
-  Widget _buildDetailInfoCard(
-      GameData game, ColorScheme cs, TextTheme tt) {
+  Widget _buildDetailInfoCard(GameData game, ColorScheme cs, TextTheme tt) {
     return Card(
       elevation: 0,
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -1611,8 +1593,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
             const Divider(height: 20),
             _detailInfoRow('平台', _config.name, tt, cs),
             const Divider(height: 20),
-            _detailInfoRow(
-                '评分', '${game.rating}/5.0', tt, cs),
+            _detailInfoRow('评分', '${game.rating}/5.0', tt, cs),
           ],
         ),
       ),
@@ -1628,12 +1609,9 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label,
-            style: tt.bodyMedium
-                ?.copyWith(color: cs.onSurfaceVariant)),
+        Text(label, style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
         Text(value,
-            style:
-                tt.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+            style: tt.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
       ],
     );
   }
@@ -1688,12 +1666,11 @@ class _FeaturedGameCard extends StatelessWidget {
                     right: -10,
                     bottom: -10,
                     child: Icon(game.coverIcon,
-                        size: 100,
-                        color: Colors.white.withValues(alpha: 0.08)),
+                        size: 100, color: Colors.white.withValues(alpha: 0.08)),
                   ),
                   Center(
-                    child: Icon(game.coverIcon,
-                        size: 40, color: Colors.white60),
+                    child:
+                        Icon(game.coverIcon, size: 40, color: Colors.white60),
                   ),
                   if (game.isFree)
                     Positioned(
@@ -1770,8 +1747,7 @@ class _FeaturedGameCard extends StatelessWidget {
             ),
             // 信息
             Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
                 children: [
                   Expanded(
@@ -1807,9 +1783,7 @@ class _FeaturedGameCard extends StatelessWidget {
                             ? Icons.favorite_rounded
                             : Icons.favorite_border_rounded,
                         size: 20,
-                        color: isSaved
-                            ? Colors.redAccent
-                            : cs.onSurfaceVariant,
+                        color: isSaved ? Colors.redAccent : cs.onSurfaceVariant,
                       ),
                     ),
                   ),
@@ -1866,8 +1840,8 @@ class _CompactGameCard extends StatelessWidget {
               child: Stack(
                 children: [
                   Center(
-                    child: Icon(game.coverIcon,
-                        size: 30, color: Colors.white60),
+                    child:
+                        Icon(game.coverIcon, size: 30, color: Colors.white60),
                   ),
                   if (game.isFree)
                     Positioned(
@@ -1901,15 +1875,14 @@ class _CompactGameCard extends StatelessWidget {
               ),
             ),
             Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     game.name,
-                    style: tt.labelMedium
-                        ?.copyWith(fontWeight: FontWeight.w600),
+                    style:
+                        tt.labelMedium?.copyWith(fontWeight: FontWeight.w600),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
