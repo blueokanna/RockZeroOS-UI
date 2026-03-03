@@ -190,8 +190,7 @@ class SecureHlsPlayer {
     final zkpEnabled = sessionData['zkp_enabled'] ?? false;
     final directMode = sessionData['direct_mode'] ?? false;
 
-    debugPrint(
-        '[SecureHLS] HLS session created: $_sessionId '
+    debugPrint('[SecureHLS] HLS session created: $_sessionId '
         '(ZKP: $zkpEnabled, direct: $directMode)');
 
     // 10. 获取或生成 ZKP 注册数据（完整 Bulletproofs）
