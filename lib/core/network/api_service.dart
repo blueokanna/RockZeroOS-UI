@@ -1387,6 +1387,63 @@ class ApiService {
   Future<void> unregisterPlugin(String pluginId) async {
     await _dio.delete('/api/v1/wasm-store/plugins/$pluginId');
   }
+
+  /// 每日 Top 30 推荐
+  Future<Map<String, dynamic>> getDailyRecommendations() async {
+    final response = await _dio.get('/api/v1/wasm-store/recommendations');
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// Steam 商店搜索
+  Future<Map<String, dynamic>> searchSteamStore(String query) async {
+    final response = await _dio.get(
+      '/api/v1/wasm-store/steam/search',
+      queryParameters: {'q': query},
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 从 GitHub 导入 WASM 模块
+  Future<Map<String, dynamic>> importFromGitHub({
+    required String repoUrl,
+    String? tag,
+    String? assetName,
+    String? name,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/wasm-store/github/import',
+      data: {
+        'repo_url': repoUrl,
+        if (tag != null) 'tag': tag,
+        if (assetName != null) 'asset_name': assetName,
+        if (name != null) 'name': name,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 执行 WASM 脚本（带输出捕获）
+  Future<Map<String, dynamic>> runWasmScript({
+    required String source,
+    String? function,
+    List<String>? args,
+    Map<String, String>? env,
+    int? timeoutSecs,
+    String? stdinData,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/wasm-store/wasm/run-script',
+      data: {
+        'source': source,
+        if (function != null) 'function': function,
+        if (args != null) 'args': args,
+        if (env != null) 'env': env,
+        if (timeoutSecs != null) 'timeout_secs': timeoutSecs,
+        if (stdinData != null) 'stdin_data': stdinData,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
 }
 
 // WebDAV Entry Model

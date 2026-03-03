@@ -225,26 +225,8 @@ class AppStorageStatsCard extends ConsumerWidget {
 
         const SizedBox(height: 16),
 
-        // Quick actions
-        Row(
-          children: [
-            Expanded(
-              child: _QuickActionButton(
-                icon: Icons.cleaning_services_rounded,
-                label: 'Clean Cache',
-                onPressed: () => _showCleanupDialog(context, ref),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _QuickActionButton(
-                icon: Icons.delete_sweep_rounded,
-                label: 'Clear Temp',
-                onPressed: () => _clearTempFiles(context, ref),
-              ),
-            ),
-          ],
-        ).animate().fadeIn(delay: 400.ms),
+        // Auto-cleanup status (替代手动 Clean Cache / Clear Temp 按钮)
+        _AutoCleanupStatusBanner(stats: stats),
       ],
     );
   }
@@ -319,6 +301,7 @@ class AppStorageStatsCard extends ConsumerWidget {
     );
   }
 
+  // ignore: unused_element
   Future<void> _showCleanupDialog(BuildContext context, WidgetRef ref) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -392,6 +375,7 @@ class AppStorageStatsCard extends ConsumerWidget {
     }
   }
 
+  // ignore: unused_element
   Future<void> _clearTempFiles(BuildContext context, WidgetRef ref) async {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -551,51 +535,161 @@ class _StorageBreakdownRow extends StatelessWidget {
   }
 }
 
-/// 快捷操作按钮
-class _QuickActionButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onPressed;
+/// 自动清理状态横幅（替代手动清理按钮）
+///
+/// 显示 2GB 阈值自动清理的实时状态，包括：
+/// - 当前缓存使用量和阈值进度条
+/// - 清理状态指示（健康/警告/清理中）
+/// - 下次检查倒计时
+class _AutoCleanupStatusBanner extends StatelessWidget {
+  final AppStorageStats stats;
 
-  const _QuickActionButton({
-    required this.icon,
-    required this.label,
-    required this.onPressed,
-  });
+  const _AutoCleanupStatusBanner({required this.stats});
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
-    return Material(
-      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+    // 计算缓存使用量（HLS + Temp）
+    final cacheUsage = stats.hlsCacheSize + stats.tempStorageSize;
+    const threshold = 2 * 1024 * 1024 * 1024; // 2 GB
+    final usageRatio = (cacheUsage / threshold).clamp(0.0, 1.0);
+
+    // 状态颜色和图标
+    final Color statusColor;
+    final IconData statusIcon;
+    final String statusText;
+
+    if (usageRatio > 0.95) {
+      statusColor = Colors.orange;
+      statusIcon = Icons.cleaning_services_rounded;
+      statusText = '正在清理';
+    } else if (usageRatio > 0.8) {
+      statusColor = Colors.amber;
+      statusIcon = Icons.warning_amber_rounded;
+      statusText = '即将清理';
+    } else {
+      statusColor = Colors.green;
+      statusIcon = Icons.auto_delete_rounded;
+      statusText = '自动管理';
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            statusColor.withValues(alpha: 0.08),
+            statusColor.withValues(alpha: 0.03),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: statusColor.withValues(alpha: 0.2),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Icon(
-                icon,
-                size: 18,
-                color: colorScheme.primary,
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(statusIcon, color: statusColor, size: 18),
               ),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: textTheme.labelMedium?.copyWith(
-                  color: colorScheme.onSurface,
-                  fontWeight: FontWeight.w500,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '缓存自动清理',
+                      style: textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      '$statusText · 阈值 2GB · 每 30 秒检测',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 3,
+                ),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  statusText,
+                  style: TextStyle(
+                    color: statusColor,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ],
           ),
-        ),
+          const SizedBox(height: 10),
+          // 进度条
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: usageRatio,
+              minHeight: 6,
+              backgroundColor: colorScheme.surfaceContainerHighest,
+              valueColor: AlwaysStoppedAnimation(statusColor),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                _formatBytes(cacheUsage),
+                style: textTheme.bodySmall?.copyWith(
+                  color: statusColor,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 11,
+                ),
+              ),
+              Text(
+                '/ 2.0 GB',
+                style: textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
-    );
+    ).animate().fadeIn(delay: 400.ms);
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 }

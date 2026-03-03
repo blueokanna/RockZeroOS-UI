@@ -88,6 +88,9 @@ dependencies:
   # Screen wake lock
   wakelock_plus: ^1.4.0
 
+  # Biometric authentication (Windows Hello, macOS Touch ID, Linux)
+  local_auth: ^2.3.0
+
   # Desktop window management
   window_manager: ^0.5.1
 
@@ -115,7 +118,8 @@ flutter_launcher_icons:
   image_path: assets/images/RockZero.png
   adaptive_icon_foreground: assets/images/RockZero.png
   adaptive_icon_background: "#1a1a2e"
-  adaptive_icon_padding: 0
+  adaptive_icon_padding: 4
+  adaptive_icon_round: true
   min_sdk_android: 21
   web:
     generate: true

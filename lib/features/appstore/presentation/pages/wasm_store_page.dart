@@ -92,6 +92,19 @@ final steamPlayerProvider = FutureProvider.autoDispose
   }
 });
 
+/// 每日 Top 30 推荐 Provider
+final dailyRecommendationsProvider =
+    FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  final api = ref.read(apiServiceProvider);
+  try {
+    return await api
+        .getDailyRecommendations()
+        .timeout(const Duration(seconds: 20));
+  } catch (e) {
+    return {'items': <dynamic>[], 'total': 0};
+  }
+});
+
 // ============================================================================
 // WASM Store Page - 游戏中心 (Gaming Hub like 小黑盒)
 // ============================================================================
@@ -117,7 +130,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 6, vsync: this);
+    _tabController = TabController(length: 7, vsync: this);
     _loadSteamSettings();
   }
 
@@ -194,6 +207,16 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
               collapseMode: CollapseMode.pin,
             ),
             actions: [
+              IconButton(
+                icon: const Icon(Icons.download_rounded),
+                tooltip: 'GitHub 导入',
+                onPressed: () => _showGitHubImportDialog(),
+              ),
+              IconButton(
+                icon: const Icon(Icons.terminal_rounded),
+                tooltip: 'WASM 脚本执行',
+                onPressed: () => _showRunScriptDialog(),
+              ),
               IconButton(
                 icon: const Icon(Icons.person_search_rounded),
                 tooltip: 'Steam 账号设置',
@@ -273,6 +296,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                       ),
                       tabs: const [
                         Tab(text: '推荐'),
+                        Tab(text: '每日Top30'),
                         Tab(text: '我的游戏库'),
                         Tab(text: 'Steam'),
                         Tab(text: 'Epic 免费'),
@@ -292,6 +316,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                 controller: _tabController,
                 children: [
                   _buildOverviewTab(),
+                  _buildRecommendationsTab(),
                   _buildMyLibraryTab(),
                   _buildSteamTab(),
                   _buildEpicTab(),
@@ -472,13 +497,13 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                         onTap: () {
                           final id = cat['id'] ?? '';
                           if (id == 'steam') {
-                            _tabController.animateTo(2);
-                          } else if (id == 'epic_free') {
                             _tabController.animateTo(3);
-                          } else if (id == 'wasm_apps') {
+                          } else if (id == 'epic_free') {
                             _tabController.animateTo(4);
-                          } else if (id == 'plugins') {
+                          } else if (id == 'wasm_apps') {
                             _tabController.animateTo(5);
+                          } else if (id == 'plugins') {
+                            _tabController.animateTo(6);
                           }
                         },
                       );
@@ -962,6 +987,459 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
         ],
       ),
     ).animate().fadeIn(delay: 200.ms, duration: 300.ms);
+  }
+
+  // ============================================================================
+  // 每日 Top 30 推荐 Tab
+  // ============================================================================
+
+  Widget _buildRecommendationsTab() {
+    final recAsync = ref.watch(dailyRecommendationsProvider);
+
+    return recAsync.when(
+      data: (data) {
+        final items = (data['items'] as List?) ?? [];
+        if (items.isEmpty) {
+          return _buildEmptyState('暂无推荐\n请等待数据同步', Icons.recommend_rounded);
+        }
+        return RefreshIndicator(
+          onRefresh: () async => ref.invalidate(dailyRecommendationsProvider),
+          child: ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: items.length + 1,
+            itemBuilder: (context, index) {
+              if (index == 0) {
+                return _buildRecommendationHeader(items.length);
+              }
+              final game = items[index - 1] as Map<String, dynamic>;
+              return _RecommendationTile(
+                game: game,
+                rank: index,
+              ).animate().fadeIn(
+                    delay: Duration(milliseconds: index * 40),
+                    duration: 250.ms,
+                  );
+            },
+          ),
+        );
+      },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => _buildErrorState('加载推荐失败: $e'),
+    );
+  }
+
+  Widget _buildRecommendationHeader(int total) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.deepOrange.shade700,
+            Colors.orange.shade500,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.local_fire_department_rounded,
+              size: 48, color: Colors.white),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '每日 Top 30 推荐',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '综合 Steam 精选 · Epic 限免 · WASM 应用 · 共 $total 款',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.white.withAlpha(200),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ).animate().fadeIn(duration: 400.ms).slideY(begin: -0.1);
+  }
+
+  // ============================================================================
+  // GitHub 导入对话框
+  // ============================================================================
+
+  void _showGitHubImportDialog() {
+    final repoUrlCtrl = TextEditingController();
+    final tagCtrl = TextEditingController();
+    final nameCtrl = TextEditingController();
+    final colorScheme = Theme.of(context).colorScheme;
+    bool isLoading = false;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.code_rounded, color: colorScheme.primary),
+              const SizedBox(width: 8),
+              const Text('从 GitHub 导入'),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '从 GitHub 仓库的 Release 下载 .wasm 文件',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: repoUrlCtrl,
+                  decoration: InputDecoration(
+                    labelText: '仓库地址',
+                    hintText: 'https://github.com/user/repo',
+                    prefixIcon: const Icon(Icons.link_rounded),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: tagCtrl,
+                  decoration: InputDecoration(
+                    labelText: 'Release Tag（可选，默认 latest）',
+                    hintText: 'v1.0.0',
+                    prefixIcon: const Icon(Icons.sell_rounded),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: nameCtrl,
+                  decoration: InputDecoration(
+                    labelText: '应用名称（可选）',
+                    hintText: '默认使用仓库名',
+                    prefixIcon: const Icon(Icons.label_rounded),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isLoading ? null : () => Navigator.pop(ctx),
+              child: const Text('取消'),
+            ),
+            FilledButton.icon(
+              onPressed: isLoading
+                  ? null
+                  : () async {
+                      final url = repoUrlCtrl.text.trim();
+                      if (url.isEmpty) return;
+                      setDialogState(() => isLoading = true);
+                      try {
+                        final api = ref.read(apiServiceProvider);
+                        final result = await api.importFromGitHub(
+                          repoUrl: url,
+                          tag: tagCtrl.text.trim().isEmpty
+                              ? null
+                              : tagCtrl.text.trim(),
+                          name: nameCtrl.text.trim().isEmpty
+                              ? null
+                              : nameCtrl.text.trim(),
+                        );
+                        if (ctx.mounted) {
+                          Navigator.pop(ctx);
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                  '导入成功: ${result['name']} v${result['version']}'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                          ref.invalidate(wasmStoreOverviewProvider);
+                        }
+                      } catch (e) {
+                        setDialogState(() => isLoading = false);
+                        if (ctx.mounted) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            SnackBar(
+                              content: Text('导入失败: $e'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
+                      }
+                    },
+              icon: isLoading
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.download_rounded),
+              label: Text(isLoading ? '导入中...' : '导入'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ============================================================================
+  // WASM 脚本执行对话框
+  // ============================================================================
+
+  void _showRunScriptDialog() {
+    final sourceCtrl = TextEditingController();
+    final funcCtrl = TextEditingController(text: '_start');
+    final argsCtrl = TextEditingController();
+    final stdinCtrl = TextEditingController();
+    final colorScheme = Theme.of(context).colorScheme;
+    bool isRunning = false;
+    String? stdout;
+    String? stderr;
+    int? elapsedMs;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.terminal_rounded, color: colorScheme.primary),
+              const SizedBox(width: 8),
+              const Text('WASM 脚本执行'),
+            ],
+          ),
+          content: SizedBox(
+            width: 500,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '执行已安装的 WASM 应用或远程 WASM URL',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: sourceCtrl,
+                    decoration: InputDecoration(
+                      labelText: 'WASM 源（app_id 或 URL）',
+                      hintText: 'github-user-repo 或 https://...wasm',
+                      prefixIcon: const Icon(Icons.source_rounded),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: funcCtrl,
+                          decoration: InputDecoration(
+                            labelText: '入口函数',
+                            hintText: '_start',
+                            prefixIcon: const Icon(Icons.functions_rounded),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: argsCtrl,
+                          decoration: InputDecoration(
+                            labelText: '参数（空格分隔）',
+                            hintText: 'arg1 arg2',
+                            prefixIcon: const Icon(Icons.list_rounded),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: stdinCtrl,
+                    maxLines: 3,
+                    decoration: InputDecoration(
+                      labelText: 'stdin 输入（可选）',
+                      hintText: '传递给 WASM 的标准输入数据',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                  if (stdout != null || stderr != null) ...[
+                    const SizedBox(height: 16),
+                    const Divider(),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(Icons.check_circle_rounded,
+                            size: 16, color: Colors.green),
+                        const SizedBox(width: 6),
+                        Text(
+                          '执行完成 (${elapsedMs}ms)',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.green,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (stdout != null && stdout!.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text('stdout:',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: colorScheme.onSurface,
+                          )),
+                      const SizedBox(height: 4),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.black87,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: SelectableText(
+                          stdout!,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                            color: Colors.greenAccent,
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (stderr != null && stderr!.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text('stderr:',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.red,
+                          )),
+                      const SizedBox(height: 4),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.black87,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: SelectableText(
+                          stderr!,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                            color: Colors.redAccent,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('关闭'),
+            ),
+            FilledButton.icon(
+              onPressed: isRunning
+                  ? null
+                  : () async {
+                      final source = sourceCtrl.text.trim();
+                      if (source.isEmpty) return;
+                      setDialogState(() {
+                        isRunning = true;
+                        stdout = null;
+                        stderr = null;
+                        elapsedMs = null;
+                      });
+                      try {
+                        final api = ref.read(apiServiceProvider);
+                        final argsText = argsCtrl.text.trim();
+                        final result = await api.runWasmScript(
+                          source: source,
+                          function: funcCtrl.text.trim().isEmpty
+                              ? null
+                              : funcCtrl.text.trim(),
+                          args: argsText.isEmpty
+                              ? null
+                              : argsText.split(RegExp(r'\s+')),
+                          stdinData:
+                              stdinCtrl.text.isEmpty ? null : stdinCtrl.text,
+                        );
+                        setDialogState(() {
+                          isRunning = false;
+                          stdout = result['stdout'] as String? ?? '';
+                          stderr = result['stderr'] as String? ?? '';
+                          elapsedMs = result['elapsed_ms'] as int? ?? 0;
+                        });
+                      } catch (e) {
+                        setDialogState(() {
+                          isRunning = false;
+                          stderr = e.toString();
+                          elapsedMs = 0;
+                        });
+                      }
+                    },
+              icon: isRunning
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.play_arrow_rounded),
+              label: Text(isRunning ? '执行中...' : '执行'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ============================================================================
@@ -1482,6 +1960,7 @@ class _GameCard extends StatelessWidget {
     final price = game['price'] as Map<String, dynamic>?;
     final isFree = game['is_free'] == true;
     final platform = game['platform'] ?? '';
+    final isOwned = game['owned'] == true;
 
     return InkWell(
       onTap: () => _openStoreUrl(context),
@@ -1496,25 +1975,64 @@ class _GameCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 封面图
-            SizedBox(
-              height: 130,
-              width: double.infinity,
-              child: headerImage.isNotEmpty
-                  ? Image.network(
-                      headerImage,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                        color: colorScheme.surfaceContainerLow,
-                        child: Icon(Icons.image_not_supported_rounded,
-                            color: colorScheme.onSurfaceVariant),
+            // 封面图（带已拥有角标）
+            Stack(
+              children: [
+                SizedBox(
+                  height: 130,
+                  width: double.infinity,
+                  child: headerImage.isNotEmpty
+                      ? Image.network(
+                          headerImage,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            color: colorScheme.surfaceContainerLow,
+                            child: Icon(Icons.image_not_supported_rounded,
+                                color: colorScheme.onSurfaceVariant),
+                          ),
+                        )
+                      : Container(
+                          color: colorScheme.surfaceContainerLow,
+                          child: Icon(Icons.games_rounded,
+                              size: 48, color: colorScheme.onSurfaceVariant),
+                        ),
+                ),
+                if (isOwned)
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade700,
+                        borderRadius: BorderRadius.circular(6),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withAlpha(50),
+                            blurRadius: 4,
+                          ),
+                        ],
                       ),
-                    )
-                  : Container(
-                      color: colorScheme.surfaceContainerLow,
-                      child: Icon(Icons.games_rounded,
-                          size: 48, color: colorScheme.onSurfaceVariant),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.check_rounded,
+                              size: 12, color: Colors.white),
+                          SizedBox(width: 3),
+                          Text(
+                            '已拥有',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
+                  ),
+              ],
             ),
             // 信息
             Expanded(
@@ -1536,27 +2054,7 @@ class _GameCard extends StatelessWidget {
                     const Spacer(),
                     Row(
                       children: [
-                        // 平台标签
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: platform == 'steam'
-                                ? Colors.blue.withAlpha(30)
-                                : Colors.purple.withAlpha(30),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            platform == 'steam' ? 'Steam' : 'Epic',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: platform == 'steam'
-                                  ? Colors.blue
-                                  : Colors.purple,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
+                        _PlatformBadge(platform: platform),
                         const Spacer(),
                         // 价格
                         Text(
@@ -1588,7 +2086,277 @@ class _GameCard extends StatelessWidget {
   }
 }
 
-/// 游戏列表项
+/// 推荐列表项（带排名编号和推荐来源）
+class _RecommendationTile extends StatelessWidget {
+  final Map<String, dynamic> game;
+  final int rank;
+
+  const _RecommendationTile({required this.game, required this.rank});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final name = game['name'] ?? '';
+    final headerImage = game['header_image'] ?? '';
+    final shortDesc = game['short_description'] ?? '';
+    final price = game['price'] as Map<String, dynamic>?;
+    final isFree = game['is_free'] == true;
+    final platform = game['platform'] ?? '';
+    final isOwned = game['owned'] == true;
+    final source = game['recommendation_source'] ?? '';
+
+    Color rankColor;
+    if (rank <= 3) {
+      rankColor = Colors.deepOrange;
+    } else if (rank <= 10) {
+      rankColor = Colors.orange;
+    } else {
+      rankColor = colorScheme.onSurfaceVariant;
+    }
+
+    String sourceLabel;
+    Color sourceColor;
+    IconData sourceIcon;
+    switch (source) {
+      case 'steam_featured':
+        sourceLabel = 'Steam 精选';
+        sourceColor = Colors.blue;
+        sourceIcon = Icons.star_rounded;
+        break;
+      case 'epic_free':
+        sourceLabel = 'Epic 限免';
+        sourceColor = Colors.purple;
+        sourceIcon = Icons.card_giftcard_rounded;
+        break;
+      case 'wasm_store':
+        sourceLabel = 'WASM 应用';
+        sourceColor = Colors.teal;
+        sourceIcon = Icons.web_asset_rounded;
+        break;
+      default:
+        sourceLabel = '推荐';
+        sourceColor = colorScheme.primary;
+        sourceIcon = Icons.recommend_rounded;
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: InkWell(
+        onTap: () {
+          final url = game['store_url'] ?? '';
+          if (url.isNotEmpty) {
+            launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+          }
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // 排名编号
+              SizedBox(
+                width: 32,
+                child: Text(
+                  '$rank',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: rank <= 3 ? 22 : 16,
+                    fontWeight: FontWeight.bold,
+                    color: rankColor,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // 缩略图
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: 100,
+                  height: 56,
+                  child: headerImage.isNotEmpty
+                      ? Image.network(
+                          headerImage,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            color: colorScheme.surfaceContainerLow,
+                            child: const Icon(Icons.games_rounded),
+                          ),
+                        )
+                      : Container(
+                          color: colorScheme.surfaceContainerLow,
+                          child: const Icon(Icons.games_rounded),
+                        ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // 信息
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            name,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: colorScheme.onSurface,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (isOwned)
+                          Container(
+                            margin: const EdgeInsets.only(left: 6),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withAlpha(30),
+                              borderRadius: BorderRadius.circular(4),
+                              border:
+                                  Border.all(color: Colors.green.withAlpha(80)),
+                            ),
+                            child: const Text(
+                              '已拥有',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: Colors.green,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (shortDesc.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        shortDesc,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        // 平台标签
+                        _PlatformBadge(platform: platform),
+                        const SizedBox(width: 6),
+                        // 推荐来源
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: sourceColor.withAlpha(20),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(sourceIcon, size: 10, color: sourceColor),
+                              const SizedBox(width: 3),
+                              Text(
+                                sourceLabel,
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  color: sourceColor,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Spacer(),
+                        // 价格
+                        Text(
+                          isFree ? '免费' : price?['formatted'] ?? '',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: isFree ? Colors.green : colorScheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 平台标签组件（统一样式 Steam / Epic / WASM）
+class _PlatformBadge extends StatelessWidget {
+  final String platform;
+
+  const _PlatformBadge({required this.platform});
+
+  @override
+  Widget build(BuildContext context) {
+    String label;
+    Color color;
+    IconData icon;
+
+    switch (platform.toLowerCase()) {
+      case 'steam':
+        label = 'Steam';
+        color = const Color(0xFF1B2838);
+        icon = Icons.videogame_asset_rounded;
+        break;
+      case 'epic':
+        label = 'Epic';
+        color = Colors.deepPurple;
+        icon = Icons.gamepad_rounded;
+        break;
+      case 'wasm':
+        label = 'WASM';
+        color = Colors.teal;
+        icon = Icons.web_asset_rounded;
+        break;
+      default:
+        label = platform;
+        color = Colors.grey;
+        icon = Icons.apps_rounded;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withAlpha(25),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withAlpha(60)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 10, color: color),
+          const SizedBox(width: 3),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              color: color,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 游戏列表项（带平台标签和已拥有标记）
 class _GameListTile extends StatelessWidget {
   final Map<String, dynamic> game;
 
@@ -1604,6 +2372,7 @@ class _GameListTile extends StatelessWidget {
     final isFree = game['is_free'] == true;
     final platform = game['platform'] ?? '';
     final genres = (game['genres'] as List?)?.take(3).join(', ') ?? '';
+    final isOwned = game['owned'] == true;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -1647,15 +2416,41 @@ class _GameListTile extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      name,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: colorScheme.onSurface,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            name,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: colorScheme.onSurface,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (isOwned)
+                          Container(
+                            margin: const EdgeInsets.only(left: 6),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withAlpha(30),
+                              borderRadius: BorderRadius.circular(4),
+                              border:
+                                  Border.all(color: Colors.green.withAlpha(80)),
+                            ),
+                            child: const Text(
+                              '已拥有',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: Colors.green,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                     if (shortDesc.isNotEmpty) ...[
                       const SizedBox(height: 4),
@@ -1672,26 +2467,7 @@ class _GameListTile extends StatelessWidget {
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: platform == 'steam'
-                                ? Colors.blue.withAlpha(30)
-                                : Colors.purple.withAlpha(30),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            platform == 'steam' ? 'Steam' : 'Epic',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: platform == 'steam'
-                                  ? Colors.blue
-                                  : Colors.purple,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
+                        _PlatformBadge(platform: platform),
                         if (genres.isNotEmpty) ...[
                           const SizedBox(width: 8),
                           Expanded(

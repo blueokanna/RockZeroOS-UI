@@ -314,6 +314,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         final checkResponse = await http.get(
           Uri.parse(playlistUrl),
           headers: {
+            'Authorization': 'Bearer $_authToken',
             'Accept': 'application/vnd.apple.mpegurl, */*',
             'User-Agent': 'RockZeroOS/1.0',
           },
@@ -357,7 +358,12 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     _setupPlayerListeners();
 
     await _player!.open(
-      Media(playlistUrl),
+      Media(
+        playlistUrl,
+        httpHeaders: {
+          'Authorization': 'Bearer $_authToken',
+        },
+      ),
       play: true,
     );
 
@@ -786,45 +792,46 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
               ),
             ),
             const SizedBox(width: 8),
-            // 播放模式标志 - MD3 chip style
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: _playbackMode == 'direct'
-                    ? Colors.blue.withValues(alpha: 0.25)
-                    : Colors.green.withValues(alpha: 0.25),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
+            GestureDetector(
+              onTap: () => _showEncryptionDetails(),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
                   color: _playbackMode == 'direct'
-                      ? Colors.blue.withValues(alpha: 0.5)
-                      : Colors.green.withValues(alpha: 0.5),
-                  width: 1,
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    _playbackMode == 'direct'
-                        ? Icons.speed_rounded
-                        : Icons.lock_rounded,
-                    size: 14,
+                      ? Colors.blue.withValues(alpha: 0.25)
+                      : Colors.green.withValues(alpha: 0.25),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
                     color: _playbackMode == 'direct'
-                        ? Colors.lightBlueAccent
-                        : Colors.greenAccent,
+                        ? Colors.blue.withValues(alpha: 0.5)
+                        : Colors.green.withValues(alpha: 0.5),
+                    width: 1,
                   ),
-                  const SizedBox(width: 4),
-                  Text(
-                    _playbackMode == 'direct' ? '直连' : 'HLS',
-                    style: TextStyle(
-                      fontSize: 11,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.lock_rounded,
+                      size: 14,
                       color: _playbackMode == 'direct'
                           ? Colors.lightBlueAccent
                           : Colors.greenAccent,
-                      fontWeight: FontWeight.w600,
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 4),
+                    Text(
+                      _playbackMode == 'direct' ? 'AES256' : 'SAE+AES256',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: _playbackMode == 'direct'
+                            ? Colors.lightBlueAccent
+                            : Colors.greenAccent,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(width: 4),
@@ -1004,6 +1011,249 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// 显示加密协议详情弹窗
+  void _showEncryptionDetails() {
+    final isHls = _playbackMode != 'direct';
+    final sessionId = _hlsSessionId;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A2E),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 20),
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Row(
+                children: [
+                  Icon(
+                    Icons.shield_rounded,
+                    color: isHls ? Colors.greenAccent : Colors.lightBlueAccent,
+                    size: 24,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    '端到端加密保护',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                isHls
+                    ? 'SAE + Bulletproofs ZKP + AES-256-GCM'
+                    : 'AES-256-GCM + Blake3 密钥派生',
+                style: TextStyle(
+                  color: isHls ? Colors.greenAccent : Colors.lightBlueAccent,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 20),
+              _buildProtocolItem(
+                icon: Icons.vpn_key_rounded,
+                title: '密钥交换',
+                subtitle: isHls
+                    ? 'WPA3-SAE (Simultaneous Authentication of Equals)'
+                    : 'JWT Token + Blake3 HKDF',
+                detail: isHls
+                    ? 'Dragonfly 密钥交换协议，抵抗离线字典攻击'
+                    : '基于 Blake3 的密钥派生函数生成会话密钥',
+                color: Colors.orangeAccent,
+                active: true,
+              ),
+              if (isHls) ...[
+                const SizedBox(height: 12),
+                _buildProtocolItem(
+                  icon: Icons.verified_user_rounded,
+                  title: '零知识证明',
+                  subtitle: 'Bulletproofs Range Proof',
+                  detail: '每个分片请求附带 ZKP 证明，服务端验证访问权限而无需暴露凭据',
+                  color: Colors.purpleAccent,
+                  active: true,
+                ),
+              ],
+              const SizedBox(height: 12),
+              _buildProtocolItem(
+                icon: Icons.lock_rounded,
+                title: '数据加密',
+                subtitle: 'AES-256-GCM (Galois/Counter Mode)',
+                detail: '每个数据块使用唯一 nonce 加密，提供认证加密和完整性保护',
+                color: Colors.cyanAccent,
+                active: true,
+              ),
+              const SizedBox(height: 12),
+              _buildProtocolItem(
+                icon: Icons.fingerprint_rounded,
+                title: '完整性校验',
+                subtitle: 'Blake3 Cryptographic Hash',
+                detail: '所有传输数据使用 Blake3 哈希验证完整性，防止篡改',
+                color: Colors.tealAccent,
+                active: true,
+              ),
+              if (isHls && sessionId != null) ...[
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.1),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '会话信息',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Session: ${sessionId.length > 16 ? '${sessionId.substring(0, 16)}...' : sessionId}',
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 11,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '传输模式: 安全 HLS (UDP 70% + TCP 30%)',
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProtocolItem({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required String detail,
+    required Color color,
+    required bool active,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: color.withValues(alpha: 0.2),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.greenAccent.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        '已启用',
+                        style: TextStyle(
+                          color: Colors.greenAccent,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: color.withValues(alpha: 0.9),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  detail,
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

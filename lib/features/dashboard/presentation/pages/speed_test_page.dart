@@ -53,14 +53,18 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
   late AnimationController _pulseController;
   late AnimationController _tickController;
 
-  static const int _pingTestCount = 10;
+  static const int _pingTestCount = 20;
   static const int _downloadTestDurationSec = 10;
   static const int _uploadTestDurationSec = 10;
   static const int _downloadChunkSizeMB = 65;
 
+  /// 复用 HTTP 客户端以保持 TCP 连接
+  late final http.Client _httpClient;
+
   @override
   void initState() {
     super.initState();
+    _httpClient = http.Client();
     _needleController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
@@ -94,6 +98,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     _needleController.dispose();
     _pulseController.dispose();
     _tickController.dispose();
+    _httpClient.close();
     super.dispose();
   }
 
@@ -159,19 +164,30 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
   Future<void> _testPing() async {
     if (_serverUrl == null) return;
     final List<int> pings = [];
-    final uri = Uri.parse('$_serverUrl/api/v1/speedtest/ping');
+    // 使用 empty 端点：零字节响应，最小 HTTP 开销
+    final uri = Uri.parse('$_serverUrl/api/v1/speedtest/empty');
     final headers = <String, String>{};
     if (_authToken != null && _authToken!.isNotEmpty) {
       headers['Authorization'] = 'Bearer $_authToken';
+    }
+
+    // Warm-up: 前 3 次请求用于建立 TCP 连接 + TLS 握手，不计入 ping
+    for (int i = 0; i < 3; i++) {
+      if (!mounted || _isCancelled) return;
+      try {
+        await _httpClient
+            .get(uri, headers: headers)
+            .timeout(const Duration(seconds: 5));
+      } catch (_) {}
     }
 
     for (int i = 0; i < _pingTestCount; i++) {
       if (!mounted || _isCancelled) return;
       try {
         final sw = Stopwatch()..start();
-        final r = await http
+        final r = await _httpClient
             .get(uri, headers: headers)
-            .timeout(const Duration(seconds: 10));
+            .timeout(const Duration(seconds: 5));
         sw.stop();
         if (r.statusCode == 200) {
           pings.add(sw.elapsedMilliseconds);
@@ -183,19 +199,28 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
           }
         }
       } catch (_) {}
-      await Future.delayed(const Duration(milliseconds: 100));
+      // 极短延迟，避免占满 CPU
+      await Future.delayed(const Duration(milliseconds: 20));
     }
-    if (pings.isNotEmpty) {
-      final avg = pings.reduce((a, b) => a + b) ~/ pings.length;
+    if (pings.length > 2) {
+      // 去掉最高和最低值，取平均
+      pings.sort();
+      final trimmed = pings.sublist(1, pings.length - 1);
+      final avg = trimmed.reduce((a, b) => a + b) ~/ trimmed.length;
       double jitterSum = 0;
-      for (int i = 1; i < pings.length; i++) {
-        jitterSum += (pings[i] - pings[i - 1]).abs();
+      for (int i = 1; i < trimmed.length; i++) {
+        jitterSum += (trimmed[i] - trimmed[i - 1]).abs();
       }
       if (mounted && !_isCancelled) {
         setState(() {
           _ping = avg;
-          _jitter = pings.length > 1 ? jitterSum / (pings.length - 1) : 0;
+          _jitter = trimmed.length > 1 ? jitterSum / (trimmed.length - 1) : 0;
         });
+      }
+    } else if (pings.isNotEmpty) {
+      final avg = pings.reduce((a, b) => a + b) ~/ pings.length;
+      if (mounted && !_isCancelled) {
+        setState(() => _ping = avg);
       }
     }
   }
@@ -245,9 +270,8 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
               '$_serverUrl/api/v1/speedtest/download?size=$_downloadChunkSizeMB');
           final req = http.Request('GET', uri);
           headers.forEach((k, v) => req.headers[k] = v);
-          final resp = await http.Client()
-              .send(req)
-              .timeout(const Duration(seconds: 60));
+          final resp =
+              await _httpClient.send(req).timeout(const Duration(seconds: 60));
           if (resp.statusCode == 200) {
             int chunkBytes = 0;
             await for (final chunk in resp.stream) {
@@ -329,7 +353,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
         final upSw = Stopwatch()..start();
         try {
           final uri = Uri.parse('$_serverUrl/api/v1/speedtest/upload');
-          final r = await http
+          final r = await _httpClient
               .post(uri, headers: headers, body: testData)
               .timeout(const Duration(seconds: 60));
           upSw.stop();

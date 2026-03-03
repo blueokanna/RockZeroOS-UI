@@ -73,10 +73,24 @@ class AudioPlayerState {
 
 /// Background audio handler for system media controls & notification
 class RockZeroAudioHandler extends BaseAudioHandler with SeekHandler {
-  final AudioPlayer _player;
+  AudioPlayer _player;
   final List<StreamSubscription> _subs = [];
 
   RockZeroAudioHandler(this._player) {
+    _bindPlayer();
+  }
+
+  /// Rebind to a new AudioPlayer instance (e.g. after stop→play cycle)
+  void rebindPlayer(AudioPlayer newPlayer) {
+    for (final sub in _subs) {
+      sub.cancel();
+    }
+    _subs.clear();
+    _player = newPlayer;
+    _bindPlayer();
+  }
+
+  void _bindPlayer() {
     // Forward player state to audio_service
     _subs.add(_player.playbackEventStream.listen((event) {
       final playing = _player.playing;
@@ -163,7 +177,11 @@ bool get _supportsAudioService {
 
 Future<RockZeroAudioHandler?> _getOrCreateHandler(AudioPlayer player) async {
   if (!_supportsAudioService) return null;
-  if (_globalAudioHandler != null) return _globalAudioHandler!;
+  if (_globalAudioHandler != null) {
+    // Rebind the existing handler to the new player instance
+    _globalAudioHandler!.rebindPlayer(player);
+    return _globalAudioHandler!;
+  }
   try {
     _globalAudioHandler = await AudioService.init(
       builder: () => RockZeroAudioHandler(player),
