@@ -184,8 +184,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
         if (checkResponse.statusCode == 200) {
           final content = checkResponse.body;
-          if (content.contains('#EXTM3U') &&
-              (content.contains('#EXTINF') || content.contains('segment_'))) {
+          if (_isPlaylistReadyForPlayback(content)) {
             debugPrint(
                 '[VideoPlayer] HLS playlist ready after ${i + 1} attempts');
             playlistReady = true;
@@ -238,6 +237,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       await mpv.setProperty('demuxer-max-back-bytes', '64MiB');
       await mpv.setProperty('vd-lavc-threads', '0');
       await mpv.setProperty('ad-lavc-threads', '0');
+      await mpv.setProperty('hwdec', 'auto-safe');
+      await mpv.setProperty('vd-lavc-software-fallback', 'yes');
+      await mpv.setProperty('video-sync', 'audio');
     }
 
     _videoController = VideoController(_player!);
@@ -513,7 +515,10 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       return '服务器转码失败，请稍后重试';
     }
     if (error.contains('HTTP 404') || error.contains('404')) {
-      return '视频文件不存在';
+      return '视频分片暂不可用，请重试（服务器正在生成或缓存已过期）';
+    }
+    if (error.contains('HTTP 503') || error.contains('503')) {
+      return '视频分片仍在生成中，请稍后重试';
     }
     if (error.contains('timeout') || error.contains('Timeout')) {
       return '连接超时，请检查网络';
@@ -569,8 +574,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
   void _enterFullscreen() {
     SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.immersiveSticky,
-      overlays: [],
+      SystemUiMode.edgeToEdge,
+      overlays: SystemUiOverlay.values,
     );
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
@@ -582,6 +587,22 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         ref.read(bottomNavVisibleProvider.notifier).hide();
       }
     });
+  }
+
+  bool _isPlaylistReadyForPlayback(String content) {
+    if (!content.contains('#EXTM3U')) return false;
+
+    final segmentCount = RegExp(r'^segment_\d+\.ts(?:\?.*)?$', multiLine: true)
+        .allMatches(content)
+        .length;
+    final hasEndList = content.contains('#EXT-X-ENDLIST');
+
+    // 进行中的长视频：至少 2 段再开播，避免播放器立刻请求 segment_1 命中 404。
+    // 已结束短视频：允许单段播放。
+    if (hasEndList) {
+      return segmentCount >= 1;
+    }
+    return segmentCount >= 2;
   }
 
   void _exitFullscreen() {

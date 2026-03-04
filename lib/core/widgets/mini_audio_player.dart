@@ -36,18 +36,22 @@ class MiniAudioPlayer extends ConsumerWidget {
               ),
               transitionsBuilder:
                   (context, animation, secondaryAnimation, child) {
-                return SlideTransition(
-                  position: Tween<Offset>(
-                    begin: const Offset(0, 1),
-                    end: Offset.zero,
-                  ).animate(CurvedAnimation(
-                    parent: animation,
-                    curve: Curves.easeOutCubic,
-                  )),
-                  child: child,
+                final curved = CurvedAnimation(
+                  parent: animation,
+                  curve: Curves.easeInOutCubicEmphasized,
+                );
+                return FadeTransition(
+                  opacity: curved,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, 0.08),
+                      end: Offset.zero,
+                    ).animate(curved),
+                    child: child,
+                  ),
                 );
               },
-              transitionDuration: const Duration(milliseconds: 400),
+              transitionDuration: const Duration(milliseconds: 280),
             ),
           );
         }

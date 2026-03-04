@@ -63,6 +63,8 @@ class _EnhancedAudioPlayerPageState
   double? _resumeSpeed;
   bool _resumeLooping = false;
   bool _resumeFromGlobalService = false;
+  bool _transferredToBackground = false;
+  bool _closing = false;
 
   StreamSubscription<PlayerState>? _playerStateSubscription;
   StreamSubscription<Duration>? _positionSubscription;
@@ -110,6 +112,9 @@ class _EnhancedAudioPlayerPageState
     _visualizationTimer?.cancel();
     _rotationController.dispose();
     _cancelSubscriptions();
+    if (!_transferredToBackground) {
+      unawaited(ref.read(audioPlayerServiceProvider.notifier).stop());
+    }
     _audioPlayer?.dispose();
     WakelockPlus.disable();
     super.dispose();
@@ -131,13 +136,15 @@ class _EnhancedAudioPlayerPageState
     // (i.e. user tapped the mini-player), capture its state and stop it
     // to prevent dual playback.
     final globalState = ref.read(audioPlayerServiceProvider);
-    if (globalState.hasAudio && globalState.currentUrl == widget.mediaUrl) {
-      _resumeFromGlobalService = true;
-      _resumePosition = globalState.position;
-      _resumeVolume = globalState.volume;
-      _resumeSpeed = globalState.speed;
-      _resumeLooping = globalState.isLooping;
-      // Stop global service immediately — kills mini-player audio
+    if (globalState.hasAudio) {
+      if (globalState.currentUrl == widget.mediaUrl) {
+        _resumeFromGlobalService = true;
+        _resumePosition = globalState.position;
+        _resumeVolume = globalState.volume;
+        _resumeSpeed = globalState.speed;
+        _resumeLooping = globalState.isLooping;
+      }
+      // 无论是否同一 URL，都先停掉全局小窗，避免双路音频重叠。
       await ref.read(audioPlayerServiceProvider.notifier).stop();
     }
 
@@ -550,31 +557,45 @@ class _EnhancedAudioPlayerPageState
   /// 将当前播放转移到全局 AudioPlayerService（后台播放），然后关闭页面。
   /// MiniAudioPlayer 会自动出现在底部导航栏上方，系统通知栏也会显示控制按钮。
   Future<void> _minimizeToBackground() async {
+    if (_closing) return;
+
     final service = ref.read(audioPlayerServiceProvider.notifier);
+
+    final wasPlaying = _isPlaying;
+    final localPosition = _position;
+    final localVolume = _volume;
+    final localSpeed = _speed;
+    final localLooping = _isLooping;
+
+    await _audioPlayer?.pause();
+    await _audioPlayer?.stop();
 
     // 1. 用同一 URL & 文件名启动全局播放服务
     final url = _getStreamUrl();
     await service.play(url, widget.fileName);
 
     // 2. 恢复当前进度 & 音量/速度
-    if (_position > Duration.zero) {
-      await service.seekTo(_position);
+    if (localPosition > Duration.zero) {
+      await service.seekTo(localPosition);
     }
-    if (_volume != 1.0) {
-      await service.setVolume(_volume);
+    if (localVolume != 1.0) {
+      await service.setVolume(localVolume);
     }
-    if (_speed != 1.0) {
-      await service.setSpeed(_speed);
+    if (localSpeed != 1.0) {
+      await service.setSpeed(localSpeed);
     }
-    if (_isLooping) {
+    if (localLooping) {
       service.toggleLoop();
+    }
+    if (!wasPlaying) {
+      await service.pause();
     }
 
     // 3. 停止本地播放器（不触发 dispose 错误）
+    _transferredToBackground = true;
     _disposed = true;
     _visualizationTimer?.cancel();
     _cancelSubscriptions();
-    await _audioPlayer?.stop();
     await _audioPlayer?.dispose();
     _audioPlayer = null;
 
@@ -582,6 +603,25 @@ class _EnhancedAudioPlayerPageState
     if (mounted) {
       ref.read(bottomNavVisibleProvider.notifier).show();
       Navigator.pop(context);
+    }
+  }
+
+  Future<void> _closePageAndStopAudio() async {
+    if (_closing || _transferredToBackground) return;
+    _closing = true;
+
+    try {
+      _visualizationTimer?.cancel();
+      _cancelSubscriptions();
+      await _audioPlayer?.stop();
+      await _audioPlayer?.dispose();
+      _audioPlayer = null;
+      await ref.read(audioPlayerServiceProvider.notifier).stop();
+    } finally {
+      if (mounted) {
+        ref.read(bottomNavVisibleProvider.notifier).show();
+        Navigator.pop(context);
+      }
     }
   }
 
@@ -601,9 +641,11 @@ class _EnhancedAudioPlayerPageState
     final textTheme = Theme.of(context).textTheme;
 
     return PopScope(
-      canPop: true,
+      canPop: false,
       onPopInvokedWithResult: (didPop, result) {
-        if (didPop) ref.read(bottomNavVisibleProvider.notifier).show();
+        if (!didPop) {
+          _closePageAndStopAudio();
+        }
       },
       child: Scaffold(
         extendBodyBehindAppBar: true,
@@ -612,7 +654,7 @@ class _EnhancedAudioPlayerPageState
           elevation: 0,
           leading: IconButton(
             icon: const Icon(Icons.arrow_back_rounded),
-            onPressed: () => Navigator.pop(context),
+            onPressed: _closePageAndStopAudio,
           ),
           actions: [
             // 最小化到后台按钮 — 转移播放到全局服务

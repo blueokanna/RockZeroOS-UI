@@ -72,8 +72,8 @@ class _EnhancedMediaPlayerPageState
   }
 
   void _enterFullScreen() {
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky,
-        overlays: []);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge,
+        overlays: SystemUiOverlay.values);
     _applyOrientationLock();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
