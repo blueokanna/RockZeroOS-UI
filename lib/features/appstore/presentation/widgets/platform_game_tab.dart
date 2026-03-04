@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../core/network/api_service.dart';
+
 // ============================================================================
 // 平台配置 & 游戏数据模型
 // ============================================================================
@@ -24,6 +26,8 @@ class GameData {
   final List<Color> coverGradient; // 封面渐变色
   final IconData coverIcon; // 封面图标
   final bool isFeatured;
+  final String? headerImageUrl; // 官方封面图 URL (从 API 获取)
+  final String? storeUrl; // 官方商店链接
 
   const GameData({
     required this.id,
@@ -38,6 +42,8 @@ class GameData {
     required this.coverGradient,
     required this.coverIcon,
     this.isFeatured = false,
+    this.headerImageUrl,
+    this.storeUrl,
   });
 }
 
@@ -872,8 +878,9 @@ class SavedGame {
 
 class PlatformGameTab extends StatefulWidget {
   final GamePlatform platform;
+  final ApiService? apiService;
 
-  const PlatformGameTab({super.key, required this.platform});
+  const PlatformGameTab({super.key, required this.platform, this.apiService});
 
   @override
   State<PlatformGameTab> createState() => _PlatformGameTabState();
@@ -888,6 +895,11 @@ class _PlatformGameTabState extends State<PlatformGameTab>
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
 
+  /// 从后端 API 获取的实时游戏数据
+  List<GameData> _liveGames = [];
+  bool _isLiveData = false;
+  bool _fetchingLive = false;
+
   @override
   bool get wantKeepAlive => true;
 
@@ -896,12 +908,170 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     super.initState();
     _config = PlatformConfig.forPlatform(widget.platform);
     _loadSavedGames();
+    _fetchPlatformGames();
   }
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  /// 从后端 API 获取对应平台的游戏数据（官方数据源）
+  Future<void> _fetchPlatformGames() async {
+    if (_fetchingLive) return;
+    _fetchingLive = true;
+
+    try {
+      final apiService = widget.apiService;
+      if (apiService == null) {
+        _fetchingLive = false;
+        return;
+      }
+      final platformName = switch (widget.platform) {
+        GamePlatform.epic => 'epic',
+        GamePlatform.wegame => 'wegame',
+        GamePlatform.ubisoft => 'ubisoft',
+        GamePlatform.xbox => 'xbox',
+      };
+
+      final result = await apiService
+          .getPlatformGames(platform: platformName, pageSize: 30)
+          .timeout(const Duration(seconds: 12));
+
+      final items = result['items'] as List<dynamic>? ?? [];
+      if (items.isNotEmpty) {
+        final parsed = items
+            .map((item) {
+              final map = item as Map<String, dynamic>;
+              final name = map['name'] as String? ?? '';
+              final id = map['id'] as String? ?? '';
+              final developer = map['developer'] as String? ?? '';
+              final genre = map['genre'] as String? ?? '游戏';
+              final desc = map['description'] as String? ?? '';
+              final isFree = map['is_free'] as bool? ?? false;
+              final headerImage = map['header_image'] as String? ?? '';
+              final storeUrl = map['store_url'] as String? ?? '';
+              final tags = (map['tags'] as List<dynamic>?)
+                      ?.map((t) => t.toString())
+                      .toList() ??
+                  [];
+
+              final priceMap = map['price'] as Map<String, dynamic>?;
+              final priceStr = priceMap?['formatted'] as String? ?? '';
+
+              return GameData(
+                id: id.isNotEmpty ? id : 'live_$name',
+                name: name,
+                developer: developer,
+                genre: genre,
+                description: desc,
+                isFree: isFree,
+                price:
+                    priceStr.isNotEmpty && priceStr != '免费' ? priceStr : null,
+                rating: 4.0,
+                tags: tags,
+                coverGradient: _gradientForGenre(genre),
+                coverIcon: _iconForGenre(genre),
+                isFeatured: false,
+                headerImageUrl: headerImage,
+                storeUrl: storeUrl,
+              );
+            })
+            .where((g) => g.name.isNotEmpty)
+            .toList();
+
+        if (parsed.isNotEmpty && mounted) {
+          // 标记前 5 款为精选
+          for (int i = 0; i < parsed.length && i < 5; i++) {
+            parsed[i] = GameData(
+              id: parsed[i].id,
+              name: parsed[i].name,
+              developer: parsed[i].developer,
+              genre: parsed[i].genre,
+              description: parsed[i].description,
+              isFree: parsed[i].isFree,
+              price: parsed[i].price,
+              rating: parsed[i].rating,
+              tags: parsed[i].tags,
+              coverGradient: parsed[i].coverGradient,
+              coverIcon: parsed[i].coverIcon,
+              isFeatured: true,
+              headerImageUrl: parsed[i].headerImageUrl,
+              storeUrl: parsed[i].storeUrl,
+            );
+          }
+
+          setState(() {
+            _liveGames = parsed;
+            _isLiveData = true;
+          });
+        }
+      }
+    } catch (_) {
+      // API 不可用时静默降级为内置数据，不影响用户体验
+    } finally {
+      _fetchingLive = false;
+    }
+  }
+
+  /// 当前生效的游戏列表：优先使用 API 实时数据，否则使用内置数据
+  List<GameData> get _activeGames =>
+      _isLiveData && _liveGames.isNotEmpty ? _liveGames : _config.allGames;
+
+  List<GameData> get _activeFeaturedGames =>
+      _activeGames.where((g) => g.isFeatured).toList();
+
+  List<GameData> get _activeFreeGames =>
+      _activeGames.where((g) => g.isFree).toList();
+
+  List<Color> _gradientForGenre(String genre) {
+    final g = genre.toLowerCase();
+    if (g.contains('射击') || g.contains('fps') || g.contains('tps')) {
+      return const [Color(0xFFB71C1C), Color(0xFFE53935)];
+    }
+    if (g.contains('rpg') || g.contains('角色')) {
+      return const [Color(0xFF4A148C), Color(0xFF7B1FA2)];
+    }
+    if (g.contains('动作') || g.contains('action')) {
+      return const [Color(0xFFE65100), Color(0xFFF57C00)];
+    }
+    if (g.contains('冒险') || g.contains('adventure')) {
+      return const [Color(0xFF1A237E), Color(0xFF303F9F)];
+    }
+    if (g.contains('竞速') || g.contains('race') || g.contains('sport')) {
+      return const [Color(0xFF00695C), Color(0xFF00897B)];
+    }
+    if (g.contains('策略') || g.contains('strategy')) {
+      return const [Color(0xFF4E342E), Color(0xFF6D4C41)];
+    }
+    if (g.contains('开放') || g.contains('open')) {
+      return const [Color(0xFF1B5E20), Color(0xFF388E3C)];
+    }
+    return const [Color(0xFF263238), Color(0xFF455A64)];
+  }
+
+  IconData _iconForGenre(String genre) {
+    final g = genre.toLowerCase();
+    if (g.contains('射击') || g.contains('fps')) return Icons.gps_fixed_rounded;
+    if (g.contains('rpg') || g.contains('角色')) return Icons.person_rounded;
+    if (g.contains('动作') || g.contains('action')) {
+      return Icons.directions_run_rounded;
+    }
+    if (g.contains('冒险') || g.contains('adventure')) {
+      return Icons.explore_rounded;
+    }
+    if (g.contains('竞速') || g.contains('race')) {
+      return Icons.directions_car_rounded;
+    }
+    if (g.contains('策略') || g.contains('strategy')) {
+      return Icons.business_center_rounded;
+    }
+    if (g.contains('moba')) return Icons.sports_esports_rounded;
+    if (g.contains('格斗') || g.contains('fight')) {
+      return Icons.sports_mma_rounded;
+    }
+    return Icons.sports_esports_rounded;
   }
 
   Future<void> _loadSavedGames() async {
@@ -962,8 +1132,8 @@ class _PlatformGameTabState extends State<PlatformGameTab>
   /// 根据搜索和分类筛选游戏列表
   List<GameData> get _filteredGames {
     var games = _selectedCategory != null
-        ? _config.gamesInCategory(_selectedCategory!)
-        : _config.allGames;
+        ? _activeGames.where((g) => g.genre == _selectedCategory).toList()
+        : _activeGames;
     if (_searchQuery.isNotEmpty) {
       final q = _searchQuery.toLowerCase();
       games = games
@@ -977,6 +1147,14 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     return games;
   }
 
+  /// 下拉刷新：重新加载收藏 + 刷新 API 数据
+  Future<void> _onRefresh() async {
+    await Future.wait([
+      _loadSavedGames(),
+      _fetchPlatformGames(),
+    ]);
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -988,7 +1166,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     final displayGames = _filteredGames;
 
     return RefreshIndicator(
-      onRefresh: _loadSavedGames,
+      onRefresh: _onRefresh,
       child: CustomScrollView(
         slivers: [
           // 顶部内容（Hero + 精选 + 免费 + 搜索 + 分类）
@@ -1009,7 +1187,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                     const SizedBox(height: 24),
 
                     // 免费游戏
-                    if (_config.freeGames.isNotEmpty) ...[
+                    if (_activeFreeGames.isNotEmpty) ...[
                       _buildSectionTitle(
                           '免费游戏', Icons.card_giftcard_rounded, cs, tt),
                       const SizedBox(height: 10),
@@ -1162,9 +1340,10 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${_config.allGames.length} 款游戏 · '
-                  '${_config.freeGames.length} 款免费 · '
-                  '${_savedGameIds.length} 款已收藏',
+                  '${_activeGames.length} 款游戏 · '
+                  '${_activeFreeGames.length} 款免费 · '
+                  '${_savedGameIds.length} 款已收藏'
+                  '${_isLiveData ? ' · 🔴 实时' : ''}',
                   style: TextStyle(
                     color: Colors.white.withValues(alpha: 0.6),
                     fontSize: 11,
@@ -1215,7 +1394,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
   // 精选推荐轮播
   // --------------------------------------------------------------------------
   Widget _buildFeaturedCarousel(ColorScheme cs, TextTheme tt) {
-    final featured = _config.featuredGames;
+    final featured = _activeFeaturedGames;
     if (featured.isEmpty) return const SizedBox.shrink();
 
     return SizedBox(
@@ -1245,7 +1424,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
   // 免费游戏横向滚动
   // --------------------------------------------------------------------------
   Widget _buildFreeGamesRow(ColorScheme cs, TextTheme tt) {
-    final freeGames = _config.freeGames;
+    final freeGames = _activeFreeGames;
     return SizedBox(
       height: 145,
       child: ListView.separated(
@@ -1272,7 +1451,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
   // --------------------------------------------------------------------------
   Widget _buildSavedGamesRow(ColorScheme cs, TextTheme tt) {
     final savedGames =
-        _config.allGames.where((g) => _savedGameIds.contains(g.id)).toList();
+        _activeGames.where((g) => _savedGameIds.contains(g.id)).toList();
     if (savedGames.isEmpty) return const SizedBox.shrink();
 
     return SizedBox(
@@ -1369,7 +1548,18 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                     colors: game.coverGradient,
                   ),
                 ),
-                child: Icon(game.coverIcon, color: Colors.white70, size: 30),
+                clipBehavior: Clip.antiAlias,
+                child: game.headerImageUrl != null &&
+                        game.headerImageUrl!.isNotEmpty
+                    ? Image.network(
+                        game.headerImageUrl!,
+                        fit: BoxFit.cover,
+                        width: 70,
+                        height: 70,
+                        errorBuilder: (_, __, ___) => Icon(game.coverIcon,
+                            color: Colors.white70, size: 30),
+                      )
+                    : Icon(game.coverIcon, color: Colors.white70, size: 30),
               ),
               const SizedBox(width: 14),
               // 信息
@@ -1596,17 +1786,41 @@ class _PlatformGameTabState extends State<PlatformGameTab>
           colors: game.coverGradient,
         ),
       ),
+      clipBehavior: Clip.antiAlias,
       child: Stack(
+        fit: StackFit.expand,
         children: [
-          Positioned(
-            right: -10,
-            bottom: -10,
-            child: Icon(game.coverIcon,
-                size: 140, color: Colors.white.withValues(alpha: 0.08)),
-          ),
-          Center(
-            child: Icon(game.coverIcon, size: 64, color: Colors.white70),
-          ),
+          // 优先显示官方封面图
+          if (game.headerImageUrl != null && game.headerImageUrl!.isNotEmpty)
+            Image.network(
+              game.headerImageUrl!,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Stack(
+                children: [
+                  Positioned(
+                    right: -10,
+                    bottom: -10,
+                    child: Icon(game.coverIcon,
+                        size: 140, color: Colors.white.withValues(alpha: 0.08)),
+                  ),
+                  Center(
+                    child:
+                        Icon(game.coverIcon, size: 64, color: Colors.white70),
+                  ),
+                ],
+              ),
+            )
+          else ...[
+            Positioned(
+              right: -10,
+              bottom: -10,
+              child: Icon(game.coverIcon,
+                  size: 140, color: Colors.white.withValues(alpha: 0.08)),
+            ),
+            Center(
+              child: Icon(game.coverIcon, size: 64, color: Colors.white70),
+            ),
+          ],
           Positioned(
             top: 12,
             left: 12,
@@ -1791,6 +2005,14 @@ class _PlatformGameTabState extends State<PlatformGameTab>
             _detailInfoRow('平台', _config.name, tt, cs),
             const Divider(height: 20),
             _detailInfoRow('评分', '${game.rating}/5.0', tt, cs),
+            if (game.storeUrl != null && game.storeUrl!.isNotEmpty) ...[
+              const Divider(height: 20),
+              _detailInfoRow('商店', game.storeUrl!, tt, cs),
+            ],
+            if (_isLiveData) ...[
+              const Divider(height: 20),
+              _detailInfoRow('数据来源', '官方 API 实时数据', tt, cs),
+            ],
           ],
         ),
       ),
@@ -1858,17 +2080,32 @@ class _FeaturedGameCard extends StatelessWidget {
                 ),
               ),
               child: Stack(
+                fit: StackFit.expand,
                 children: [
-                  Positioned(
-                    right: -10,
-                    bottom: -10,
-                    child: Icon(game.coverIcon,
-                        size: 100, color: Colors.white.withValues(alpha: 0.08)),
-                  ),
-                  Center(
-                    child:
-                        Icon(game.coverIcon, size: 40, color: Colors.white60),
-                  ),
+                  // 优先显示官方封面图
+                  if (game.headerImageUrl != null &&
+                      game.headerImageUrl!.isNotEmpty)
+                    Image.network(
+                      game.headerImageUrl!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Center(
+                        child: Icon(game.coverIcon,
+                            size: 40, color: Colors.white60),
+                      ),
+                    )
+                  else ...[
+                    Positioned(
+                      right: -10,
+                      bottom: -10,
+                      child: Icon(game.coverIcon,
+                          size: 100,
+                          color: Colors.white.withValues(alpha: 0.08)),
+                    ),
+                    Center(
+                      child:
+                          Icon(game.coverIcon, size: 40, color: Colors.white60),
+                    ),
+                  ],
                   if (game.isFree)
                     Positioned(
                       top: 8,
@@ -2035,11 +2272,23 @@ class _CompactGameCard extends StatelessWidget {
                 ),
               ),
               child: Stack(
+                fit: StackFit.expand,
                 children: [
-                  Center(
-                    child:
-                        Icon(game.coverIcon, size: 30, color: Colors.white60),
-                  ),
+                  if (game.headerImageUrl != null &&
+                      game.headerImageUrl!.isNotEmpty)
+                    Image.network(
+                      game.headerImageUrl!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Center(
+                        child: Icon(game.coverIcon,
+                            size: 30, color: Colors.white60),
+                      ),
+                    )
+                  else
+                    Center(
+                      child:
+                          Icon(game.coverIcon, size: 30, color: Colors.white60),
+                    ),
                   if (game.isFree)
                     Positioned(
                       top: 4,

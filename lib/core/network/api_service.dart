@@ -1306,6 +1306,20 @@ class ApiService {
     return response.data as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> getPlatformGames({
+    required String platform,
+    int pageSize = 30,
+  }) async {
+    final response = await _dio.get(
+      '/api/v1/wasm-store/platform/games',
+      queryParameters: {
+        'platform': platform,
+        'page_size': pageSize,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
   /// 搜索游戏
   Future<Map<String, dynamic>> searchGames({
     String? query,

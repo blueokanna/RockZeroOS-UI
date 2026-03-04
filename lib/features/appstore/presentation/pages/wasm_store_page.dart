@@ -371,10 +371,18 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                   _buildRecommendationsTab(),
                   _buildMyLibraryTab(),
                   _buildSteamTab(),
-                  const PlatformGameTab(platform: GamePlatform.epic),
-                  const PlatformGameTab(platform: GamePlatform.wegame),
-                  const PlatformGameTab(platform: GamePlatform.ubisoft),
-                  const PlatformGameTab(platform: GamePlatform.xbox),
+                  PlatformGameTab(
+                      platform: GamePlatform.epic,
+                      apiService: ref.read(apiServiceProvider)),
+                  PlatformGameTab(
+                      platform: GamePlatform.wegame,
+                      apiService: ref.read(apiServiceProvider)),
+                  PlatformGameTab(
+                      platform: GamePlatform.ubisoft,
+                      apiService: ref.read(apiServiceProvider)),
+                  PlatformGameTab(
+                      platform: GamePlatform.xbox,
+                      apiService: ref.read(apiServiceProvider)),
                   _buildWasmAppsTab(),
                   _buildPluginsTab(),
                 ],

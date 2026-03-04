@@ -164,7 +164,25 @@ class _EnhancedMediaPlayerPageState
         ),
       );
 
-      _videoController = VideoController(_player!);
+      _videoController = VideoController(
+        _player!,
+        configuration: const VideoControllerConfiguration(
+          // Enable hardware decoding for better performance on ARM
+          enableHardwareAcceleration: true,
+        ),
+      );
+
+      // Set mpv properties for better HLS and video compatibility
+      if (_player!.platform is NativePlayer) {
+        final mpv = _player!.platform as NativePlayer;
+        // Video output: prefer GPU-accelerated rendering
+        await mpv.setProperty('hwdec', 'auto-safe');
+        // Cache settings for network streams
+        await mpv.setProperty('cache', 'yes');
+        await mpv.setProperty('cache-secs', '30');
+        await mpv.setProperty('demuxer-max-bytes', '64MiB');
+        await mpv.setProperty('demuxer-readahead-secs', '10');
+      }
 
       _player!.stream.playing.listen((playing) {
         if (mounted) setState(() => _isPlaying = playing);
@@ -452,7 +470,16 @@ class _EnhancedMediaPlayerPageState
 
   Widget _buildVideoPlayer() {
     if (_videoController == null) return const SizedBox.shrink();
-    return Video(controller: _videoController!, controls: NoVideoControls);
+    // Use SizedBox.expand to ensure the Video widget gets full constraints.
+    // Without explicit sizing, media_kit's Video widget may have zero size
+    // on some devices (especially ARM/Android), causing audio-only playback.
+    return SizedBox.expand(
+      child: Video(
+        controller: _videoController!,
+        fill: Colors.black,
+        controls: NoVideoControls,
+      ),
+    );
   }
 
   Widget _buildAudioPlayer() {

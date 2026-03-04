@@ -241,38 +241,74 @@ class _EnhancedAudioPlayerPageState
       final streamUrl = _getStreamUrl();
       debugPrint('[AudioPlayer] Using stream URL: $streamUrl');
 
-      // 使用 LockCachingAudioSource 支持更好的 seek（带认证头）
-      // 如果失败则回退到普通 AudioSource.uri
-      try {
-        // ignore: experimental_member_use
-        final audioSource = LockCachingAudioSource(
-          Uri.parse(streamUrl),
-          headers: headers,
-        );
+      // Try multiple audio source strategies in order of preference:
+      // 1. LockCachingAudioSource (supports seeking with caching)
+      // 2. AudioSource.uri with headers (basic URL streaming)
+      // 3. Plain setUrl fallback (simplest)
+      bool sourceSet = false;
 
-        await _audioPlayer!.setAudioSource(audioSource).timeout(
-          const Duration(seconds: 30),
-          onTimeout: () {
-            throw TimeoutException('Audio initialization timed out');
-          },
-        );
-      } catch (e) {
-        debugPrint(
-            '[AudioPlayer] LockCachingAudioSource failed: $e, trying AudioSource.uri...');
-        // 回退到普通 URI 音源 - 某些平台或格式不支持缓存音源
-        await _audioPlayer!
-            .setAudioSource(
-          AudioSource.uri(
+      // Strategy 1: LockCachingAudioSource — best for seek support
+      if (!sourceSet) {
+        try {
+          // ignore: experimental_member_use
+          final audioSource = LockCachingAudioSource(
             Uri.parse(streamUrl),
             headers: headers,
-          ),
-        )
-            .timeout(
-          const Duration(seconds: 30),
-          onTimeout: () {
-            throw TimeoutException('Audio initialization timed out');
-          },
-        );
+          );
+          await _audioPlayer!.setAudioSource(audioSource).timeout(
+            const Duration(seconds: 20),
+            onTimeout: () {
+              throw TimeoutException('LockCaching audio source timed out');
+            },
+          );
+          sourceSet = true;
+          debugPrint('[AudioPlayer] LockCachingAudioSource succeeded');
+        } catch (e) {
+          debugPrint('[AudioPlayer] LockCachingAudioSource failed: $e');
+        }
+      }
+
+      // Strategy 2: AudioSource.uri with headers
+      if (!sourceSet) {
+        try {
+          await _audioPlayer!
+              .setAudioSource(
+            AudioSource.uri(
+              Uri.parse(streamUrl),
+              headers: headers,
+            ),
+          )
+              .timeout(
+            const Duration(seconds: 20),
+            onTimeout: () {
+              throw TimeoutException('AudioSource.uri timed out');
+            },
+          );
+          sourceSet = true;
+          debugPrint('[AudioPlayer] AudioSource.uri succeeded');
+        } catch (e) {
+          debugPrint('[AudioPlayer] AudioSource.uri failed: $e');
+        }
+      }
+
+      // Strategy 3: setUrl (simplest, works for most straightforward streams)
+      if (!sourceSet) {
+        try {
+          await _audioPlayer!.setUrl(streamUrl, headers: headers).timeout(
+            const Duration(seconds: 20),
+            onTimeout: () {
+              throw TimeoutException('setUrl timed out');
+            },
+          );
+          sourceSet = true;
+          debugPrint('[AudioPlayer] setUrl succeeded');
+        } catch (e) {
+          debugPrint('[AudioPlayer] setUrl also failed: $e');
+        }
+      }
+
+      if (!sourceSet) {
+        throw Exception('All audio source strategies failed');
       }
 
       _setupListeners();
