@@ -2553,9 +2553,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
             final globalSent = totalSent + boundedSent;
             if (mounted) {
-              final ratio = totalSize > 0
-                  ? globalSent / totalSize.toDouble()
-                  : 0.0;
+              final ratio =
+                  totalSize > 0 ? globalSent / totalSize.toDouble() : 0.0;
               setState(() => _uploadProgress = ratio.clamp(0.0, 1.0));
             }
 
@@ -2886,9 +2885,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
             final globalSent = totalSent + boundedSent;
             if (mounted) {
-              final ratio = totalSize > 0
-                  ? globalSent / totalSize.toDouble()
-                  : 0.0;
+              final ratio =
+                  totalSize > 0 ? globalSent / totalSize.toDouble() : 0.0;
               setState(() => _uploadProgress = ratio.clamp(0.0, 1.0));
             }
             downloadManagerNotifier.updateUploadProgress(
