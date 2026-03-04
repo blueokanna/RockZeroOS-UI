@@ -62,6 +62,125 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
+# Pre-fetch media_kit Windows dependency archives with retry & MD5 verification.
+# This avoids transient network corruption causing plugin integrity check failure
+# after `flutter clean`.
+function(ENSURE_ARCHIVE_WITH_MD5 ARCHIVE_NAME ARCHIVE_URL ARCHIVE_MD5)
+  set(ARCHIVE_PATH "${CMAKE_BINARY_DIR}/${ARCHIVE_NAME}")
+  set(ARCHIVE_CACHE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.download_cache")
+  set(ARCHIVE_CACHE_PATH "${ARCHIVE_CACHE_DIR}/${ARCHIVE_NAME}")
+
+  file(MAKE_DIRECTORY "${ARCHIVE_CACHE_DIR}")
+
+  function(_validate_md5 FILE_PATH EXPECTED_MD5 OUT_VAR)
+    if(NOT EXISTS "${FILE_PATH}")
+      set(${OUT_VAR} FALSE PARENT_SCOPE)
+      return()
+    endif()
+
+    file(MD5 "${FILE_PATH}" ACTUAL_MD5)
+    if(ACTUAL_MD5 STREQUAL EXPECTED_MD5)
+      set(${OUT_VAR} TRUE PARENT_SCOPE)
+    else()
+      set(${OUT_VAR} FALSE PARENT_SCOPE)
+    endif()
+  endfunction()
+
+  _validate_md5("${ARCHIVE_PATH}" "${ARCHIVE_MD5}" BUILD_VALID)
+  if(BUILD_VALID)
+    message(STATUS "Archive verified: ${ARCHIVE_PATH}")
+    return()
+  endif()
+
+  if(EXISTS "${ARCHIVE_PATH}")
+    file(REMOVE "${ARCHIVE_PATH}")
+    message(STATUS "Removed corrupt archive: ${ARCHIVE_PATH}")
+  endif()
+
+  _validate_md5("${ARCHIVE_CACHE_PATH}" "${ARCHIVE_MD5}" CACHE_VALID)
+  if(CACHE_VALID)
+    file(COPY_FILE "${ARCHIVE_CACHE_PATH}" "${ARCHIVE_PATH}" ONLY_IF_DIFFERENT)
+    message(STATUS "Restored verified archive from cache: ${ARCHIVE_NAME}")
+    return()
+  endif()
+
+  if(EXISTS "${ARCHIVE_CACHE_PATH}")
+    file(REMOVE "${ARCHIVE_CACHE_PATH}")
+    message(STATUS "Removed corrupt cache archive: ${ARCHIVE_CACHE_PATH}")
+  endif()
+
+  set(MAX_RETRIES 8)
+  foreach(TRY_INDEX RANGE 1 ${MAX_RETRIES})
+    message(STATUS "Downloading ${ARCHIVE_NAME} (attempt ${TRY_INDEX}/${MAX_RETRIES})")
+
+    execute_process(
+      COMMAND curl
+        --fail
+        --location
+        --retry 2
+        --retry-all-errors
+        --retry-delay 2
+        --connect-timeout 30
+        --max-time 1800
+        --output "${ARCHIVE_CACHE_PATH}"
+        "${ARCHIVE_URL}"
+      RESULT_VARIABLE CURL_STATUS_CODE
+      OUTPUT_QUIET
+      ERROR_VARIABLE CURL_STATUS_TEXT
+    )
+
+    set(STATUS_CODE ${CURL_STATUS_CODE})
+    set(STATUS_TEXT "${CURL_STATUS_TEXT}")
+
+    if(NOT STATUS_CODE EQUAL 0)
+      file(
+        DOWNLOAD
+        "${ARCHIVE_URL}"
+        "${ARCHIVE_CACHE_PATH}"
+        STATUS DOWNLOAD_STATUS
+        LOG DOWNLOAD_LOG
+        SHOW_PROGRESS
+        TIMEOUT 1800
+        INACTIVITY_TIMEOUT 180
+        TLS_VERIFY ON
+      )
+
+      list(GET DOWNLOAD_STATUS 0 STATUS_CODE)
+      list(GET DOWNLOAD_STATUS 1 STATUS_TEXT)
+    endif()
+
+    if(STATUS_CODE EQUAL 0)
+      _validate_md5("${ARCHIVE_CACHE_PATH}" "${ARCHIVE_MD5}" DOWNLOADED_VALID)
+      if(DOWNLOADED_VALID)
+        file(COPY_FILE "${ARCHIVE_CACHE_PATH}" "${ARCHIVE_PATH}" ONLY_IF_DIFFERENT)
+        message(STATUS "Downloaded & verified: ${ARCHIVE_PATH}")
+        return()
+      endif()
+
+      file(REMOVE "${ARCHIVE_CACHE_PATH}")
+      message(WARNING "MD5 mismatch for ${ARCHIVE_NAME}, retrying...")
+      continue()
+    endif()
+
+    file(REMOVE "${ARCHIVE_CACHE_PATH}")
+    message(WARNING "Failed downloading ${ARCHIVE_NAME}: ${STATUS_TEXT}")
+  endforeach()
+
+  message(FATAL_ERROR "Failed to download verified archive after retries: ${ARCHIVE_NAME}")
+endfunction()
+
+ensure_archive_with_md5(
+  "mpv-dev-x86_64-20230924-git-652a1dd.7z"
+  "https://github.com/media-kit/libmpv-win32-video-build/releases/download/2023-09-24/mpv-dev-x86_64-20230924-git-652a1dd.7z"
+  "a832ef24b3a6ff97cd2560b5b9d04cd8"
+)
+
+ensure_archive_with_md5(
+  "ANGLE.7z"
+  "https://github.com/alexmercerind/flutter-windows-ANGLE-OpenGL-ES/releases/download/v1.0.1/ANGLE.7z"
+  "e866f13e8d552348058afaafe869b1ed"
+)
+
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
