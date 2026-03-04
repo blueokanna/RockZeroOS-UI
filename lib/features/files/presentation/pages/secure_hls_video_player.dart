@@ -224,17 +224,20 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     // ── Step 3: 创建 media_kit 播放器 ────────────────────────
     _player = Player(
       configuration: const PlayerConfiguration(
-        bufferSize: 64 * 1024 * 1024,
+        bufferSize: 256 * 1024 * 1024,
       ),
     );
 
     // libmpv 专用属性：优化 HLS 流播放
     if (_player!.platform is NativePlayer) {
       final mpv = _player!.platform as NativePlayer;
-      await mpv.setProperty('demuxer-max-bytes', '64MiB');
-      await mpv.setProperty('demuxer-readahead-secs', '10');
+      await mpv.setProperty('demuxer-max-bytes', '256MiB');
+      await mpv.setProperty('demuxer-readahead-secs', '45');
       await mpv.setProperty('cache', 'yes');
-      await mpv.setProperty('cache-secs', '30');
+      await mpv.setProperty('cache-secs', '90');
+      await mpv.setProperty('demuxer-max-back-bytes', '64MiB');
+      await mpv.setProperty('vd-lavc-threads', '0');
+      await mpv.setProperty('ad-lavc-threads', '0');
     }
 
     _videoController = VideoController(_player!);
