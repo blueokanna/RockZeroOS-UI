@@ -112,6 +112,7 @@ class UploadTask {
   DateTime? completedAt;
   DateTime? lastUpdateTime;
   int? lastUploadedBytes;
+  int currentSpeedBytesPerSec;
 
   UploadTask({
     required this.id,
@@ -126,9 +127,13 @@ class UploadTask {
     this.completedAt,
     this.lastUpdateTime,
     this.lastUploadedBytes,
+    this.currentSpeedBytesPerSec = 0,
   }) : createdAt = createdAt ?? DateTime.now();
 
-  double get progress => totalBytes > 0 ? uploadedBytes / totalBytes : 0;
+  double get progress {
+    if (totalBytes <= 0) return 0;
+    return (uploadedBytes / totalBytes).clamp(0.0, 1.0);
+  }
 
   String get progressText {
     if (totalBytes == 0) return '0%';
@@ -137,22 +142,47 @@ class UploadTask {
 
   /// 计算上传速度（字节/秒）
   int get uploadSpeed {
-    if (lastUpdateTime == null || lastUploadedBytes == null) return 0;
-
-    final now = DateTime.now();
-    final timeDiff = now.difference(lastUpdateTime!).inMilliseconds;
-
-    if (timeDiff <= 0) return 0;
-
-    final bytesDiff = uploadedBytes - lastUploadedBytes!;
-    return ((bytesDiff / timeDiff) * 1000).round();
+    if (currentSpeedBytesPerSec < 0) return 0;
+    return currentSpeedBytesPerSec;
   }
 
   /// 更新上传进度
   void updateProgress(int newUploadedBytes) {
-    lastUpdateTime = DateTime.now();
-    lastUploadedBytes = uploadedBytes;
-    uploadedBytes = newUploadedBytes;
+    final now = DateTime.now();
+    final previousUploaded = uploadedBytes;
+    final previousUpdateTime = lastUpdateTime;
+
+    lastUpdateTime = now;
+    lastUploadedBytes = previousUploaded;
+    final capped = totalBytes > 0
+        ? newUploadedBytes.clamp(0, totalBytes)
+        : newUploadedBytes.clamp(0, newUploadedBytes);
+    if (capped < uploadedBytes) {
+      return;
+    }
+
+    uploadedBytes = capped;
+
+    if (previousUpdateTime == null || capped <= previousUploaded) {
+      currentSpeedBytesPerSec = 0;
+      return;
+    }
+
+    final elapsedMs = now.difference(previousUpdateTime).inMilliseconds;
+    if (elapsedMs <= 0) {
+      return;
+    }
+
+    final deltaBytes = capped - previousUploaded;
+    final instantBps = ((deltaBytes * 1000) / elapsedMs).round();
+
+    if (currentSpeedBytesPerSec <= 0) {
+      currentSpeedBytesPerSec = instantBps;
+      return;
+    }
+
+    currentSpeedBytesPerSec =
+        ((currentSpeedBytesPerSec * 0.7) + (instantBps * 0.3)).round();
   }
 }
 
@@ -199,6 +229,7 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
   final Map<String, StreamSubscription> _downloadSubscriptions = {};
   final Map<String, http.Client> _httpClients = {};
   String? _authToken;
+  int _uploadIdSequence = 0;
 
   @override
   DownloadManagerState build() {
@@ -514,8 +545,20 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     final fileName = filePath.split('/').last;
     final fileSize = await file.length();
 
+    final existingActive = state.uploads.where((u) {
+      final sameTarget = u.filePath == filePath && u.uploadUrl == uploadUrl;
+      final active = u.status == DownloadStatus.pending ||
+          u.status == DownloadStatus.downloading;
+      return sameTarget && active;
+    });
+
+    if (existingActive.isNotEmpty) {
+      return existingActive.last;
+    }
+
+    final id = _nextUploadTaskId();
     final task = UploadTask(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      id: id,
       filePath: filePath,
       fileName: fileName,
       uploadUrl: uploadUrl,
@@ -526,11 +569,26 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     return task;
   }
 
+  String _nextUploadTaskId() {
+    while (true) {
+      _uploadIdSequence = (_uploadIdSequence + 1) % 1000000;
+      final candidate =
+          'up_${DateTime.now().microsecondsSinceEpoch}_$_uploadIdSequence';
+      final exists = state.uploads.any((u) => u.id == candidate);
+      if (!exists) return candidate;
+    }
+  }
+
   /// Update upload progress
   void updateUploadProgress(String taskId, int uploadedBytes) {
     final uploads = List<UploadTask>.from(state.uploads);
     final index = uploads.indexWhere((u) => u.id == taskId);
     if (index != -1) {
+      if (uploads[index].status == DownloadStatus.completed ||
+          uploads[index].status == DownloadStatus.cancelled) {
+        return;
+      }
+
       uploads[index].updateProgress(uploadedBytes);
       uploads[index].status = DownloadStatus.downloading;
       state = state.copyWith(uploads: uploads);
@@ -542,6 +600,10 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     final uploads = List<UploadTask>.from(state.uploads);
     final index = uploads.indexWhere((u) => u.id == taskId);
     if (index != -1) {
+      if (uploads[index].totalBytes > 0) {
+        uploads[index].uploadedBytes = uploads[index].totalBytes;
+      }
+      uploads[index].currentSpeedBytesPerSec = 0;
       uploads[index].status = DownloadStatus.completed;
       uploads[index].completedAt = DateTime.now();
       state = state.copyWith(uploads: uploads);
@@ -553,6 +615,12 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     final uploads = List<UploadTask>.from(state.uploads);
     final index = uploads.indexWhere((u) => u.id == taskId);
     if (index != -1) {
+      if (uploads[index].status == DownloadStatus.completed ||
+          uploads[index].status == DownloadStatus.cancelled) {
+        return;
+      }
+
+      uploads[index].currentSpeedBytesPerSec = 0;
       uploads[index].status = DownloadStatus.failed;
       uploads[index].error = error;
       state = state.copyWith(uploads: uploads);

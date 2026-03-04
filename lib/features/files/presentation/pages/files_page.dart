@@ -2533,40 +2533,53 @@ class _FilesPageState extends ConsumerState<FilesPage>
     try {
       final api = ref.read(apiServiceProvider);
 
-      await api.uploadToDirectory(
-        currentPath,
-        uploadFiles,
-        onProgress: (sent, total) {
-          if (mounted) {
-            setState(() => _uploadProgress = sent / total);
-          }
+      int totalSent = 0;
+      for (int i = 0; i < uploadFiles.length; i++) {
+        final file = uploadFiles[i];
+        final fileSize = file.lengthSync();
+        int fileLastSent = 0;
 
-          // Update individual upload task progress
-          // Distribute progress across individual tasks proportionally
-          int remaining = sent;
-          for (int i = 0;
-              i < uploadFiles.length && i < uploadTaskIds.length;
-              i++) {
-            final fileSize = uploadFiles[i].lengthSync();
-            final taskSent = remaining.clamp(0, fileSize);
-            remaining -= taskSent;
+        await api.uploadToDirectory(
+          currentPath,
+          [file],
+          onProgress: (sent, total) {
+            final normalizedTotal = total > 0 ? total : fileSize;
+            final boundedSent = sent.clamp(0, normalizedTotal);
+            if (boundedSent < fileLastSent) {
+              return;
+            }
 
-            downloadManagerNotifier.updateUploadProgress(
-              uploadTaskIds[i],
-              taskSent,
-            );
+            fileLastSent = boundedSent;
 
-            if (remaining <= 0) break;
-          }
-        },
-      );
+            final globalSent = totalSent + boundedSent;
+            if (mounted) {
+              final ratio = totalSize > 0
+                  ? globalSent / totalSize.toDouble()
+                  : 0.0;
+              setState(() => _uploadProgress = ratio.clamp(0.0, 1.0));
+            }
+
+            if (i < uploadTaskIds.length) {
+              downloadManagerNotifier.updateUploadProgress(
+                uploadTaskIds[i],
+                boundedSent,
+              );
+            }
+          },
+        );
+
+        totalSent += fileSize;
+        if (i < uploadTaskIds.length) {
+          downloadManagerNotifier.completeUpload(uploadTaskIds[i]);
+        }
+
+        if (mounted) {
+          final ratio = totalSize > 0 ? totalSent / totalSize.toDouble() : 0.0;
+          setState(() => _uploadProgress = ratio.clamp(0.0, 1.0));
+        }
+      }
 
       debugPrint('[Upload] Upload completed successfully');
-
-      // Mark all upload tasks as completed
-      for (final taskId in uploadTaskIds) {
-        downloadManagerNotifier.completeUpload(taskId);
-      }
 
       // 发送文件上传完成事件
       final monitor = ref.read(fileSystemMonitorProvider);
@@ -2611,8 +2624,17 @@ class _FilesPageState extends ConsumerState<FilesPage>
       debugPrint(
           '[Upload] DioException: ${e.type} - ${e.message} - ${e.error}');
 
-      // Mark all unfinished upload tasks as failed
+      // Mark unfinished upload tasks as failed
       for (final taskId in uploadTaskIds) {
+        final task = ref
+            .read(downloadManagerProvider)
+            .uploads
+            .where((u) => u.id == taskId)
+            .cast<UploadTask?>()
+            .firstWhere((u) => u != null, orElse: () => null);
+        if (task == null || task.status == DownloadStatus.completed) {
+          continue;
+        }
         downloadManagerNotifier.failUpload(
             taskId, e.message ?? 'Upload failed');
       }
@@ -2671,6 +2693,15 @@ class _FilesPageState extends ConsumerState<FilesPage>
       debugPrint('[Upload] Error: $e');
 
       for (final taskId in uploadTaskIds) {
+        final task = ref
+            .read(downloadManagerProvider)
+            .uploads
+            .where((u) => u.id == taskId)
+            .cast<UploadTask?>()
+            .firstWhere((u) => u != null, orElse: () => null);
+        if (task == null || task.status == DownloadStatus.completed) {
+          continue;
+        }
         downloadManagerNotifier.failUpload(taskId, e.toString());
       }
 
@@ -2850,14 +2881,19 @@ class _FilesPageState extends ConsumerState<FilesPage>
           targetDir,
           [file],
           onProgress: (sent, total) {
-            final globalSent = totalSent + sent;
+            final normalizedTotal = total > 0 ? total : file.lengthSync();
+            final boundedSent = sent.clamp(0, normalizedTotal);
+
+            final globalSent = totalSent + boundedSent;
             if (mounted) {
-              setState(
-                  () => _uploadProgress = globalSent / totalSize.toDouble());
+              final ratio = totalSize > 0
+                  ? globalSent / totalSize.toDouble()
+                  : 0.0;
+              setState(() => _uploadProgress = ratio.clamp(0.0, 1.0));
             }
             downloadManagerNotifier.updateUploadProgress(
               uploadTaskIds[i],
-              sent,
+              boundedSent,
             );
           },
         );
@@ -2867,7 +2903,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
         downloadManagerNotifier.completeUpload(uploadTaskIds[i]);
 
         if (mounted) {
-          setState(() => _uploadProgress = totalSent / totalSize.toDouble());
+          final ratio = totalSize > 0 ? totalSent / totalSize.toDouble() : 0.0;
+          setState(() => _uploadProgress = ratio.clamp(0.0, 1.0));
         }
       }
 

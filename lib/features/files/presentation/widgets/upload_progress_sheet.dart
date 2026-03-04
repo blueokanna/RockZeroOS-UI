@@ -54,7 +54,17 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
     final transportState = ref.watch(downloadManagerProvider);
     final colorScheme = Theme.of(context).colorScheme;
 
-    final allUploads = transportState.uploads;
+    final dedupedUploadsByTarget = <String, UploadTask>{};
+    for (final upload in transportState.uploads) {
+      final key = '${upload.uploadUrl}|${upload.filePath}';
+      final existing = dedupedUploadsByTarget[key];
+      if (existing == null || upload.createdAt.isAfter(existing.createdAt)) {
+        dedupedUploadsByTarget[key] = upload;
+      }
+    }
+
+    final allUploads = dedupedUploadsByTarget.values.toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     final activeUploads = allUploads
         .where((u) =>
             u.status == DownloadStatus.downloading ||

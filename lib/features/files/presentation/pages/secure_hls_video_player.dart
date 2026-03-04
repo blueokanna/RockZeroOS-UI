@@ -632,11 +632,14 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
   void _seekTo(Duration position) {
     if (_player == null) return;
-    final totalDuration = _effectiveTotalDuration;
-    final clamped = Duration(
-      milliseconds:
-          position.inMilliseconds.clamp(0, totalDuration.inMilliseconds),
-    );
+    final targetMs = position.inMilliseconds;
+    final clampedMs = targetMs < 0
+        ? 0
+        : (_durationHint > Duration.zero
+            ? targetMs.clamp(0, _durationHint.inMilliseconds)
+            : targetMs);
+
+    final clamped = Duration(milliseconds: clampedMs);
     _player!.seek(clamped);
   }
 
@@ -1007,6 +1010,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         : _position;
     final posMs = displayPosition.inMilliseconds.toDouble();
     final bufMs = _bufferedPosition.inMilliseconds.toDouble();
+    final safeTotalMs = totalMs <= 0 ? posMs : totalMs;
 
     return SafeArea(
       top: false,
@@ -1059,14 +1063,17 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
                 secondaryActiveTrackColor: Colors.white.withValues(alpha: 0.3),
               ),
               child: Slider(
-                value: totalMs > 0 ? (posMs / totalMs).clamp(0.0, 1.0) : 0.0,
-                secondaryTrackValue:
-                    totalMs > 0 ? (bufMs / totalMs).clamp(0.0, 1.0) : 0.0,
-                onChanged: totalMs <= 0
+                value: safeTotalMs > 0
+                    ? (posMs / safeTotalMs).clamp(0.0, 1.0)
+                    : 0.0,
+                secondaryTrackValue: safeTotalMs > 0
+                    ? (bufMs / safeTotalMs).clamp(0.0, 1.0)
+                    : 0.0,
+                onChanged: safeTotalMs <= 0
                     ? null
                     : (value) {
                         final newPos = Duration(
-                          milliseconds: (value * totalMs).round(),
+                          milliseconds: (value * safeTotalMs).round(),
                         );
                         setState(() {
                           _isDraggingProgress = true;
@@ -1082,7 +1089,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
                 },
                 onChangeEnd: (value) {
                   final target = _dragPreviewPosition ??
-                      Duration(milliseconds: (value * totalMs).round());
+                      Duration(milliseconds: (value * safeTotalMs).round());
                   setState(() {
                     _isDraggingProgress = false;
                     _dragPreviewPosition = null;
