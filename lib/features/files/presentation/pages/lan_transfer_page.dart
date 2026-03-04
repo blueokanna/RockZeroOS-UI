@@ -24,18 +24,12 @@ class _LanTransferPageState extends ConsumerState<LanTransferPage>
     with TickerProviderStateMixin {
   late final TabController _tabController;
 
-  // 本机共享列表
   List<Map<String, dynamic>> _sharedItems = [];
   bool _isLoadingShared = false;
-
-  // 传输会话
   List<Map<String, dynamic>> _sessions = [];
 
-  // 上次发现的设备
   List<_PeerDevice> _peers = [];
   bool _isScanning = false;
-
-  // 自动刷新 timer
   Timer? _refreshTimer;
 
   @override

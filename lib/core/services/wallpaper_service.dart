@@ -304,7 +304,7 @@ class WallpaperBlurAmountNotifier extends Notifier<double> {
 }
 
 /// 混合后的主题色 Provider
-/// 自定义壁纸模式: 70% 手机壁纸色 + 30% 自定义壁纸色
+/// 自定义壁纸模式: 80% 自定义壁纸色 + 20% 系统色
 /// 默认模式: 不混合，返回null让系统使用种子颜色
 final blendedThemeColorProvider = Provider<Color?>((ref) {
   final backgroundMode = ref.watch(backgroundModeProvider);
@@ -314,8 +314,8 @@ final blendedThemeColorProvider = Provider<Color?>((ref) {
   // 只有在自定义壁纸模式下才混合颜色
   if (backgroundMode == BackgroundMode.customWallpaper) {
     if (wallpaperColor != null && systemColor != null) {
-      // 70% 手机壁纸色 + 30% 自定义上传壁纸色
-      return WallpaperService.blendColors(systemColor, wallpaperColor, 0.7);
+      // 80% 自定义壁纸色 + 20% 系统色
+      return WallpaperService.blendColors(wallpaperColor, systemColor, 0.8);
     } else if (wallpaperColor != null) {
       // 没有系统颜色，使用100%自定义壁纸颜色
       return wallpaperColor;

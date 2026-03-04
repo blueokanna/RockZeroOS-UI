@@ -131,31 +131,38 @@ class GlassmorphicBackground extends StatelessWidget {
   final double blur;
   final double opacity;
   final Color? color;
+  final BorderRadius? borderRadius;
 
   const GlassmorphicBackground({
     super.key,
     required this.child,
-    this.blur = 10.0,
-    this.opacity = 0.1,
+    this.blur = 20.0,
+    this.opacity = 0.15,
     this.color,
+    this.borderRadius,
   });
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final backgroundColor = color ?? colorScheme.surface;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final backgroundColor = color ?? (isDark ? Colors.black : Colors.white);
+    final br = borderRadius ?? BorderRadius.circular(20);
 
     return ClipRRect(
+      borderRadius: br,
       child: BackdropFilter(
         filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
         child: Container(
           decoration: BoxDecoration(
             color: backgroundColor.withValues(alpha: opacity),
             border: Border.all(
-              color: colorScheme.outline.withValues(alpha: 0.2),
-              width: 1,
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.12)
+                  : colorScheme.outline.withValues(alpha: 0.15),
+              width: 0.5,
             ),
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: br,
           ),
           child: child,
         ),
@@ -165,12 +172,15 @@ class GlassmorphicBackground extends StatelessWidget {
 }
 
 /// 动态颜色卡片 - 根据壁纸颜色自动调整
+/// 壁纸模式下使用毛玻璃效果（高对比度模糊透明背景）
+/// 默认模式下使用普通 Card 样式
 class DynamicColorCard extends ConsumerWidget {
   final Widget child;
   final EdgeInsetsGeometry? padding;
   final EdgeInsetsGeometry? margin;
   final double? elevation;
   final BorderRadius? borderRadius;
+  final double blurAmount;
 
   const DynamicColorCard({
     super.key,
@@ -179,23 +189,69 @@ class DynamicColorCard extends ConsumerWidget {
     this.margin,
     this.elevation,
     this.borderRadius,
+    this.blurAmount = 20.0,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colorScheme = Theme.of(context).colorScheme;
+    final backgroundMode = ref.watch(backgroundModeProvider);
     final blendedColor = ref.watch(blendedThemeColorProvider);
+    final br = borderRadius ?? BorderRadius.circular(20);
+    final isWallpaperMode = backgroundMode == BackgroundMode.customWallpaper;
 
+    if (isWallpaperMode) {
+      // 壁纸模式 — 毛玻璃效果：透明背景 + 高对比度模糊
+      final isDark = Theme.of(context).brightness == Brightness.dark;
+      final baseColor = isDark
+          ? Colors.black.withValues(alpha: 0.35)
+          : Colors.white.withValues(alpha: 0.45);
+      final borderColor = isDark
+          ? Colors.white.withValues(alpha: 0.12)
+          : Colors.black.withValues(alpha: 0.08);
+
+      return Padding(
+        padding: margin ?? EdgeInsets.zero,
+        child: ClipRRect(
+          borderRadius: br,
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(
+              sigmaX: blurAmount,
+              sigmaY: blurAmount,
+            ),
+            child: Container(
+              padding: padding ?? const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: baseColor,
+                borderRadius: br,
+                border: Border.all(color: borderColor, width: 0.5),
+                gradient: blendedColor != null
+                    ? LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          baseColor,
+                          blendedColor.withValues(alpha: isDark ? 0.08 : 0.06),
+                        ],
+                      )
+                    : null,
+              ),
+              child: child,
+            ),
+          ),
+        ),
+      );
+    }
+
+    // 默认模式 — 普通 Card 样式
     return Card(
       margin: margin,
       elevation: elevation,
-      shape: RoundedRectangleBorder(
-        borderRadius: borderRadius ?? BorderRadius.circular(16),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: br),
       child: Container(
         padding: padding ?? const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          borderRadius: borderRadius ?? BorderRadius.circular(16),
+          borderRadius: br,
           gradient: blendedColor != null
               ? LinearGradient(
                   begin: Alignment.topLeft,

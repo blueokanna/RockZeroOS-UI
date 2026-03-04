@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:window_manager/window_manager.dart';
@@ -25,6 +26,23 @@ void main() async {
   await Hive.initFlutter();
   await Hive.openBox('settings');
   await Hive.openBox('cache');
+
+  // 设置 Android 全面屏手势导航 (edge-to-edge) 与透明系统栏
+  if (!kIsWeb && Platform.isAndroid) {
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.edgeToEdge,
+      overlays: SystemUiOverlay.values,
+    );
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+      systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarDividerColor: Colors.transparent,
+      systemNavigationBarIconBrightness: Brightness.dark,
+      systemStatusBarContrastEnforced: false,
+      systemNavigationBarContrastEnforced: false,
+    ));
+  }
 
   if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
     await _setupDesktopWindow();
@@ -96,6 +114,22 @@ class _RockZeroAppState extends ConsumerState<RockZeroApp> {
       darkTheme: AppTheme.dark(effectiveColor),
       routerConfig: router,
       builder: (context, child) {
+        // 根据实际亮度更新系统栏图标颜色
+        final brightness = Theme.of(context).brightness;
+        final iconBrightness =
+            brightness == Brightness.dark ? Brightness.light : Brightness.dark;
+        if (!kIsWeb && Platform.isAndroid) {
+          SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
+            statusBarColor: Colors.transparent,
+            statusBarIconBrightness: iconBrightness,
+            systemNavigationBarColor: Colors.transparent,
+            systemNavigationBarDividerColor: Colors.transparent,
+            systemNavigationBarIconBrightness: iconBrightness,
+            systemStatusBarContrastEnforced: false,
+            systemNavigationBarContrastEnforced: false,
+          ));
+        }
+
         // Clamp text scale factor to prevent layout breakage
         final mediaQuery = MediaQuery.of(context);
         final clampedTextScaler = mediaQuery.textScaler.clamp(

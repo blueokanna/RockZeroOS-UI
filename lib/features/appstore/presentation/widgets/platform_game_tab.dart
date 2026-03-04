@@ -8,7 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // 平台配置 & 游戏数据模型
 // ============================================================================
 
-enum GamePlatform { wegame, ubisoft, xbox }
+enum GamePlatform { wegame, ubisoft, xbox, epic }
 
 /// 游戏数据模型 — 包含完整的游戏信息用于原生展示
 class GameData {
@@ -76,6 +76,8 @@ class PlatformConfig {
         return _ubisoftConfig;
       case GamePlatform.xbox:
         return _xboxConfig;
+      case GamePlatform.epic:
+        return _epicConfig;
     }
   }
 }
@@ -85,6 +87,201 @@ class GameCategory {
   final IconData icon;
   const GameCategory(this.name, this.icon);
 }
+
+// ============================================================================
+// Epic Games 游戏数据 (https://store.epicgames.com/zh-CN/)
+// ============================================================================
+
+final PlatformConfig _epicConfig = PlatformConfig(
+  name: 'Epic Games',
+  subtitle: 'Epic Games Store · 每周免费游戏',
+  brandColor: const Color(0xFF2A2A2A),
+  brandColorLight: const Color(0xFF757575),
+  icon: Icons.store_rounded,
+  categories: const [
+    GameCategory('动作', Icons.directions_run_rounded),
+    GameCategory('冒险', Icons.explore_rounded),
+    GameCategory('RPG', Icons.person_rounded),
+    GameCategory('射击', Icons.gps_fixed_rounded),
+    GameCategory('开放世界', Icons.landscape_rounded),
+    GameCategory('免费', Icons.card_giftcard_rounded),
+  ],
+  allGames: const [
+    GameData(
+      id: 'epic_fortnite',
+      name: 'Fortnite / 堡垒之夜',
+      developer: 'Epic Games',
+      genre: '射击',
+      isFree: true,
+      rating: 4.5,
+      description: 'Epic Games 旗舰大逃杀游戏。100 名玩家空降岛屿，搜集武器和材料，'
+          '独创建造系统可在战斗中搭建掩体和高地。持续更新的赛季内容、'
+          '联动皮肤和创意模式 (UEFN) 让游戏始终保持热度。',
+      tags: ['大逃杀', 'FPS', '建造', '免费'],
+      coverGradient: [Color(0xFF1A237E), Color(0xFF7C4DFF)],
+      coverIcon: Icons.construction_rounded,
+      isFeatured: true,
+    ),
+    GameData(
+      id: 'epic_rocketl',
+      name: 'Rocket League / 火箭联盟',
+      developer: 'Psyonix',
+      genre: '动作',
+      isFree: true,
+      rating: 4.4,
+      description: '用火箭驱动的赛车踢足球！简单易懂但极难精通的竞技游戏，'
+          '物理驱动的独特玩法，1v1 到 4v4 多种模式。赛季排位系统、'
+          '丰富的车身定制和电竞联赛 RLCS 为游戏注入竞技活力。',
+      tags: ['竞技', '体育', '赛车', '免费'],
+      coverGradient: [Color(0xFFE65100), Color(0xFFFF6D00)],
+      coverIcon: Icons.sports_soccer_rounded,
+      isFeatured: true,
+    ),
+    GameData(
+      id: 'epic_gta5',
+      name: 'Grand Theft Auto V',
+      developer: 'Rockstar Games',
+      genre: '开放世界',
+      price: '¥148',
+      rating: 4.7,
+      description: '开放世界犯罪动作经典。三位主角在洛圣都展开犯罪冒险，'
+          '丰富的主线与支线任务，GTA Online 持续更新的多人内容。'
+          '自由探索、驾驶、竞速、对战，一切皆有可能。',
+      tags: ['开放世界', '动作', '犯罪', '在线'],
+      coverGradient: [Color(0xFF1B5E20), Color(0xFF388E3C)],
+      coverIcon: Icons.location_city_rounded,
+      isFeatured: true,
+    ),
+    GameData(
+      id: 'epic_rdr2',
+      name: 'Red Dead Redemption 2',
+      developer: 'Rockstar Games',
+      genre: '开放世界',
+      price: '¥249',
+      rating: 4.9,
+      description: '西部开放世界史诗巨作。在 1899 年的美国西部扮演亡命之徒亚瑟·摩根，'
+          '体验无与伦比的剧情深度和世界细节。狩猎、钓鱼、搜刮、营地管理'
+          '和荣誉系统打造极度真实的西部生存体验。',
+      tags: ['开放世界', '冒险', '西部', '叙事'],
+      coverGradient: [Color(0xFFBF360C), Color(0xFFE64A19)],
+      coverIcon: Icons.landscape_rounded,
+    ),
+    GameData(
+      id: 'epic_control',
+      name: 'Control',
+      developer: 'Remedy Entertainment',
+      genre: '动作',
+      price: '¥128',
+      rating: 4.3,
+      description: '超自然动作冒险游戏。进入联邦控制局的「太古屋」——一栋被超自然力量'
+          '入侵的神秘建筑。获取超能力、探索不断变化的空间，击败「嘶」的入侵。'
+          'Remedy 标志性的叙事风格与创新的战斗系统。',
+      tags: ['动作', '超自然', '冒险', '第三人称'],
+      coverGradient: [Color(0xFFB71C1C), Color(0xFFD32F2F)],
+      coverIcon: Icons.auto_fix_high_rounded,
+      isFeatured: true,
+    ),
+    GameData(
+      id: 'epic_alan2',
+      name: 'Alan Wake 2',
+      developer: 'Remedy Entertainment',
+      genre: '冒险',
+      price: '¥298',
+      rating: 4.6,
+      description: '生存恐怖游戏。双主角叙事：FBI 探员萨嘉·安德森调查一系列仪式凶案，'
+          '作家艾伦·韦克试图从黑暗之地逃离。次世代画面品质、Remedy 巅峰'
+          '叙事设计和大气的恐怖氛围。',
+      tags: ['恐怖', '冒险', '叙事', '双主角'],
+      coverGradient: [Color(0xFF1A237E), Color(0xFF283593)],
+      coverIcon: Icons.flashlight_on_rounded,
+    ),
+    GameData(
+      id: 'epic_kingdom',
+      name: 'Kingdom Hearts III',
+      developer: 'Square Enix',
+      genre: 'RPG',
+      price: '¥248',
+      rating: 4.2,
+      description: '迪士尼 × 最终幻想的经典 RPG 系列。与唐老鸭和高飞探索'
+          '迪士尼经典电影世界——冰雪奇缘、玩具总动员、加勒比海盗等。'
+          '爽快的动作战斗系统和动人的原创剧情。',
+      tags: ['RPG', '动作', '迪士尼', '冒险'],
+      coverGradient: [Color(0xFF0D47A1), Color(0xFF1976D2)],
+      coverIcon: Icons.key_rounded,
+    ),
+    GameData(
+      id: 'epic_hitman3',
+      name: 'Hitman: World of Assassination',
+      developer: 'IO Interactive',
+      genre: '动作',
+      price: '¥198',
+      rating: 4.4,
+      description: '终极暗杀模拟游戏。在全球各地的精心设计关卡中扮演 47 号特工执行合约。'
+          '自由选择暗杀方式——伪装渗透、毒杀、事故制造，每个关卡都有'
+          '数十种完成方式，重玩价值极高。',
+      tags: ['潜行', '动作', '暗杀', '策略'],
+      coverGradient: [Color(0xFF263238), Color(0xFF37474F)],
+      coverIcon: Icons.security_rounded,
+    ),
+    GameData(
+      id: 'epic_dying2',
+      name: 'Dying Light 2',
+      developer: 'Techland',
+      genre: 'RPG',
+      price: '¥198',
+      rating: 4.1,
+      description: '开放世界动作 RPG。在末日后的城市中跑酷穿越，白天探索搜刮，'
+          '夜晚躲避凶猛的感染者。你的选择影响城市势力格局和游戏结局。'
+          '流畅的跑酷动作和紧张的生存体验。',
+      tags: ['开放世界', '跑酷', '生存', '合作'],
+      coverGradient: [Color(0xFF33691E), Color(0xFF558B2F)],
+      coverIcon: Icons.directions_run_rounded,
+    ),
+    GameData(
+      id: 'epic_fall',
+      name: 'Fall Guys',
+      developer: 'Mediatonic',
+      genre: '免费',
+      isFree: true,
+      rating: 4.0,
+      description: '大型多人派对竞技游戏。60 名玩家竞速闯关，穿越各种欢乐障碍赛道，'
+          '最终决出冠军。简单搞笑的操作和丰富的皮肤收集，'
+          '适合全年龄段的轻松竞技娱乐。',
+      tags: ['派对', '竞技', '闯关', '免费'],
+      coverGradient: [Color(0xFFE91E63), Color(0xFFFF5722)],
+      coverIcon: Icons.emoji_events_rounded,
+      isFeatured: true,
+    ),
+    GameData(
+      id: 'epic_sifu',
+      name: 'Sifu',
+      developer: 'Sloclap',
+      genre: '动作',
+      price: '¥148',
+      rating: 4.5,
+      description: '功夫动作游戏。每次死亡角色都会变老，在有限的生命次数内复仇。'
+          '流畅的白鹤拳武术动作、精良的环境互动战斗和独创的衰老机制。'
+          '每次死亡都是学习，每场战斗都是修行。',
+      tags: ['动作', '格斗', '功夫', '独立'],
+      coverGradient: [Color(0xFF4A148C), Color(0xFF7B1FA2)],
+      coverIcon: Icons.sports_martial_arts_rounded,
+    ),
+    GameData(
+      id: 'epic_gowr',
+      name: 'God of War Ragnarök',
+      developer: 'Santa Monica Studio',
+      genre: 'RPG',
+      price: '¥298',
+      rating: 4.8,
+      description: '北欧神话动作 RPG 巨作。奎托斯与儿子阿特柔斯踏上九界冒险之旅，'
+          '对抗诸神黄昏的到来。震撼的战斗系统、精美的画面和深度的'
+          '父子叙事，当之无愧的年度游戏。',
+      tags: ['动作RPG', '北欧神话', '冒险', '叙事'],
+      coverGradient: [Color(0xFF0D47A1), Color(0xFF1565C0)],
+      coverIcon: Icons.flash_on_rounded,
+    ),
+  ],
+);
 
 // ============================================================================
 // WeGame 游戏数据

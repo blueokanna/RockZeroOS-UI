@@ -157,7 +157,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
         body: SafeArea(
           child: Center(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 400),
                 child: Column(
@@ -165,46 +165,48 @@ class _LoginPageState extends ConsumerState<LoginPage>
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     // Logo with pulse animation
-                    AnimatedBuilder(
-                      animation: _pulseController,
-                      builder: (context, child) {
-                        return Transform.scale(
-                          scale: 1.0 + (_pulseController.value * 0.05),
-                          child: Container(
-                            width: 80,
-                            height: 80,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  colorScheme.primary,
-                                  colorScheme.tertiary,
-                                ],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                              borderRadius: BorderRadius.circular(24),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: colorScheme.primary
-                                      .withValues(alpha: 0.3),
-                                  blurRadius: 20,
-                                  spreadRadius: 2,
+                    Center(
+                      child: AnimatedBuilder(
+                        animation: _pulseController,
+                        builder: (context, child) {
+                          return Transform.scale(
+                            scale: 1.0 + (_pulseController.value * 0.04),
+                            child: Container(
+                              width: 72,
+                              height: 72,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    colorScheme.primary,
+                                    colorScheme.tertiary,
+                                  ],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
                                 ),
-                              ],
+                                borderRadius: BorderRadius.circular(22),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: colorScheme.primary
+                                        .withValues(alpha: 0.25),
+                                    blurRadius: 16,
+                                    spreadRadius: 1,
+                                  ),
+                                ],
+                              ),
+                              child: const Icon(
+                                Icons.cloud_done_rounded,
+                                size: 38,
+                                color: Colors.white,
+                              ),
                             ),
-                            child: const Icon(
-                              Icons.cloud_done_rounded,
-                              size: 44,
-                              color: Colors.white,
-                            ),
+                          );
+                        },
+                      ).animate().scale(
+                            duration: M3Durations.medium2,
+                            curve: M3Curves.emphasizedDecelerate,
                           ),
-                        );
-                      },
-                    ).animate().scale(
-                          duration: M3Durations.long2,
-                          curve: M3Curves.emphasized,
-                        ),
-                    const SizedBox(height: 20),
+                    ),
+                    const SizedBox(height: 16),
                     Text(
                       'RockZero',
                       style: textTheme.headlineMedium?.copyWith(
@@ -212,7 +214,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
                         color: colorScheme.primary,
                       ),
                       textAlign: TextAlign.center,
-                    ).animate().fadeIn(delay: 100.ms),
+                    ).animate().fadeIn(delay: 50.ms, duration: 200.ms),
                     const SizedBox(height: 4),
                     Text(
                       'Secure Home Cloud',
@@ -220,277 +222,305 @@ class _LoginPageState extends ConsumerState<LoginPage>
                         color: colorScheme.onSurfaceVariant,
                       ),
                       textAlign: TextAlign.center,
-                    ).animate().fadeIn(delay: 150.ms),
+                    ).animate().fadeIn(delay: 80.ms, duration: 200.ms),
                     const SizedBox(height: 12),
                     if (device != null)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: colorScheme.tertiaryContainer,
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              width: 10,
-                              height: 10,
-                              decoration: BoxDecoration(
-                                color: Colors.green,
-                                shape: BoxShape.circle,
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.green.withValues(alpha: 0.5),
-                                    blurRadius: 6,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Text(
-                              'Connected to ${device.ip}',
-                              style: textTheme.bodySmall?.copyWith(
-                                color: colorScheme.onTertiaryContainer,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ).animate().fadeIn(delay: 200.ms),
-                    const SizedBox(height: 40),
-
-                    // Biometric Login Button (if enabled)
-                    if (biometricEnabled)
-                      biometricAvailable.when(
-                        data: (available) {
-                          if (!available) return const SizedBox.shrink();
-                          return Column(
+                      Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: colorScheme.tertiaryContainer
+                                .withValues(alpha: 0.85),
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              _BiometricButton(
-                                isLoading: _isBiometricLoading,
-                                onPressed: _handleBiometricLogin,
-                              ).animate().fadeIn(delay: 250.ms).scale(
-                                    begin: const Offset(0.9, 0.9),
-                                    curve: M3Curves.emphasized,
-                                  ),
-                              const SizedBox(height: 24),
-                              Row(
-                                children: [
-                                  Expanded(
-                                      child: Divider(
-                                          color: colorScheme.outlineVariant)),
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 16),
-                                    child: Text(
-                                      'or sign in with password',
-                                      style: textTheme.bodySmall?.copyWith(
-                                        color: colorScheme.onSurfaceVariant,
-                                      ),
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: Colors.green,
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color:
+                                          Colors.green.withValues(alpha: 0.5),
+                                      blurRadius: 4,
                                     ),
-                                  ),
-                                  Expanded(
-                                      child: Divider(
-                                          color: colorScheme.outlineVariant)),
-                                ],
-                              ).animate().fadeIn(delay: 300.ms),
-                              const SizedBox(height: 24),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Connected to ${device.ip}',
+                                style: textTheme.bodySmall?.copyWith(
+                                  color: colorScheme.onTertiaryContainer,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
                             ],
-                          );
-                        },
-                        loading: () => const SizedBox.shrink(),
-                        error: (_, __) => const SizedBox.shrink(),
+                          ),
+                        ).animate().fadeIn(delay: 100.ms, duration: 200.ms),
                       ),
+                    const SizedBox(height: 28),
 
-                    // Login Form
-                    Form(
-                      key: _formKey,
+                    // Glass card wrapping the form
+                    DynamicColorCard(
+                      padding: const EdgeInsets.all(24),
+                      borderRadius: BorderRadius.circular(24),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          TextFormField(
-                            controller: _emailController,
-                            keyboardType: TextInputType.emailAddress,
-                            textInputAction: TextInputAction.next,
-                            decoration: InputDecoration(
-                              labelText: 'Email',
-                              prefixIcon: const Icon(Icons.email_rounded),
-                              filled: true,
-                              fillColor: colorScheme.surfaceContainerHighest
-                                  .withValues(alpha: 0.5),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide.none,
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide.none,
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide(
-                                    color: colorScheme.primary, width: 2),
-                              ),
+                          if (biometricEnabled)
+                            biometricAvailable.when(
+                              data: (available) {
+                                if (!available) return const SizedBox.shrink();
+                                return Column(
+                                  children: [
+                                    _BiometricButton(
+                                      isLoading: _isBiometricLoading,
+                                      onPressed: _handleBiometricLogin,
+                                    ).animate().fadeIn(
+                                          delay: 120.ms,
+                                          duration: 200.ms,
+                                        ),
+                                    const SizedBox(height: 20),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Divider(
+                                            color: colorScheme.outlineVariant,
+                                          ),
+                                        ),
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                          ),
+                                          child: Text(
+                                            'or sign in with password',
+                                            style:
+                                                textTheme.bodySmall?.copyWith(
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
+                                            ),
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: Divider(
+                                            color: colorScheme.outlineVariant,
+                                          ),
+                                        ),
+                                      ],
+                                    ).animate().fadeIn(
+                                          delay: 140.ms,
+                                          duration: 200.ms,
+                                        ),
+                                    const SizedBox(height: 20),
+                                  ],
+                                );
+                              },
+                              loading: () => const SizedBox.shrink(),
+                              error: (_, __) => const SizedBox.shrink(),
                             ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Please enter your email';
-                              }
-                              if (!value.contains('@')) {
-                                return 'Please enter a valid email';
-                              }
-                              return null;
-                            },
-                          )
-                              .animate()
-                              .fadeIn(delay: 350.ms)
-                              .slideX(begin: -0.05),
-                          const SizedBox(height: 16),
-                          TextFormField(
-                            controller: _passwordController,
-                            obscureText: _obscurePassword,
-                            textInputAction: TextInputAction.done,
-                            onFieldSubmitted: (_) => _handleLogin(),
-                            decoration: InputDecoration(
-                              labelText: 'Password',
-                              prefixIcon: const Icon(Icons.lock_rounded),
-                              filled: true,
-                              fillColor: colorScheme.surfaceContainerHighest
-                                  .withValues(alpha: 0.5),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide.none,
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide.none,
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide(
-                                    color: colorScheme.primary, width: 2),
-                              ),
-                              suffixIcon: IconButton(
-                                icon: Icon(
-                                  _obscurePassword
-                                      ? Icons.visibility_rounded
-                                      : Icons.visibility_off_rounded,
-                                ),
-                                onPressed: () {
-                                  setState(() =>
-                                      _obscurePassword = !_obscurePassword);
-                                },
-                              ),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Please enter your password';
-                              }
-                              return null;
-                            },
-                          )
-                              .animate()
-                              .fadeIn(delay: 400.ms)
-                              .slideX(begin: -0.05),
-                          const SizedBox(height: 24),
-
-                          // Error Message
-                          if (authState.error != null)
-                            Container(
-                              padding: const EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                color: colorScheme.errorContainer,
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.error_rounded,
-                                    color: colorScheme.onErrorContainer,
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Text(
-                                      authState.error!,
-                                      style: TextStyle(
-                                        color: colorScheme.onErrorContainer,
+                          Form(
+                            key: _formKey,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                TextFormField(
+                                  controller: _emailController,
+                                  keyboardType: TextInputType.emailAddress,
+                                  textInputAction: TextInputAction.next,
+                                  decoration: InputDecoration(
+                                    labelText: 'Email',
+                                    prefixIcon: const Icon(Icons.email_rounded),
+                                    filled: true,
+                                    fillColor: colorScheme
+                                        .surfaceContainerHighest
+                                        .withValues(alpha: 0.5),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                      borderSide: BorderSide(
+                                        color: colorScheme.primary,
+                                        width: 2,
                                       ),
                                     ),
                                   ),
-                                ],
-                              ),
-                            ).animate().shake(),
-
-                          if (authState.error != null)
-                            const SizedBox(height: 16),
-
-                          // Login Button
-                          FilledButton(
-                            onPressed:
-                                authState.isLoading ? null : _handleLogin,
-                            style: FilledButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                            ),
-                            child: authState.isLoading
-                                ? SizedBox(
-                                    height: 24,
-                                    width: 24,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.5,
-                                      color: colorScheme.onPrimary,
+                                  validator: (value) {
+                                    if (value == null || value.isEmpty) {
+                                      return 'Please enter your email';
+                                    }
+                                    if (!value.contains('@')) {
+                                      return 'Please enter a valid email';
+                                    }
+                                    return null;
+                                  },
+                                ).animate().fadeIn(
+                                      delay: 150.ms,
+                                      duration: 200.ms,
                                     ),
-                                  )
-                                : const Text(
-                                    'Sign In',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
+                                const SizedBox(height: 16),
+                                TextFormField(
+                                  controller: _passwordController,
+                                  obscureText: _obscurePassword,
+                                  textInputAction: TextInputAction.done,
+                                  onFieldSubmitted: (_) => _handleLogin(),
+                                  decoration: InputDecoration(
+                                    labelText: 'Password',
+                                    prefixIcon: const Icon(Icons.lock_rounded),
+                                    filled: true,
+                                    fillColor: colorScheme
+                                        .surfaceContainerHighest
+                                        .withValues(alpha: 0.5),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                      borderSide: BorderSide(
+                                        color: colorScheme.primary,
+                                        width: 2,
+                                      ),
+                                    ),
+                                    suffixIcon: IconButton(
+                                      icon: Icon(
+                                        _obscurePassword
+                                            ? Icons.visibility_rounded
+                                            : Icons.visibility_off_rounded,
+                                      ),
+                                      onPressed: () {
+                                        setState(() {
+                                          _obscurePassword = !_obscurePassword;
+                                        });
+                                      },
                                     ),
                                   ),
-                          ).animate().fadeIn(delay: 450.ms).slideY(begin: 0.1),
-                          const SizedBox(height: 20),
-
-                          // Register Link
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text(
-                                "Don't have an account?",
-                                style: textTheme.bodyMedium?.copyWith(
-                                  color: colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                              TextButton(
-                                onPressed: () => context.go('/register'),
-                                child: const Text('Sign Up'),
-                              ),
-                            ],
-                          ).animate().fadeIn(delay: 500.ms),
-
-                          const SizedBox(height: 32),
-
-                          // Back to Discovery
-                          OutlinedButton.icon(
-                            onPressed: () => context.go('/discover'),
-                            icon: const Icon(Icons.arrow_back_rounded),
-                            label: const Text('Back to Device Discovery'),
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
+                                  validator: (value) {
+                                    if (value == null || value.isEmpty) {
+                                      return 'Please enter your password';
+                                    }
+                                    return null;
+                                  },
+                                ).animate().fadeIn(
+                                      delay: 150.ms,
+                                      duration: 200.ms,
+                                    ),
+                                const SizedBox(height: 24),
+                                if (authState.error != null)
+                                  Container(
+                                    padding: const EdgeInsets.all(16),
+                                    decoration: BoxDecoration(
+                                      color: colorScheme.errorContainer,
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.error_rounded,
+                                          color: colorScheme.onErrorContainer,
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Text(
+                                            authState.error!,
+                                            style: TextStyle(
+                                              color:
+                                                  colorScheme.onErrorContainer,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ).animate().shake(),
+                                if (authState.error != null)
+                                  const SizedBox(height: 16),
+                                FilledButton(
+                                  onPressed:
+                                      authState.isLoading ? null : _handleLogin,
+                                  style: FilledButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 16,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                  ),
+                                  child: authState.isLoading
+                                      ? SizedBox(
+                                          height: 24,
+                                          width: 24,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2.5,
+                                            color: colorScheme.onPrimary,
+                                          ),
+                                        )
+                                      : const Text(
+                                          'Sign In',
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                ).animate().fadeIn(
+                                      delay: 180.ms,
+                                      duration: 200.ms,
+                                    ),
+                              ],
                             ),
-                          ).animate().fadeIn(delay: 550.ms),
+                          ),
                         ],
                       ),
                     ),
+                    const SizedBox(height: 20),
+
+                    // Register Link
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          "Don't have an account?",
+                          style: textTheme.bodyMedium?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => context.go('/register'),
+                          child: const Text('Sign Up'),
+                        ),
+                      ],
+                    ).animate().fadeIn(delay: 200.ms, duration: 200.ms),
+
+                    const SizedBox(height: 16),
+
+                    // Back to Discovery
+                    OutlinedButton.icon(
+                      onPressed: () => context.go('/discover'),
+                      icon: const Icon(Icons.arrow_back_rounded),
+                      label: const Text('Back to Device Discovery'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                    ).animate().fadeIn(delay: 230.ms, duration: 200.ms),
                   ],
                 ),
               ),

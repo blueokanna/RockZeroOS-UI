@@ -371,7 +371,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                   _buildRecommendationsTab(),
                   _buildMyLibraryTab(),
                   _buildSteamTab(),
-                  _buildEpicTab(),
+                  const PlatformGameTab(platform: GamePlatform.epic),
                   const PlatformGameTab(platform: GamePlatform.wegame),
                   const PlatformGameTab(platform: GamePlatform.ubisoft),
                   const PlatformGameTab(platform: GamePlatform.xbox),
@@ -1615,39 +1615,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
   }
 
   // ============================================================================
-  // Epic Tab
-  // ============================================================================
-
-  Widget _buildEpicTab() {
-    final epicAsync = ref.watch(epicFreeProvider);
-
-    return epicAsync.when(
-      data: (data) {
-        final items = (data['items'] as List?) ?? [];
-        if (items.isEmpty) {
-          return _buildEmptyState(
-              '暂无 Epic 免费游戏\n可能是网络原因，请稍后重试', Icons.card_giftcard_rounded);
-        }
-        return RefreshIndicator(
-          onRefresh: () async => ref.invalidate(epicFreeProvider),
-          child: ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: items.length,
-            itemBuilder: (context, index) {
-              final game = items[index] as Map<String, dynamic>;
-              return _GameListTile(game: game).animate().fadeIn(
-                    delay: Duration(milliseconds: index * 30),
-                    duration: 200.ms,
-                  );
-            },
-          ),
-        );
-      },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => _buildErrorState('加载 Epic 数据失败: $e'),
-    );
-  }
-
   // ============================================================================
   // WASM Apps Tab
   // ============================================================================
