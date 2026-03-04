@@ -1002,10 +1002,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   Widget _buildBottomBar() {
     final colorScheme = Theme.of(context).colorScheme;
     final totalMs = _effectiveTotalDuration.inMilliseconds.toDouble();
-    final displayPosition =
-        _isDraggingProgress && _dragPreviewPosition != null
-            ? _dragPreviewPosition!
-            : _position;
+    final displayPosition = _isDraggingProgress && _dragPreviewPosition != null
+        ? _dragPreviewPosition!
+        : _position;
     final posMs = displayPosition.inMilliseconds.toDouble();
     final bufMs = _bufferedPosition.inMilliseconds.toDouble();
 

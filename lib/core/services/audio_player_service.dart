@@ -339,7 +339,8 @@ class AudioPlayerService extends Notifier<AudioPlayerState> {
       }
 
       if (startLooping != null) {
-        await _audioPlayer!.setLoopMode(startLooping ? LoopMode.one : LoopMode.off);
+        await _audioPlayer!
+            .setLoopMode(startLooping ? LoopMode.one : LoopMode.off);
         state = state.copyWith(isLooping: startLooping);
       }
 
@@ -441,14 +442,13 @@ class AudioPlayerService extends Notifier<AudioPlayerState> {
   }
 
   Duration _clampSeekPosition(Duration position) {
-    final safePosition =
-        position < Duration.zero ? Duration.zero : position;
+    final safePosition = position < Duration.zero ? Duration.zero : position;
 
     final totalDuration = state.duration;
     if (totalDuration > Duration.zero) {
       return Duration(
-        milliseconds: safePosition.inMilliseconds
-            .clamp(0, totalDuration.inMilliseconds),
+        milliseconds:
+            safePosition.inMilliseconds.clamp(0, totalDuration.inMilliseconds),
       );
     }
 

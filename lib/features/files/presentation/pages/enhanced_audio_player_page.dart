@@ -951,11 +951,11 @@ class _EnhancedAudioPlayerPageState
   Widget _buildProgressBar(ColorScheme colorScheme, TextTheme textTheme) {
     final totalDuration = _effectiveDuration;
     final progress = totalDuration.inMilliseconds > 0
-      ? (_position.inMilliseconds / totalDuration.inMilliseconds)
-        .clamp(0.0, 1.0)
+        ? (_position.inMilliseconds / totalDuration.inMilliseconds)
+            .clamp(0.0, 1.0)
         : 0.0;
     final buffered = totalDuration.inMilliseconds > 0
-      ? (_bufferedPosition.inMilliseconds / totalDuration.inMilliseconds)
+        ? (_bufferedPosition.inMilliseconds / totalDuration.inMilliseconds)
             .clamp(0.0, 1.0)
         : 0.0;
 
@@ -980,15 +980,13 @@ class _EnhancedAudioPlayerPageState
               secondaryTrackValue: buffered,
               onChanged: (value) {
                 final newPosition = Duration(
-                  milliseconds:
-                      (value * totalDuration.inMilliseconds).round(),
+                  milliseconds: (value * totalDuration.inMilliseconds).round(),
                 );
                 setState(() => _position = newPosition);
               },
               onChangeEnd: (value) {
                 final newPosition = Duration(
-                  milliseconds:
-                      (value * totalDuration.inMilliseconds).round(),
+                  milliseconds: (value * totalDuration.inMilliseconds).round(),
                 );
                 _seekTo(newPosition);
               },
