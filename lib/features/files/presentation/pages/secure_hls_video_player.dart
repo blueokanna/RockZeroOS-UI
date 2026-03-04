@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -11,6 +12,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../../core/widgets/shell_scaffold.dart';
@@ -55,8 +57,12 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   bool _showControls = true;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
+  Duration _durationHint = Duration.zero;
+  Duration? _lastSavedPosition;
   Duration _bufferedPosition = Duration.zero;
   Timer? _hideControlsTimer;
+  DateTime _lastProgressSaveAt = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _resumePromptShown = false;
 
   double _playbackSpeed = 1.0;
   static const List<double> _speedOptions = [
@@ -104,6 +110,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         _setError('无法获取用户凭据，请重新登录');
         return;
       }
+
+      await _loadResumeProgress();
+      await _fetchDurationHint();
 
       // 通过 SAE 安全通道 + direct 模式传输（不需要 ZKP 证明）
       await _tryHlsStreaming();
@@ -276,6 +285,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       play: true,
     );
 
+    await _player!.seek(Duration.zero);
+
     // 等待播放信号、时长信号或错误，超时 25 秒
     final result = await Future.any([
       playingCompleter.future.then((_) => 'playing'),
@@ -293,6 +304,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       if (mounted) {
         setState(() => _isLoading = false);
       }
+      _offerResumePromptIfNeeded();
       return;
     }
 
@@ -303,6 +315,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       if (mounted) {
         setState(() => _isLoading = false);
       }
+      _offerResumePromptIfNeeded();
       return;
     }
 
@@ -319,11 +332,21 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     }));
 
     _subscriptions.add(_player!.stream.position.listen((position) {
-      if (mounted) setState(() => _position = position);
+      if (mounted) {
+        setState(() => _position = position);
+      }
+      _saveResumeProgressIfNeeded(position);
     }));
 
     _subscriptions.add(_player!.stream.duration.listen((duration) {
-      if (mounted) setState(() => _duration = duration);
+      if (mounted) {
+        setState(() {
+          _duration = duration;
+          if (duration > _durationHint) {
+            _durationHint = duration;
+          }
+        });
+      }
     }));
 
     _subscriptions.add(_player!.stream.buffering.listen((buffering) {
@@ -343,8 +366,127 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     _subscriptions.add(_player!.stream.completed.listen((completed) {
       if (completed && mounted) {
         debugPrint('[SecureHLS] Playback completed');
+        _clearResumeProgress();
       }
     }));
+  }
+
+  String _resumeProgressKey() {
+    final stableId = widget.filePath ?? widget.fileId ?? widget.fileName;
+    final normalized = Uri.encodeComponent(stableId);
+    return 'secure_hls_progress:$normalized';
+  }
+
+  Future<void> _loadResumeProgress() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final ms = prefs.getInt(_resumeProgressKey());
+      if (ms != null && ms > 0) {
+        _lastSavedPosition = Duration(milliseconds: ms);
+      }
+    } catch (e) {
+      debugPrint('[SecureHLS] Failed to load resume progress: $e');
+    }
+  }
+
+  Future<void> _clearResumeProgress() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_resumeProgressKey());
+      _lastSavedPosition = null;
+    } catch (e) {
+      debugPrint('[SecureHLS] Failed to clear resume progress: $e');
+    }
+  }
+
+  Future<void> _saveResumeProgressIfNeeded(Duration position) async {
+    if (position.inSeconds < 5) return;
+
+    final total = _effectiveTotalDuration;
+    if (total.inSeconds > 0 &&
+        position >= total - const Duration(seconds: 10)) {
+      await _clearResumeProgress();
+      return;
+    }
+
+    final now = DateTime.now();
+    if (now.difference(_lastProgressSaveAt).inSeconds < 2) return;
+    _lastProgressSaveAt = now;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_resumeProgressKey(), position.inMilliseconds);
+    } catch (e) {
+      debugPrint('[SecureHLS] Failed to save resume progress: $e');
+    }
+  }
+
+  Future<void> _fetchDurationHint() async {
+    final mediaPath = widget.filePath;
+    if (mediaPath == null || mediaPath.isEmpty) return;
+    if (_authToken == null || _authToken!.isEmpty) return;
+
+    try {
+      final uri = Uri.parse(
+        '${widget.baseUrl}/api/v1/filemanager/media/info?path=${Uri.encodeQueryComponent(mediaPath)}',
+      );
+      final response = await http.get(uri, headers: {
+        'Authorization': 'Bearer $_authToken',
+      }).timeout(const Duration(seconds: 8));
+
+      if (response.statusCode != 200) return;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+      final dynamic rawDuration = data['duration'];
+      final double? durationSeconds =
+          rawDuration is num ? rawDuration.toDouble() : null;
+      if (durationSeconds != null && durationSeconds > 0) {
+        final hint = Duration(milliseconds: (durationSeconds * 1000).round());
+        if (!mounted) return;
+        setState(() {
+          if (hint > _durationHint) {
+            _durationHint = hint;
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('[SecureHLS] Failed to fetch duration hint: $e');
+    }
+  }
+
+  Duration get _effectiveTotalDuration {
+    if (_durationHint > _duration) return _durationHint;
+    return _duration;
+  }
+
+  void _offerResumePromptIfNeeded() {
+    if (!mounted || _resumePromptShown) return;
+    final saved = _lastSavedPosition;
+    if (saved == null || saved.inSeconds < 10) return;
+
+    _resumePromptShown = true;
+
+    final total = _effectiveTotalDuration;
+    if (total.inSeconds > 0 && saved >= total - const Duration(seconds: 10)) {
+      _clearResumeProgress();
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('检测到上次播放到 ${_formatDuration(saved)}，是否继续？'),
+        duration: const Duration(seconds: 8),
+        action: SnackBarAction(
+          label: '继续播放',
+          onPressed: () {
+            final target = saved > _effectiveTotalDuration
+                ? _effectiveTotalDuration
+                : saved;
+            _seekTo(target);
+          },
+        ),
+      ),
+    );
   }
 
   void _cancelSubscriptions() {
@@ -415,6 +557,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     _hideControlsTimer?.cancel();
     _cancelSubscriptions();
     _player?.dispose();
+    unawaited(_saveResumeProgressIfNeeded(_position));
     _cleanupHlsSession();
     _exitFullscreen();
     WakelockPlus.disable();
@@ -463,8 +606,10 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
   void _seekTo(Duration position) {
     if (_player == null) return;
+    final totalDuration = _effectiveTotalDuration;
     final clamped = Duration(
-      milliseconds: position.inMilliseconds.clamp(0, _duration.inMilliseconds),
+      milliseconds:
+          position.inMilliseconds.clamp(0, totalDuration.inMilliseconds),
     );
     _player!.seek(clamped);
   }
@@ -830,7 +975,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
   Widget _buildBottomBar() {
     final colorScheme = Theme.of(context).colorScheme;
-    final totalMs = _duration.inMilliseconds.toDouble();
+    final totalMs = _effectiveTotalDuration.inMilliseconds.toDouble();
     final posMs = _position.inMilliseconds.toDouble();
     final bufMs = _bufferedPosition.inMilliseconds.toDouble();
 
@@ -857,7 +1002,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
                   ),
                   const Spacer(),
                   Text(
-                    _formatDuration(_duration),
+                    _formatDuration(_effectiveTotalDuration),
                     style: const TextStyle(
                       color: Colors.white70,
                       fontSize: 12,

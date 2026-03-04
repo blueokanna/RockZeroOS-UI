@@ -1,4 +1,7 @@
 # RockZeroOS UI
+<p align="center">
+  <img src="assets/images/RockZero.png" alt="RockZeroOS Logo" width="200"/>
+</p>
 
 <p align="center">
   <strong>Flutter 跨平台客户端 — Material Design 3 安全私有云 NAS 界面</strong>
