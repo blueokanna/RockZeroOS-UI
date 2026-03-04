@@ -226,6 +226,14 @@ class _EnhancedAudioPlayerPageState
     return widget.mediaUrl;
   }
 
+  Duration get _effectiveDuration {
+    final hintedDurationMs = ((_mediaDuration ?? 0) * 1000).round();
+    final hintedDuration = Duration(
+      milliseconds: hintedDurationMs > 0 ? hintedDurationMs : 0,
+    );
+    return hintedDuration > _duration ? hintedDuration : _duration;
+  }
+
   Future<void> _initializePlayer() async {
     if (_disposed) return;
 
@@ -465,9 +473,13 @@ class _EnhancedAudioPlayerPageState
       return;
     }
 
-    final clampedPosition = Duration(
-      milliseconds: position.inMilliseconds.clamp(0, _duration.inMilliseconds),
-    );
+    final totalDuration = _effectiveDuration;
+    final clampedPosition = totalDuration > Duration.zero
+        ? Duration(
+            milliseconds:
+                position.inMilliseconds.clamp(0, totalDuration.inMilliseconds),
+          )
+        : (position < Duration.zero ? Duration.zero : position);
 
     setState(() {
       _isSeeking = true;
@@ -530,8 +542,11 @@ class _EnhancedAudioPlayerPageState
   }
 
   void _seekForward() {
+    final totalDuration = _effectiveDuration;
     final newPos = _position + const Duration(seconds: 10);
-    _seekTo(newPos > _duration ? _duration : newPos);
+    _seekTo(totalDuration > Duration.zero && newPos > totalDuration
+        ? totalDuration
+        : newPos);
   }
 
   void _seekBackward() {
@@ -570,28 +585,19 @@ class _EnhancedAudioPlayerPageState
     await _audioPlayer?.pause();
     await _audioPlayer?.stop();
 
-    // 1. 用同一 URL & 文件名启动全局播放服务
+    // 1. 用同一 URL & 文件名启动全局播放服务，并携带当前播放状态
     final url = _getStreamUrl();
-    await service.play(url, widget.fileName);
+    await service.play(
+      url,
+      widget.fileName,
+      startPosition: localPosition,
+      startVolume: localVolume,
+      startSpeed: localSpeed,
+      startLooping: localLooping,
+      autoPlay: wasPlaying,
+    );
 
-    // 2. 恢复当前进度 & 音量/速度
-    if (localPosition > Duration.zero) {
-      await service.seekTo(localPosition);
-    }
-    if (localVolume != 1.0) {
-      await service.setVolume(localVolume);
-    }
-    if (localSpeed != 1.0) {
-      await service.setSpeed(localSpeed);
-    }
-    if (localLooping) {
-      service.toggleLoop();
-    }
-    if (!wasPlaying) {
-      await service.pause();
-    }
-
-    // 3. 停止本地播放器（不触发 dispose 错误）
+    // 2. 停止本地播放器（不触发 dispose 错误）
     _transferredToBackground = true;
     _disposed = true;
     _visualizationTimer?.cancel();
@@ -599,7 +605,7 @@ class _EnhancedAudioPlayerPageState
     await _audioPlayer?.dispose();
     _audioPlayer = null;
 
-    // 4. 关闭页面，显示底部导航栏
+    // 3. 关闭页面，显示底部导航栏
     if (mounted) {
       ref.read(bottomNavVisibleProvider.notifier).show();
       Navigator.pop(context);
@@ -943,11 +949,13 @@ class _EnhancedAudioPlayerPageState
   }
 
   Widget _buildProgressBar(ColorScheme colorScheme, TextTheme textTheme) {
-    final progress = _duration.inMilliseconds > 0
-        ? (_position.inMilliseconds / _duration.inMilliseconds).clamp(0.0, 1.0)
+    final totalDuration = _effectiveDuration;
+    final progress = totalDuration.inMilliseconds > 0
+      ? (_position.inMilliseconds / totalDuration.inMilliseconds)
+        .clamp(0.0, 1.0)
         : 0.0;
-    final buffered = _duration.inMilliseconds > 0
-        ? (_bufferedPosition.inMilliseconds / _duration.inMilliseconds)
+    final buffered = totalDuration.inMilliseconds > 0
+      ? (_bufferedPosition.inMilliseconds / totalDuration.inMilliseconds)
             .clamp(0.0, 1.0)
         : 0.0;
 
@@ -972,13 +980,15 @@ class _EnhancedAudioPlayerPageState
               secondaryTrackValue: buffered,
               onChanged: (value) {
                 final newPosition = Duration(
-                  milliseconds: (value * _duration.inMilliseconds).round(),
+                  milliseconds:
+                      (value * totalDuration.inMilliseconds).round(),
                 );
                 setState(() => _position = newPosition);
               },
               onChangeEnd: (value) {
                 final newPosition = Duration(
-                  milliseconds: (value * _duration.inMilliseconds).round(),
+                  milliseconds:
+                      (value * totalDuration.inMilliseconds).round(),
                 );
                 _seekTo(newPosition);
               },
@@ -993,7 +1003,7 @@ class _EnhancedAudioPlayerPageState
                     style: textTheme.bodySmall?.copyWith(
                         color: colorScheme.onSurfaceVariant,
                         fontFamily: 'monospace')),
-                Text(_formatDuration(_duration),
+                Text(_formatDuration(totalDuration),
                     style: textTheme.bodySmall?.copyWith(
                         color: colorScheme.onSurfaceVariant,
                         fontFamily: 'monospace')),

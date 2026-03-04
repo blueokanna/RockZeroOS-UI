@@ -58,6 +58,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   Duration _durationHint = Duration.zero;
+  bool _isDraggingProgress = false;
+  Duration? _dragPreviewPosition;
   Duration? _lastSavedPosition;
   Duration _bufferedPosition = Duration.zero;
   Timer? _hideControlsTimer;
@@ -1000,7 +1002,11 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   Widget _buildBottomBar() {
     final colorScheme = Theme.of(context).colorScheme;
     final totalMs = _effectiveTotalDuration.inMilliseconds.toDouble();
-    final posMs = _position.inMilliseconds.toDouble();
+    final displayPosition =
+        _isDraggingProgress && _dragPreviewPosition != null
+            ? _dragPreviewPosition!
+            : _position;
+    final posMs = displayPosition.inMilliseconds.toDouble();
     final bufMs = _bufferedPosition.inMilliseconds.toDouble();
 
     return SafeArea(
@@ -1016,7 +1022,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
               child: Row(
                 children: [
                   Text(
-                    _formatDuration(_position),
+                    _formatDuration(displayPosition),
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 12,
@@ -1057,16 +1063,32 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
                 value: totalMs > 0 ? (posMs / totalMs).clamp(0.0, 1.0) : 0.0,
                 secondaryTrackValue:
                     totalMs > 0 ? (bufMs / totalMs).clamp(0.0, 1.0) : 0.0,
-                onChanged: (value) {
-                  final newPos = Duration(
-                    milliseconds: (value * totalMs).round(),
-                  );
-                  _seekTo(newPos);
-                },
+                onChanged: totalMs <= 0
+                    ? null
+                    : (value) {
+                        final newPos = Duration(
+                          milliseconds: (value * totalMs).round(),
+                        );
+                        setState(() {
+                          _isDraggingProgress = true;
+                          _dragPreviewPosition = newPos;
+                        });
+                      },
                 onChangeStart: (_) {
                   _hideControlsTimer?.cancel();
+                  setState(() {
+                    _isDraggingProgress = true;
+                    _dragPreviewPosition = displayPosition;
+                  });
                 },
-                onChangeEnd: (_) {
+                onChangeEnd: (value) {
+                  final target = _dragPreviewPosition ??
+                      Duration(milliseconds: (value * totalMs).round());
+                  setState(() {
+                    _isDraggingProgress = false;
+                    _dragPreviewPosition = null;
+                  });
+                  _seekTo(target);
                   _startHideControlsTimer();
                 },
               ),

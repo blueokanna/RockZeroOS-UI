@@ -19,6 +19,9 @@ class SaeHandshakeService {
     required this.jwtToken,
   });
 
+  bool _isSuccessStatus(int statusCode) =>
+      statusCode >= 200 && statusCode < 300;
+
   Future<(String, Uint8List)> performHandshake({
     required String filePath,
     required String password,
@@ -114,7 +117,7 @@ class SaeHandshakeService {
         )
         .timeout(_requestTimeout);
 
-    if (response.statusCode != 200) {
+    if (!_isSuccessStatus(response.statusCode)) {
       throw Exception('SAE init failed: ${response.statusCode}');
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
@@ -138,7 +141,7 @@ class SaeHandshakeService {
         )
         .timeout(_requestTimeout);
 
-    if (response.statusCode != 200) {
+    if (!_isSuccessStatus(response.statusCode)) {
       throw Exception('SAE commit failed: ${response.statusCode}');
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
@@ -162,7 +165,7 @@ class SaeHandshakeService {
         )
         .timeout(_requestTimeout);
 
-    if (response.statusCode != 200) {
+    if (!_isSuccessStatus(response.statusCode)) {
       throw Exception('SAE confirm failed: ${response.statusCode}');
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
@@ -188,7 +191,7 @@ class SaeHandshakeService {
         )
         .timeout(_requestTimeout);
 
-    if (response.statusCode != 200) {
+    if (!_isSuccessStatus(response.statusCode)) {
       throw Exception('Create session failed: ${response.statusCode}');
     }
     return jsonDecode(response.body) as Map<String, dynamic>;

@@ -221,9 +221,37 @@ class AudioPlayerService extends Notifier<AudioPlayerState> {
     _authToken = await storage.read(key: 'access_token');
   }
 
-  Future<void> play(String url, String fileName) async {
+  Future<void> play(
+    String url,
+    String fileName, {
+    Duration? startPosition,
+    double? startVolume,
+    double? startSpeed,
+    bool? startLooping,
+    bool autoPlay = true,
+  }) async {
     if (state.currentUrl == url && _audioPlayer != null) {
-      await _audioPlayer!.play();
+      if (startVolume != null) {
+        await _audioPlayer!.setVolume(startVolume);
+        state = state.copyWith(volume: startVolume);
+      }
+      if (startSpeed != null) {
+        await _audioPlayer!.setSpeed(startSpeed);
+        state = state.copyWith(speed: startSpeed);
+      }
+      if (startLooping != null) {
+        await _audioPlayer!
+            .setLoopMode(startLooping ? LoopMode.one : LoopMode.off);
+        state = state.copyWith(isLooping: startLooping);
+      }
+      if (startPosition != null && startPosition > Duration.zero) {
+        await _seekToWithRetry(startPosition);
+      }
+      if (autoPlay) {
+        await _audioPlayer!.play();
+      } else {
+        await _audioPlayer!.pause();
+      }
       return;
     }
 
@@ -300,7 +328,30 @@ class AudioPlayerService extends Notifier<AudioPlayerState> {
 
       state = state.copyWith(isInitialized: true);
 
-      await _audioPlayer!.play();
+      if (startVolume != null) {
+        await _audioPlayer!.setVolume(startVolume);
+        state = state.copyWith(volume: startVolume);
+      }
+
+      if (startSpeed != null) {
+        await _audioPlayer!.setSpeed(startSpeed);
+        state = state.copyWith(speed: startSpeed);
+      }
+
+      if (startLooping != null) {
+        await _audioPlayer!.setLoopMode(startLooping ? LoopMode.one : LoopMode.off);
+        state = state.copyWith(isLooping: startLooping);
+      }
+
+      if (startPosition != null && startPosition > Duration.zero) {
+        await _seekToWithRetry(startPosition);
+      }
+
+      if (autoPlay) {
+        await _audioPlayer!.play();
+      } else {
+        await _audioPlayer!.pause();
+      }
     } catch (e) {
       state = state.copyWith(
         error: _getErrorMessage(e),
@@ -386,11 +437,39 @@ class AudioPlayerService extends Notifier<AudioPlayerState> {
 
   Future<void> seekTo(Duration position) async {
     if (_audioPlayer == null) return;
-    final clampedPosition = Duration(
-      milliseconds:
-          position.inMilliseconds.clamp(0, state.duration.inMilliseconds),
-    );
-    await _audioPlayer!.seek(clampedPosition);
+    await _audioPlayer!.seek(_clampSeekPosition(position));
+  }
+
+  Duration _clampSeekPosition(Duration position) {
+    final safePosition =
+        position < Duration.zero ? Duration.zero : position;
+
+    final totalDuration = state.duration;
+    if (totalDuration > Duration.zero) {
+      return Duration(
+        milliseconds: safePosition.inMilliseconds
+            .clamp(0, totalDuration.inMilliseconds),
+      );
+    }
+
+    return safePosition;
+  }
+
+  Future<void> _seekToWithRetry(Duration position) async {
+    if (_audioPlayer == null) return;
+
+    final target = _clampSeekPosition(position);
+    for (int attempt = 0; attempt < 5; attempt++) {
+      await _audioPlayer!.seek(target);
+
+      final current = _audioPlayer!.position;
+      final deltaMs = (current.inMilliseconds - target.inMilliseconds).abs();
+      if (deltaMs <= 1200) {
+        return;
+      }
+
+      await Future.delayed(Duration(milliseconds: 150 * (attempt + 1)));
+    }
   }
 
   Future<void> seekForward() async {

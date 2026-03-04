@@ -51,6 +51,9 @@ class SecureHlsPlayer {
     _bulletproofAuth = HlsBulletproofAuth();
   }
 
+  bool _isSuccessStatus(int statusCode) =>
+      statusCode >= 200 && statusCode < 300;
+
   /// 步骤 1: 初始化 SAE 握手
   ///
   /// 执行完整的 WPA3-SAE 握手，建立与服务器的共享密钥 (PMK)。
@@ -88,7 +91,7 @@ class SecureHlsPlayer {
       }),
     );
 
-    if (initResponse.statusCode != 200) {
+    if (!_isSuccessStatus(initResponse.statusCode)) {
       throw Exception('SAE init failed: ${initResponse.body}');
     }
 
@@ -110,7 +113,7 @@ class SecureHlsPlayer {
       }),
     );
 
-    if (commitResponse.statusCode != 200) {
+    if (!_isSuccessStatus(commitResponse.statusCode)) {
       throw Exception('SAE commit failed: ${commitResponse.body}');
     }
 
@@ -136,7 +139,7 @@ class SecureHlsPlayer {
       }),
     );
 
-    if (confirmResponse.statusCode != 200) {
+    if (!_isSuccessStatus(confirmResponse.statusCode)) {
       throw Exception('SAE confirm failed: ${confirmResponse.body}');
     }
 
@@ -164,7 +167,7 @@ class SecureHlsPlayer {
       }),
     );
 
-    if (sessionResponse.statusCode != 200) {
+    if (!_isSuccessStatus(sessionResponse.statusCode)) {
       throw Exception('Session create failed: ${sessionResponse.body}');
     }
 
