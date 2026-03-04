@@ -23,6 +23,7 @@ class SaeHandshakeService {
     required String filePath,
     required String password,
     required String userId,
+    bool directMode = false,
   }) async {
     try {
       final deviceIdSelf = _generateClientDeviceId(userId);
@@ -63,6 +64,7 @@ class SaeHandshakeService {
       final sessionResponse = await _createHlsSession(
         tempSessionId: tempSessionId,
         filePath: filePath,
+        directMode: directMode,
       );
 
       final sessionId = sessionResponse['session_id'] as String;
@@ -169,6 +171,7 @@ class SaeHandshakeService {
   Future<Map<String, dynamic>> _createHlsSession({
     required String tempSessionId,
     required String filePath,
+    bool directMode = false,
   }) async {
     final response = await http
         .post(
@@ -180,6 +183,7 @@ class SaeHandshakeService {
           body: jsonEncode({
             'temp_session_id': tempSessionId,
             'file_path': filePath,
+            'direct_mode': directMode,
           }),
         )
         .timeout(_requestTimeout);

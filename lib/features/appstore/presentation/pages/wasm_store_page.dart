@@ -1959,11 +1959,14 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                           );
                           final result =
                               response.data as Map<String, dynamic>? ?? {};
+                          final outputName = result['output_name'] ?? '';
                           setDialogState(() {
                             isDownloading = false;
                             downloadStatus =
-                                '下载完成: ${result['downloaded_segments']}/${result['total_segments']} 分片\n'
-                                '文件大小: ${_formatFileSize(result['file_size'] ?? 0)}';
+                                '✅ 下载完成: ${result['downloaded_segments']}/${result['total_segments']} 分片\n'
+                                '文件大小: ${_formatFileSize(result['file_size'] ?? 0)}\n'
+                                '保存位置: NAS 存储 / wasm_store / downloads / $outputName\n'
+                                '提示: 可在「文件管理」中找到此文件';
                           });
                         } catch (e) {
                           setDialogState(() {
@@ -2560,6 +2563,23 @@ class _GameCard extends StatelessWidget {
                       ? Image.network(
                           headerImage,
                           fit: BoxFit.cover,
+                          cacheWidth: 560,
+                          loadingBuilder: (context, child, progress) {
+                            if (progress == null) return child;
+                            return Container(
+                              color: colorScheme.surfaceContainerLow,
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  value: progress.expectedTotalBytes != null
+                                      ? progress.cumulativeBytesLoaded /
+                                          progress.expectedTotalBytes!
+                                      : null,
+                                  strokeWidth: 2,
+                                  color: colorScheme.primary,
+                                ),
+                              ),
+                            );
+                          },
                           errorBuilder: (_, __, ___) => Container(
                             color: colorScheme.surfaceContainerLow,
                             child: Icon(Icons.image_not_supported_rounded,
@@ -2761,6 +2781,23 @@ class _RecommendationTile extends StatelessWidget {
                       ? Image.network(
                           headerImage,
                           fit: BoxFit.cover,
+                          cacheWidth: 200,
+                          loadingBuilder: (context, child, progress) {
+                            if (progress == null) return child;
+                            return Container(
+                              color: colorScheme.surfaceContainerLow,
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  value: progress.expectedTotalBytes != null
+                                      ? progress.cumulativeBytesLoaded /
+                                          progress.expectedTotalBytes!
+                                      : null,
+                                  strokeWidth: 2,
+                                  color: colorScheme.primary,
+                                ),
+                              ),
+                            );
+                          },
                           errorBuilder: (_, __, ___) => Container(
                             color: colorScheme.surfaceContainerLow,
                             child: const Icon(Icons.games_rounded),
@@ -2991,6 +3028,23 @@ class _GameListTile extends StatelessWidget {
                       ? Image.network(
                           headerImage,
                           fit: BoxFit.cover,
+                          cacheWidth: 240,
+                          loadingBuilder: (context, child, progress) {
+                            if (progress == null) return child;
+                            return Container(
+                              color: colorScheme.surfaceContainerLow,
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  value: progress.expectedTotalBytes != null
+                                      ? progress.cumulativeBytesLoaded /
+                                          progress.expectedTotalBytes!
+                                      : null,
+                                  strokeWidth: 2,
+                                  color: colorScheme.primary,
+                                ),
+                              ),
+                            );
+                          },
                           errorBuilder: (_, __, ___) => Container(
                             color: colorScheme.surfaceContainerLow,
                             child: const Icon(Icons.games_rounded),
@@ -3112,6 +3166,8 @@ class _WasmAppTile extends StatelessWidget {
     final category = app['category'] ?? 'other';
     final installed = app['installed'] == true;
     final sizeBytes = app['size_bytes'] ?? 0;
+    final iconUrl = app['icon_url'] as String? ?? '';
+    final bool hasRasterIcon = iconUrl.isNotEmpty && !iconUrl.endsWith('.svg');
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -3124,10 +3180,22 @@ class _WasmAppTile extends StatelessWidget {
             color: colorScheme.primaryContainer,
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Icon(
-            _getCategoryIcon(category),
-            color: colorScheme.onPrimaryContainer,
-          ),
+          clipBehavior: Clip.antiAlias,
+          child: hasRasterIcon
+              ? Image.network(
+                  iconUrl,
+                  width: 48,
+                  height: 48,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Icon(
+                    _getCategoryIcon(category),
+                    color: colorScheme.onPrimaryContainer,
+                  ),
+                )
+              : Icon(
+                  _getBuiltinAppIcon(app['id'] as String? ?? '', category),
+                  color: colorScheme.onPrimaryContainer,
+                ),
         ),
         title: Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Column(
@@ -3160,6 +3228,20 @@ class _WasmAppTile extends StatelessWidget {
             : const Icon(Icons.download_rounded),
       ),
     );
+  }
+
+  /// 为已知的内置应用返回特定图标，否则基于分类回退
+  IconData _getBuiltinAppIcon(String appId, String category) {
+    switch (appId) {
+      case 'steamdb-viewer':
+        return Icons.storage_rounded;
+      case 'm3u8-downloader':
+        return Icons.download_rounded;
+      case 'steam-p2p-info':
+        return Icons.lan_rounded;
+      default:
+        return _getCategoryIcon(category);
+    }
   }
 
   IconData _getCategoryIcon(String category) {

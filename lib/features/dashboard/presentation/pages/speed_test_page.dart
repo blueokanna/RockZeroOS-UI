@@ -241,7 +241,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       final sw = Stopwatch()..start();
 
       _downloadUpdateTimer =
-          Timer.periodic(const Duration(milliseconds: 50), (t) {
+          Timer.periodic(const Duration(milliseconds: 150), (t) {
         if (!mounted || _isCancelled) {
           t.cancel();
           return;
@@ -327,7 +327,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       final sw = Stopwatch()..start();
 
       _uploadUpdateTimer =
-          Timer.periodic(const Duration(milliseconds: 50), (t) {
+          Timer.periodic(const Duration(milliseconds: 150), (t) {
         if (!mounted || _isCancelled) {
           t.cancel();
           return;

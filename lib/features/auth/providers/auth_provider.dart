@@ -166,6 +166,7 @@ class AuthNotifier extends Notifier<AuthState> {
   }
 
   Future<bool> register({
+    String? username,
     required String email,
     required String password,
     String? inviteCode,
@@ -173,11 +174,13 @@ class AuthNotifier extends Notifier<AuthState> {
     state = state.copyWith(isLoading: true, error: null);
 
     try {
-      // 从email生成username（使用@前面的部分）
-      final username = email.split('@').first;
+      // Use provided username, or derive from email as fallback
+      final effectiveUsername = (username != null && username.trim().isNotEmpty)
+          ? username.trim()
+          : email.split('@').first;
 
       final response = await _api.register(
-        username: username,
+        username: effectiveUsername,
         email: email,
         password: password,
         inviteCode: inviteCode,

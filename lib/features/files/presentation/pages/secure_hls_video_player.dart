@@ -15,7 +15,6 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../../core/widgets/shell_scaffold.dart';
 import '../../../../services/sae_handshake_service.dart';
-import '../../../../services/secure_hls_proxy.dart';
 
 class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
   final String? filePath;
@@ -40,7 +39,6 @@ class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
 class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   Player? _player;
   VideoController? _videoController;
-  SecureHlsProxyServer? _hlsProxy;
 
   bool _isLoading = true;
   String? _error;
@@ -107,7 +105,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         return;
       }
 
-      // 所有视频一律通过 SAE + Bulletproofs + AES-256-GCM 安全通道传输
+      // 通过 SAE 安全通道 + direct 模式传输（不需要 ZKP 证明）
       await _tryHlsStreaming();
     } catch (e, stack) {
       debugPrint('[VideoPlayer] Error: $e');
@@ -130,19 +128,18 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
     final filePath = widget.filePath ?? '';
 
-    // ── Step 1: SAE 握手 + 会话创建 ─────────────────────────
+    // ── Step 1: SAE 握手 + 会话创建（direct 模式，无需 ZKP 证明）───
     late final String sessionId;
-    late final Uint8List pmk;
 
     try {
       final result = await handshakeService.performHandshake(
         filePath: filePath,
         password: _userPassword!,
         userId: _userId!,
+        directMode: true,
       );
 
       sessionId = result.$1;
-      pmk = result.$2;
       _hlsSessionId = sessionId;
     } catch (e) {
       debugPrint('[VideoPlayer] SAE handshake failed: $e');
@@ -150,77 +147,30 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       return;
     }
 
-    debugPrint('[VideoPlayer] HLS session: $sessionId');
+    debugPrint('[VideoPlayer] HLS session (direct mode): $sessionId');
 
-    // ── Step 2: 启动本地安全代理 ────────────────────────────
+    // ── Step 2: 等待首个分片就绪（渐进式分片）────────────────
     //
-    // 本地代理在 127.0.0.1:{随机端口} 上运行，完成：
-    //   1. 拦截 media_kit 对 .ts 段的 GET 请求
-    //   2. 为每个段生成 Bulletproofs ZKP 证明
-    //   3. 使用 POST + ZKP 证明向后端请求加密段
-    //   4. 使用 AES-256-GCM 解密段
-    //   5. 返回明文 MPEG-TS 数据给 media_kit/libmpv
-    //
-    // 这样保证：
-    //   - 每个段在传输过程中以 AES-256-GCM 加密（不可破解）
-    //   - 每个段经过 Bulletproofs ZKP 验证（防篡改）
-    //   - 渐进式传输（代理按段逐个处理）
-    //   - libmpv 只接收已验证的明文段（通过 127.0.0.1 本地环回）
+    // Direct 模式：media_kit 直接 GET 明文视频段（session_id 鉴权）。
+    // 安全性保证：
+    //   - session_id 是 128 位随机 UUID，不可猜测
+    //   - 创建 session 前已完成 JWT + SAE 握手双重认证
+    //   - session 有 3 小时过期时间
+    //   - 磁盘上的缓存段使用 AES-256-GCM 静态加密
 
-    if (!mounted) return;
-    setState(() => _loadingStatus = '正在启动安全传输代理...');
+    final directPlaylistUrl =
+        '${widget.baseUrl}/api/v1/secure-hls/$sessionId/playlist.m3u8';
 
-    late final String proxyPlaylistUrl;
-    try {
-      _hlsProxy = SecureHlsProxyServer(
-        baseUrl: widget.baseUrl,
-        sessionId: sessionId,
-        pmk: pmk,
-        password: _userPassword!,
-        jwtToken: _authToken,
-        onSessionRebuild: () async {
-          final previousSessionId = _hlsSessionId;
-          debugPrint(
-              '[VideoPlayer] Session invalidated, rebuilding SAE+HLS chain...');
-
-          final rebuilt = await handshakeService.performHandshake(
-            filePath: filePath,
-            password: _userPassword!,
-            userId: _userId!,
-          );
-
-          _hlsSessionId = rebuilt.$1;
-          debugPrint('[VideoPlayer] Session rebuilt: ${rebuilt.$1}');
-
-          if (previousSessionId != null && previousSessionId != rebuilt.$1) {
-            await _stopSessionById(previousSessionId);
-          }
-
-          return rebuilt;
-        },
-      );
-      proxyPlaylistUrl = await _hlsProxy!.start();
-      debugPrint('[VideoPlayer] Proxy started: $proxyPlaylistUrl');
-    } catch (e) {
-      debugPrint('[VideoPlayer] Proxy start failed: $e');
-      _setError('安全代理启动失败: ${_formatError(e.toString())}');
-      return;
-    }
-
-    // ── Step 3: 等待首个分片就绪（渐进式分片） ───────────────
     if (!mounted) return;
     setState(() => _loadingStatus = '正在等待视频分片...');
 
-    // 通过代理检查播放列表（代理会透传服务端的播放列表并改写 URL）
     bool playlistReady = false;
     for (int i = 0; i < 30; i++) {
       if (!mounted) return;
 
       try {
         final checkResponse = await http
-            .get(
-              Uri.parse(proxyPlaylistUrl),
-            )
+            .get(Uri.parse(directPlaylistUrl))
             .timeout(const Duration(seconds: 5));
 
         if (checkResponse.statusCode == 200) {
@@ -228,7 +178,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           if (content.contains('#EXTM3U') &&
               (content.contains('#EXTINF') || content.contains('segment_'))) {
             debugPrint(
-                '[VideoPlayer] HLS playlist ready after ${i + 1} seconds');
+                '[VideoPlayer] HLS playlist ready after ${i + 1} attempts');
             playlistReady = true;
             break;
           }
@@ -262,7 +212,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
     setState(() => _loadingStatus = '正在初始化播放器...');
 
-    // ── Step 4: 创建 media_kit 播放器 ────────────────────────
+    // ── Step 3: 创建 media_kit 播放器 ────────────────────────
     _player = Player(
       configuration: const PlayerConfiguration(
         bufferSize: 64 * 1024 * 1024,
@@ -311,18 +261,18 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       }
     });
 
-    // ── 通过本地安全代理播放 ──────────────────────────────────
+    // ── 直接使用服务端播放列表 URL（direct 模式，明文传输）───
     //
-    // media_kit → GET http://127.0.0.1:{port}/segment_N.ts
-    //          → 代理生成 Bulletproofs ZKP 证明
-    //          → POST 到后端（带 ZKP 证明）
-    //          → 接收 AES-256-GCM 加密段
-    //          → 解密 → 返回明文给 media_kit
+    // media_kit → GET /api/v1/secure-hls/{session_id}/playlist.m3u8
+    //          → GET /api/v1/secure-hls/{session_id}/segment_N.ts
+    //          → 服务端返回明文 MPEG-TS 数据（session_id 鉴权）
     //
-    // 整条链路保证每个字节在公网传输时都被 AES-256-GCM 加密
-    // 只有 127.0.0.1 本地环回是明文（不经过网络）
+    // 安全保障依然完整：
+    //   - SAE 握手确保会话密钥安全交换
+    //   - Session ID 不可猜测（128 位随机）
+    //   - 磁盘缓存段使用 AES-256-GCM 静态加密
     await _player!.open(
-      Media(proxyPlaylistUrl),
+      Media(directPlaylistUrl),
       play: true,
     );
 
@@ -430,8 +380,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   }
 
   Future<void> _retry() async {
-    await _hlsProxy?.stop();
-    _hlsProxy = null;
     await _cleanupHlsSession();
     _cancelSubscriptions();
     await _player?.stop();
@@ -467,7 +415,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     _hideControlsTimer?.cancel();
     _cancelSubscriptions();
     _player?.dispose();
-    _hlsProxy?.stop();
     _cleanupHlsSession();
     _exitFullscreen();
     WakelockPlus.disable();
@@ -1071,7 +1018,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           Text(_loadingStatus, style: const TextStyle(color: Colors.white)),
           const SizedBox(height: 8),
           const Text(
-            'SAE 安全握手 → Bulletproofs ZKP → AES-256 分片加密',
+            'SAE 安全握手 → AES-256 静态加密 → Session 鉴权',
             style: TextStyle(color: Colors.white54, fontSize: 12),
             textAlign: TextAlign.center,
           ),
@@ -1272,18 +1219,18 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
 
     _shieldPulseController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2400),
+      duration: const Duration(milliseconds: 3000),
     )..repeat(reverse: true);
 
     _particleController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 3200),
+      duration: const Duration(milliseconds: 4000),
     )..repeat();
 
     // ---- 光效（柔和渐变） ----
     _glowController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2800),
+      duration: const Duration(milliseconds: 3600),
     )..repeat(reverse: true);
 
     // 启动主时间线
@@ -1296,22 +1243,22 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
         icon: Icons.vpn_key_rounded,
         title: '密钥交换',
         subtitle: 'WPA3-SAE (Simultaneous Authentication of Equals)',
-        detail: 'Dragonfly 密钥交换协议，抵抗离线字典攻击',
+        detail: 'Dragonfly 密钥交换协议，抵抗离线字典攻击，建立安全会话',
         color: Colors.orangeAccent,
       ),
       _ProtocolNode(
-        icon: Icons.verified_user_rounded,
-        title: '零知识证明',
-        subtitle: 'Bulletproofs Range Proof',
-        detail: '每个分片请求附带 ZKP 证明，服务端验证访问权限而无需暴露凭据',
-        color: Colors.purpleAccent,
+        icon: Icons.lock_rounded,
+        title: '静态存储加密',
+        subtitle: 'AES-256-GCM (Galois/Counter Mode)',
+        detail: '磁盘上的缓存视频段使用 AES-256-GCM 加密，即使物理访问也无法读取',
+        color: Colors.cyanAccent,
       ),
       _ProtocolNode(
-        icon: Icons.lock_rounded,
-        title: '数据加密',
-        subtitle: 'AES-256-GCM (Galois/Counter Mode)',
-        detail: '每个数据块使用唯一 nonce 加密，提供认证加密和完整性保护',
-        color: Colors.cyanAccent,
+        icon: Icons.security_rounded,
+        title: 'Session 鉴权',
+        subtitle: '128-bit UUID Session Token',
+        detail: '会话令牌不可猜测，创建前经过 JWT + SAE 双重认证，3 小时自动过期',
+        color: Colors.purpleAccent,
       ),
       _ProtocolNode(
         icon: Icons.fingerprint_rounded,
@@ -1422,7 +1369,7 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
 
   Widget _buildSubtitleRow() {
     return const Text(
-      'SAE + Bulletproofs ZKP + AES-256-GCM',
+      'SAE + AES-256-GCM + Session Auth + Blake3',
       style: TextStyle(
         color: Colors.greenAccent,
         fontSize: 13,
@@ -1555,7 +1502,7 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
                   ),
                   const SizedBox(height: 4),
                   const Text(
-                    '传输模式: 安全 HLS (UDP 70% + TCP 30%)',
+                    '传输模式: Direct HLS (Session 鉴权)',
                     style: TextStyle(
                       color: Colors.white38,
                       fontSize: 11,

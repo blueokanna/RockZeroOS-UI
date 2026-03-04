@@ -288,7 +288,8 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
     if (hasWallpaper) {
       return ClipRect(
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+          // Reduced sigma for better performance on mid-range SoCs
+          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
           child: Container(
             decoration: BoxDecoration(
               color: colorScheme.surface.withValues(alpha: 0.6),

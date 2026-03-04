@@ -57,6 +57,13 @@ class _EnhancedAudioPlayerPageState
   final List<double> _audioLevels = List.filled(24, 0.1);
   Timer? _visualizationTimer;
 
+  // State captured from global AudioPlayerService when resuming from mini-player
+  Duration? _resumePosition;
+  double? _resumeVolume;
+  double? _resumeSpeed;
+  bool _resumeLooping = false;
+  bool _resumeFromGlobalService = false;
+
   StreamSubscription<PlayerState>? _playerStateSubscription;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<Duration?>? _durationSubscription;
@@ -75,8 +82,10 @@ class _EnhancedAudioPlayerPageState
 
   void _startVisualization() {
     _visualizationTimer?.cancel();
+    // 200ms interval (5 fps) — sufficient for visual feedback,
+    // avoids excessive rebuilds on Snapdragon 835 class SoCs.
     _visualizationTimer = Timer.periodic(
-      const Duration(milliseconds: 100),
+      const Duration(milliseconds: 200),
       (timer) {
         if (!mounted || _disposed) return;
         bool needsUpdate = false;
@@ -84,11 +93,11 @@ class _EnhancedAudioPlayerPageState
           final oldValue = _audioLevels[i];
           if (_isPlaying && !_isBuffering) {
             final target = math.Random().nextDouble() * 0.7 + 0.3;
-            _audioLevels[i] = _audioLevels[i] * 0.5 + target * 0.5;
+            _audioLevels[i] = _audioLevels[i] * 0.6 + target * 0.4;
           } else {
-            _audioLevels[i] = (_audioLevels[i] * 0.9).clamp(0.1, 1.0);
+            _audioLevels[i] = (_audioLevels[i] * 0.85).clamp(0.1, 1.0);
           }
-          if ((oldValue - _audioLevels[i]).abs() > 0.02) needsUpdate = true;
+          if ((oldValue - _audioLevels[i]).abs() > 0.03) needsUpdate = true;
         }
         if (needsUpdate && mounted && !_disposed) setState(() {});
       },
@@ -118,6 +127,20 @@ class _EnhancedAudioPlayerPageState
   }
 
   Future<void> _loadTokenAndInitialize() async {
+    // If the global AudioPlayerService is already playing the same URL
+    // (i.e. user tapped the mini-player), capture its state and stop it
+    // to prevent dual playback.
+    final globalState = ref.read(audioPlayerServiceProvider);
+    if (globalState.hasAudio && globalState.currentUrl == widget.mediaUrl) {
+      _resumeFromGlobalService = true;
+      _resumePosition = globalState.position;
+      _resumeVolume = globalState.volume;
+      _resumeSpeed = globalState.speed;
+      _resumeLooping = globalState.isLooping;
+      // Stop global service immediately — kills mini-player audio
+      await ref.read(audioPlayerServiceProvider.notifier).stop();
+    }
+
     const storage = FlutterSecureStorage();
     _authToken = await storage.read(key: 'access_token');
     await _fetchMediaInfo();
@@ -258,6 +281,27 @@ class _EnhancedAudioPlayerPageState
 
       if (mounted && !_disposed) {
         setState(() => _isInitialized = true);
+      }
+
+      // Restore state from global service if resuming from mini-player
+      if (_resumeFromGlobalService) {
+        if (_resumeVolume != null && _resumeVolume != 1.0) {
+          _volume = _resumeVolume!;
+          await _audioPlayer!.setVolume(_resumeVolume!);
+        }
+        if (_resumeSpeed != null && _resumeSpeed != 1.0) {
+          _speed = _resumeSpeed!;
+          await _audioPlayer!.setSpeed(_resumeSpeed!);
+        }
+        if (_resumeLooping) {
+          _isLooping = true;
+          await _audioPlayer!.setLoopMode(LoopMode.one);
+        }
+        // Seek to the position the global service was at
+        if (_resumePosition != null && _resumePosition! > Duration.zero) {
+          await _audioPlayer!.seek(_resumePosition!);
+        }
+        _resumeFromGlobalService = false;
       }
 
       // Start playing
@@ -756,10 +800,14 @@ class _EnhancedAudioPlayerPageState
   }
 
   Widget _buildAlbumArt(ColorScheme colorScheme) {
-    return AnimatedBuilder(
-      animation: _rotationController,
-      builder: (context, child) => Transform.rotate(
-        angle: _rotationController.value * 2 * math.pi,
+    // RepaintBoundary isolates the continuous rotation from the rest of the tree.
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _rotationController,
+        builder: (context, child) => Transform.rotate(
+          angle: _rotationController.value * 2 * math.pi,
+          child: child,
+        ),
         child: Container(
           width: 200,
           height: 200,
@@ -790,7 +838,8 @@ class _EnhancedAudioPlayerPageState
   }
 
   Widget _buildAudioVisualizer(ColorScheme colorScheme) {
-    return SizedBox(
+    return RepaintBoundary(
+        child: SizedBox(
       height: 50,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -812,7 +861,7 @@ class _EnhancedAudioPlayerPageState
           ),
         ),
       ),
-    );
+    ));
   }
 
   Widget _buildProgressBar(ColorScheme colorScheme, TextTheme textTheme) {

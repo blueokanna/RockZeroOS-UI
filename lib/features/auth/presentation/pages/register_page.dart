@@ -38,6 +38,7 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
     if (!_formKey.currentState!.validate()) return;
 
     final success = await ref.read(authStateProvider.notifier).register(
+          username: _usernameController.text.trim(),
           email: _emailController.text.trim(),
           password: _passwordController.text,
           inviteCode: _inviteCodeController.text.isNotEmpty
@@ -160,14 +161,21 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                                   );
                                 },
                               ),
-                              helperText: 'At least 12 characters',
+                              helperText:
+                                  'Min 8 chars with upper, lower & digit',
                             ),
                             validator: (value) {
                               if (value == null || value.isEmpty) {
                                 return 'Please enter a password';
                               }
-                              if (value.length < 12) {
-                                return 'Password must be at least 12 characters';
+                              if (value.length < 8) {
+                                return 'Password must be at least 8 characters';
+                              }
+                              final hasUpper = value.contains(RegExp(r'[A-Z]'));
+                              final hasLower = value.contains(RegExp(r'[a-z]'));
+                              final hasDigit = value.contains(RegExp(r'[0-9]'));
+                              if (!hasUpper || !hasLower || !hasDigit) {
+                                return 'Must contain upper, lower & digit';
                               }
                               return null;
                             },
