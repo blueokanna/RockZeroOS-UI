@@ -149,6 +149,22 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
 
       _videoController = VideoController(_player!);
 
+      // 3.5. 设置 mpv 属性：PTS 时间戳修正 + HLS 优化
+      if (_player!.platform is NativePlayer) {
+        final mpv = _player!.platform as NativePlayer;
+        // ★ 将流的起始时间重新基准为 0（修复源文件非零 PTS 偏移）
+        await mpv.setProperty('rebase-start-time', 'yes');
+        await mpv.setProperty(
+          'demuxer-lavf-o',
+          'fflags=+genpts+discardcorrupt',
+        );
+        await mpv.setProperty('cache', 'yes');
+        await mpv.setProperty('cache-secs', '60');
+        await mpv.setProperty('demuxer-max-bytes', '128MiB');
+        await mpv.setProperty('demuxer-readahead-secs', '30');
+        await mpv.setProperty('hwdec', 'auto-safe');
+      }
+
       // 4. 设置监听器
       _setupListeners();
 

@@ -24,8 +24,8 @@ RockZeroOS UI 是 RockZeroOS 私有云 NAS 操作系统的跨平台客户端，�
 ### 核心功能
 - **仪表盘** — CPU、内存、磁盘、网络实时监控，计时器风格速度测试
 - **文件管理** — 磁盘浏览、目录导航、文件上传/下载、LAN 文件传输
-- **视频播放** — SAE 加密 HLS 流媒体，media_kit (libmpv) 硬件加速解码，`SizedBox.expand()` 确保全平台正确显示，编解码自适应超时（90s 播放列表等待）
-- **音频播放** — `just_audio` 三级回退音频源策略，支持自动服务器端转码（15+ 不支持的编码格式自动转为 AAC/MP3）
+- **视频播放** — SAE 加密 HLS 流媒体，media_kit (libmpv) 硬件加速解码，`SizedBox.expand()` 确保全平台正确显示，编解码自适应超时（90s 播放列表等待），PTS 时间戳归零修正（`rebase-start-time=yes` + `fflags=+genpts+discardcorrupt`），客户端偏移检测（对比服务器时长提示自动修正 MKV 非零起始 PTS）
+- **音频播放** — `just_audio` 三级回退音频源策略，支持自动服务器端转码（15+ 不支持的编码格式自动转为 AAC/MP3），返回键最小化到后台 mini player（而非停止），显式停止按钮
 - **游戏中心** — 多平台游戏商城（Steam/Epic/WeGame/Ubisoft/Xbox），从官方 API 实时获取数据，支持游戏收藏和统一库，内置目录 25+ 游戏使用 Steam CDN 封面图
 - **WASM 应用** — 内置 SteamDB 查看器（支持游戏名称 + AppID 双模式搜索）、M3U8 视频下载器（支持自定义保存路径）、Steam P2P 连接分析（包含 NAT 类型说明和排故指南）
 - **存储管理** — 智能格式化、自动挂载、分区管理、SMART 监控、安全擦除
@@ -40,6 +40,7 @@ RockZeroOS UI 是 RockZeroOS 私有云 NAS 操作系统的跨平台客户端，�
 
 ### UI/UX
 - **Material Design 3** — 完整 MD3 设计规范，动态主题色
+- **MD3 Expressive 加载组件** — 星爆旋转器 (starburst spinner)、波浪进度条 (wavy progress)、脉冲圆点 (pulsing dots)、分段旋转器 (segmented spinner)、安全连接盾牌动画 (SAE 握手专用)、缓冲圆点环 (buffering indicator)
 - **动态壁纸** — 自定义壁纸 + 80%壁纸色/20%系统色混合
 - **毛玻璃卡片** — `BackdropFilter` 高对比度磨砂效果 (sigma 20)
 - **全面屏** — 透明状态栏/导航栏，手势导航，预测返回
@@ -54,7 +55,7 @@ lib/
 │   ├── network/          # API 服务层 (Dio HTTP 客户端, 请求/响应拦截)
 │   ├── services/         # 壁纸服务, media_kit 初始化, 动态配色
 │   ├── theme/            # M3 主题, 动态色彩, 动画曲线
-│   └── widgets/          # 通用组件 (ShellScaffold, GlassmorphicCard, DynamicColorCard)
+│   └── widgets/          # 通用组件 (ShellScaffold, GlassmorphicCard, DynamicColorCard, MD3LoadingIndicator)
 ├── features/
 │   ├── auth/             # 登录/注册 (毛玻璃卡片, SAE+JWT+ZKP)
 │   ├── dashboard/        # 仪表盘, 网速测试 (计时器 UI)
@@ -62,7 +63,8 @@ lib/
 │   │   └── presentation/pages/
 │   │       ├── files_page.dart                    # 磁盘网格 + 文件列表
 │   │       ├── enhanced_media_player_page.dart    # 视频播放器 (media_kit + hwdec)
-│   │       └── enhanced_audio_player_page.dart    # 音频播放器 (三级回退)
+│   │       ├── secure_hls_video_player.dart        # SAE+HLS 安全视频播放器 (PTS 偏移修正)
+│   │       └── enhanced_audio_player_page.dart    # 音频播放器 (三级回退, 返回=最小化)
 │   ├── appstore/         # 游戏中心
 │   │   └── presentation/
 │   │       ├── pages/wasm_store_page.dart          # 多平台游戏商城主页
@@ -98,7 +100,8 @@ lib/
 ### 视频
 - 使用 `media_kit` (libmpv) 硬件加速解码
 - `SizedBox.expand()` 包裹确保视频画面正确显示
-- mpv 配置: `hwdec=auto-safe`, `cache=yes`, `demuxer-max-bytes=256MiB`, `cache-secs=90`
+- mpv 配置: `hwdec=auto-safe`, `rebase-start-time=yes`, `demuxer-lavf-o=fflags=+genpts+discardcorrupt`, `cache=yes`, `demuxer-max-bytes=256MiB`, `cache-secs=90`
+- PTS 偏移双重修正: 服务端 ffmpeg `-fflags +genpts+discardcorrupt -avoid_negative_ts make_zero` + 客户端 `_detectTimestampOffset()` 对比服务器时长自动计算偏移量并修正显示/seek 坐标
 - 编解码自适应: 播放列表等待超时从 30s 调整为 90s，支持 AV1/VP9 转码场景
 - Android: MediaCodec, iOS: VideoToolbox, Desktop: 自动检测
 
@@ -111,9 +114,10 @@ lib/
 
 ### 音频小窗与后台播放行为（生产策略）
 
+- **返回键 = 最小化到后台**: 按下返回键或系统返回手势时，页面播放器暂停并将播放状态（位置/音量/速度/循环）转移到全局 `AudioPlayerService`，随后关闭页面，音频在 mini player 中继续播放。
+- **停止按钮 = 完全停止**: AppBar 中的停止按钮 (`Icons.stop_circle_outlined`) 才会停止页面播放器和全局服务，确保退出即停播。
 - 从小窗恢复到大播放器时，会先停止全局小窗服务再初始化页面播放器，避免“双音轨并发播放”。
-- 点击“后台播放”时，页面播放器先暂停/停止，再把位置、音量、速度、循环状态转移给全局 `AudioPlayerService`，随后关闭页面。
-- 普通返回（未启用后台播放）会强制停止页面播放器和全局小窗服务，确保退出即停播。
+- 点击“后台播放”按钮行为与返回键相同。
 - Mini Audio Player 进入大播放器使用 MD3 风格强调曲线过渡（短时淡入+轻微位移），降低跳变感。
 
 ### 全面屏手势适配

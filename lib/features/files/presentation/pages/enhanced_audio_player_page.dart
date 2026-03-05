@@ -10,6 +10,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../../core/services/audio_player_service.dart';
+import '../../../../core/widgets/md3_loading_indicator.dart';
 import '../../../../core/widgets/shell_scaffold.dart';
 
 /// Enhanced audio player with improved stability and seek support
@@ -671,7 +672,8 @@ class _EnhancedAudioPlayerPageState
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (!didPop) {
-          _closePageAndStopAudio();
+          // 返回键 = 最小化到后台播放，而非停止音频
+          _minimizeToBackground();
         }
       },
       child: Scaffold(
@@ -681,7 +683,8 @@ class _EnhancedAudioPlayerPageState
           elevation: 0,
           leading: IconButton(
             icon: const Icon(Icons.arrow_back_rounded),
-            onPressed: _closePageAndStopAudio,
+            // 返回 = 最小化到后台，音频继续在 mini player 中播放
+            onPressed: _minimizeToBackground,
           ),
           actions: [
             // 最小化到后台按钮 — 转移播放到全局服务
@@ -689,6 +692,12 @@ class _EnhancedAudioPlayerPageState
               icon: const Icon(Icons.picture_in_picture_alt_rounded),
               tooltip: '后台播放',
               onPressed: _minimizeToBackground,
+            ),
+            // 停止播放并关闭页面
+            IconButton(
+              icon: const Icon(Icons.stop_circle_outlined),
+              tooltip: '停止播放',
+              onPressed: _closePageAndStopAudio,
             ),
             PopupMenuButton<double>(
               icon: const Icon(Icons.speed_rounded),
@@ -755,9 +764,9 @@ class _EnhancedAudioPlayerPageState
               ),
             ),
             child: Center(
-              child: CircularProgressIndicator(
+              child: MD3LoadingIndicator(
                 color: colorScheme.primary,
-                strokeWidth: 3,
+                size: 56,
               ),
             ),
           ),
@@ -851,8 +860,8 @@ class _EnhancedAudioPlayerPageState
                     SizedBox(
                       width: 14,
                       height: 14,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: colorScheme.primary),
+                      child: MD3BufferingIndicator(
+                          size: 14, color: colorScheme.primary),
                     ),
                     const SizedBox(width: 8),
                     Text(

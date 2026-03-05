@@ -175,6 +175,12 @@ class _EnhancedMediaPlayerPageState
       // Set mpv properties for better HLS and video compatibility
       if (_player!.platform is NativePlayer) {
         final mpv = _player!.platform as NativePlayer;
+        // ★ PTS 时间戳修正：将起始时间重新基准为 0
+        await mpv.setProperty('rebase-start-time', 'yes');
+        await mpv.setProperty(
+          'demuxer-lavf-o',
+          'fflags=+genpts+discardcorrupt',
+        );
         // Video output: prefer GPU-accelerated rendering
         await mpv.setProperty('hwdec', 'auto-safe');
         // Cache settings for network streams

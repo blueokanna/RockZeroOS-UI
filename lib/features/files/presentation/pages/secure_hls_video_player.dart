@@ -15,6 +15,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../../../../core/widgets/md3_loading_indicator.dart';
 import '../../../../core/widgets/shell_scaffold.dart';
 import '../../../../services/sae_handshake_service.dart';
 
@@ -65,6 +66,14 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   Timer? _hideControlsTimer;
   DateTime _lastProgressSaveAt = DateTime.fromMillisecondsSinceEpoch(0);
   bool _resumePromptShown = false;
+
+  // === PTS 时间戳偏移修正 ===
+  // 某些视频文件（尤其是 MKV 容器）内部 PTS 时间戳不从 0 开始，
+  // 导致 stream-copy 生成的 HLS 分片继承了错误的起始时间。
+  // 例如：视频实际时长 1:30，但 PTS 从 26:28:10 开始，导致播放器显示 26:28:10 ~ 26:29:40。
+  Duration _startOffset = Duration.zero;
+  bool _offsetDetected = false;
+  bool _initialSeekDone = false;
 
   double _playbackSpeed = 1.0;
   static const List<double> _speedOptions = [
@@ -242,6 +251,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       await mpv.setProperty('hwdec', 'auto-safe');
       await mpv.setProperty('vd-lavc-software-fallback', 'yes');
       await mpv.setProperty('video-sync', 'audio');
+      // 强制将流起始时间重定向为 0，修复 PTS 偏移导致的时间显示错误
+      await mpv.setProperty('rebase-start-time', 'yes');
+      await mpv.setProperty('demuxer-lavf-o', 'fflags=+genpts+discardcorrupt');
     }
 
     _videoController = VideoController(_player!);
@@ -342,6 +354,10 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       if (mounted) {
         setState(() => _position = position);
       }
+      // 尝试检测 PTS 偏移（基于位置）
+      _detectTimestampOffsetFromPosition(position);
+      // 首次检测到偏移后，seek 到实际内容起始点
+      _performInitialSeekIfNeeded();
       _saveResumeProgressIfNeeded(position);
     }));
 
@@ -353,6 +369,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
             _durationHint = duration;
           }
         });
+        // 尝试检测 PTS 偏移（基于时长对比）
+        _detectTimestampOffsetFromDuration();
       }
     }));
 
@@ -461,34 +479,107 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     }
   }
 
+  /// PTS 偏移检测（基于时长对比）
+  ///
+  /// 如果播放器报告的时长远超服务器告知的真实时长，说明存在 PTS 偏移。
+  /// 例如：服务器说视频时长 01:30，但播放器报告 26:29:40。
+  /// 偏移量 = 26:29:40 - 01:30 = 26:28:10。
+  void _detectTimestampOffsetFromDuration() {
+    if (_offsetDetected) return;
+    if (_durationHint <= Duration.zero || _duration <= Duration.zero) return;
+
+    final diff = _duration - _durationHint;
+    // 如果差异超过 30 秒，且播放器时长显著大于真实时长，则判定为 PTS 偏移
+    if (diff.inSeconds > 30 &&
+        _duration.inSeconds > _durationHint.inSeconds * 2) {
+      setState(() {
+        _startOffset = diff;
+        _offsetDetected = true;
+      });
+      debugPrint(
+        '[SecureHLS] ✅ PTS offset detected via duration comparison: '
+        'offset=$_startOffset (player_duration=$_duration, hint=$_durationHint)',
+      );
+    }
+  }
+
+  /// PTS 偏移检测（基于位置）
+  ///
+  /// 备用检测方法：当服务器未返回时长提示时，
+  /// 用第一个报告的位置判断偏移。
+  void _detectTimestampOffsetFromPosition(Duration position) {
+    if (_offsetDetected) return;
+    if (_durationHint > Duration.zero) return; // 已有时长提示，使用时长对比法
+    if (_duration <= Duration.zero) return;
+
+    // 如果第一个报告的位置 > 60秒，很可能是 PTS 偏移
+    if (position.inSeconds > 60) {
+      setState(() {
+        _startOffset = position;
+        _offsetDetected = true;
+      });
+      debugPrint(
+        '[SecureHLS] ✅ PTS offset detected via first position: '
+        'offset=$_startOffset (first_position=$position)',
+      );
+    }
+  }
+
+  /// 检测到偏移后，seek 到实际内容的起始点
+  void _performInitialSeekIfNeeded() {
+    if (!_offsetDetected || _initialSeekDone) return;
+    if (_startOffset <= Duration.zero) return;
+
+    _initialSeekDone = true;
+    debugPrint(
+        '[SecureHLS] Performing initial seek to content start: $_startOffset');
+    _player?.seek(_startOffset);
+  }
+
+  /// 显示位置（修正 PTS 偏移）
+  Duration get _displayPosition {
+    if (_offsetDetected && _position >= _startOffset) {
+      return _position - _startOffset;
+    }
+    return _position;
+  }
+
   Duration get _effectiveTotalDuration {
+    if (_offsetDetected && _durationHint > Duration.zero) {
+      return _durationHint;
+    }
     if (_durationHint > _duration) return _durationHint;
     return _duration;
   }
 
   void _offerResumePromptIfNeeded() {
     if (!mounted || _resumePromptShown) return;
-    final saved = _lastSavedPosition;
-    if (saved == null || saved.inSeconds < 10) return;
+    final savedRaw = _lastSavedPosition;
+    if (savedRaw == null || savedRaw.inSeconds < 10) return;
 
     _resumePromptShown = true;
 
+    // 将原始保存的位置转换为显示坐标
+    final savedDisplay = _offsetDetected && savedRaw > _startOffset
+        ? savedRaw - _startOffset
+        : savedRaw;
+
     final total = _effectiveTotalDuration;
-    if (total.inSeconds > 0 && saved >= total - const Duration(seconds: 10)) {
+    if (total.inSeconds > 0 &&
+        savedDisplay >= total - const Duration(seconds: 10)) {
       _clearResumeProgress();
       return;
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('检测到上次播放到 ${_formatDuration(saved)}，是否继续？'),
+        content: Text('检测到上次播放到 ${_formatDuration(savedDisplay)}，是否继续？'),
         duration: const Duration(seconds: 8),
         action: SnackBarAction(
           label: '继续播放',
           onPressed: () {
-            final target = saved > _effectiveTotalDuration
-                ? _effectiveTotalDuration
-                : saved;
+            // _seekTo 接收显示坐标
+            final target = savedDisplay > total ? total : savedDisplay;
             _seekTo(target);
           },
         ),
@@ -630,21 +721,33 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     }
   }
 
-  void _seekTo(Duration position) {
+  /// Seek 到指定位置（接收 **显示坐标** = 用户看到的时间轴）
+  ///
+  /// 内部自动转换为播放器原始 PTS 坐标。
+  void _seekTo(Duration displayPos) {
     if (_player == null) return;
-    final targetMs = position.inMilliseconds;
-    final clampedMs = targetMs < 0
-        ? 0
-        : (_durationHint > Duration.zero
-            ? targetMs.clamp(0, _durationHint.inMilliseconds)
-            : targetMs);
 
-    final clamped = Duration(milliseconds: clampedMs);
-    _player!.seek(clamped);
+    // 将显示坐标转换为原始 PTS 坐标
+    Duration rawTarget = displayPos;
+    if (_offsetDetected) {
+      rawTarget = displayPos + _startOffset;
+    }
+
+    final int targetMs = rawTarget.inMilliseconds;
+    final int minMs = _startOffset.inMilliseconds;
+    final int maxMs = _duration > Duration.zero
+        ? _duration.inMilliseconds
+        : (_offsetDetected
+            ? (_durationHint + _startOffset).inMilliseconds
+            : targetMs);
+    final clampedMs = targetMs.clamp(minMs, maxMs);
+
+    _player!.seek(Duration(milliseconds: clampedMs));
   }
 
+  /// 基于当前 **显示位置** 做相对 seek
   void _seekRelative(int seconds) {
-    _seekTo(_position + Duration(seconds: seconds));
+    _seekTo(_displayPosition + Duration(seconds: seconds));
   }
 
   void _setPlaybackSpeed(double speed) {
@@ -815,10 +918,13 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
                 ),
               ),
 
-            // 缓冲指示器
+            // 缓冲指示器 (MD3 风格)
             if (_isBuffering && !_isLoading)
               const Center(
-                child: CircularProgressIndicator(color: Colors.white70),
+                child: MD3BufferingIndicator(
+                  color: Colors.white70,
+                  size: 48,
+                ),
               ),
 
             // 自定义控制栏
@@ -1005,11 +1111,17 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   Widget _buildBottomBar() {
     final colorScheme = Theme.of(context).colorScheme;
     final totalMs = _effectiveTotalDuration.inMilliseconds.toDouble();
+    // 拖拽位置已是显示坐标，正常播放则用修正后的 _displayPosition
     final displayPosition = _isDraggingProgress && _dragPreviewPosition != null
         ? _dragPreviewPosition!
-        : _position;
+        : _displayPosition;
     final posMs = displayPosition.inMilliseconds.toDouble();
-    final bufMs = _bufferedPosition.inMilliseconds.toDouble();
+    // 缓冲位置也需修正 PTS 偏移
+    final rawBufMs = _bufferedPosition.inMilliseconds.toDouble();
+    final offsetMs =
+        _offsetDetected ? _startOffset.inMilliseconds.toDouble() : 0.0;
+    final bufMs =
+        (rawBufMs - offsetMs).clamp(0.0, totalMs > 0 ? totalMs : rawBufMs);
     final safeTotalMs = totalMs <= 0 ? posMs : totalMs;
 
     return SafeArea(
@@ -1206,21 +1318,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   }
 
   Widget _buildLoading() {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const CircularProgressIndicator(color: Colors.white),
-          const SizedBox(height: 16),
-          Text(_loadingStatus, style: const TextStyle(color: Colors.white)),
-          const SizedBox(height: 8),
-          const Text(
-            'SAE 安全握手 → AES-256 静态加密 → Session 鉴权',
-            style: TextStyle(color: Colors.white54, fontSize: 12),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
+    return SecureConnectionIndicator(
+      statusText: _loadingStatus,
+      detailText: 'SAE 安全握手 → AES-256 静态加密 → Session 鉴权',
     );
   }
 
