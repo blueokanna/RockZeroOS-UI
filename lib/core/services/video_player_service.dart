@@ -154,15 +154,18 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
         final mpv = _player!.platform as NativePlayer;
         // ★ 将流的起始时间重新基准为 0（修复源文件非零 PTS 偏移）
         await mpv.setProperty('rebase-start-time', 'yes');
+        // ★ live_start_index=0: 从第一个分片开始（修复渐进式 HLS 进度条满的问题）
         await mpv.setProperty(
           'demuxer-lavf-o',
-          'fflags=+genpts+discardcorrupt',
+          'fflags=+genpts+discardcorrupt,live_start_index=0',
         );
         await mpv.setProperty('cache', 'yes');
         await mpv.setProperty('cache-secs', '60');
         await mpv.setProperty('demuxer-max-bytes', '128MiB');
         await mpv.setProperty('demuxer-readahead-secs', '30');
         await mpv.setProperty('hwdec', 'auto-safe');
+        // ★ 强制允许在 live HLS 流中 seek
+        await mpv.setProperty('force-seekable', 'yes');
       }
 
       // 4. 设置监听器

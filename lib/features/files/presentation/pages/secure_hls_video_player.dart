@@ -253,7 +253,16 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       await mpv.setProperty('video-sync', 'audio');
       // 强制将流起始时间重定向为 0，修复 PTS 偏移导致的时间显示错误
       await mpv.setProperty('rebase-start-time', 'yes');
-      await mpv.setProperty('demuxer-lavf-o', 'fflags=+genpts+discardcorrupt');
+      // ★ live_start_index=0 让播放器从第一个分片开始播放（而非渐进式 HLS 的最新位置）
+      // ★ fflags=+genpts+discardcorrupt 生成缺失的 PTS 并丢弃损坏帧
+      await mpv.setProperty(
+        'demuxer-lavf-o',
+        'fflags=+genpts+discardcorrupt,live_start_index=0',
+      );
+      // ★ 强制允许在“直播”HLS 流中进行 seek 操作
+      await mpv.setProperty('force-seekable', 'yes');
+      // ★ 从cache里开始播放而不是等待实时流
+      await mpv.setProperty('stream-lavf-o', 'reconnect=1,reconnect_streamed=1');
     }
 
     _videoController = VideoController(_player!);
@@ -304,7 +313,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       play: true,
     );
 
-    await _player!.seek(Duration.zero);
+    // 不再在 open 后立即 seek — 等待播放确认后再处理
 
     // 等待播放信号、时长信号或错误，超时 25 秒
     final result = await Future.any([
@@ -323,6 +332,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       if (mounted) {
         setState(() => _isLoading = false);
       }
+      // ★ 关键修复：渐进式 HLS 可能从最新分片开始，强制 seek 到实际内容起始点
+      _forceSeekToStartIfNeeded();
       _offerResumePromptIfNeeded();
       return;
     }
@@ -334,6 +345,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       if (mounted) {
         setState(() => _isLoading = false);
       }
+      _forceSeekToStartIfNeeded();
       _offerResumePromptIfNeeded();
       return;
     }
@@ -536,6 +548,63 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     _player?.seek(_startOffset);
   }
 
+  /// ★ 强制 seek 到开头 —— 修复渐进式 HLS（无 #EXT-X-ENDLIST）导致
+  /// 播放器从最新分片（live edge）开始播放，进度条一开始就满的问题。
+  ///
+  /// 策略：
+  /// 1. 等一小段时间让播放器报告实际 position 和 duration
+  /// 2. 如果 displayPosition 占 totalDuration 比例 > 80%，且不是短视频已近结尾，
+  ///    认为播放器从 live edge 开始了，强制 seek 回开头
+  /// 3. 如果有 PTS 偏移已检测到，使用 _startOffset 作为起始点
+  void _forceSeekToStartIfNeeded() {
+    if (_player == null) return;
+
+    // 延迟 800ms，等播放器报告第一批 position/duration
+    Future.delayed(const Duration(milliseconds: 800), () {
+      if (!mounted || _player == null) return;
+
+      final total = _effectiveTotalDuration;
+      final displayPos = _displayPosition;
+
+      debugPrint(
+        '[SecureHLS] forceSeekToStart check: '
+        'displayPos=$displayPos, total=$total, '
+        'rawPos=$_position, rawDur=$_duration, '
+        'offset=$_startOffset, offsetDetected=$_offsetDetected',
+      );
+
+      // 条件：总时长 > 30秒（不是极短视频），且当前显示位置已超过总时长 70%
+      if (total.inSeconds > 30 &&
+          displayPos.inSeconds > 0 &&
+          displayPos.inMilliseconds > total.inMilliseconds * 0.7) {
+        debugPrint(
+          '[SecureHLS] ★ Detected live-edge start! '
+          'displayPos=$displayPos is >70% of total=$total. '
+          'Seeking to beginning...',
+        );
+
+        if (_offsetDetected && _startOffset > Duration.zero) {
+          // 有 PTS 偏移：seek 到偏移点（内容起始）
+          _player?.seek(_startOffset);
+        } else {
+          // 无偏移：直接 seek 到 0
+          _player?.seek(Duration.zero);
+        }
+      } else if (_position.inSeconds > 0 &&
+          _duration.inSeconds > 0 &&
+          !_offsetDetected &&
+          _position.inMilliseconds > _duration.inMilliseconds * 0.9 &&
+          _duration.inSeconds > 60) {
+        // 备用检查：rawPosition > 90% rawDuration（无偏移检测的情况）
+        debugPrint(
+          '[SecureHLS] ★ Fallback: rawPos=$_position > 90% of rawDur=$_duration. '
+          'Seeking to zero...',
+        );
+        _player?.seek(Duration.zero);
+      }
+    });
+  }
+
   /// 显示位置（修正 PTS 偏移）
   Duration get _displayPosition {
     if (_offsetDetected && _position >= _startOffset) {
@@ -556,8 +625,16 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         return estimated;
       }
     }
-    // 正常视频：使用服务端提示（如果更大）或播放器时长
-    if (_durationHint > Duration.zero && _durationHint > _duration) {
+    // ★ 渐进式 HLS 修复：当服务端返回了真实时长（durationHint），始终优先使用
+    // 播放器报告的 _duration 可能因渐进式生成而不准确（偏大或偏小）
+    if (_durationHint > Duration.zero) {
+      // 如果 hint 和 player duration 差距在 5% 以内，使用两者中较大的
+      // 如果差距很大，信任 hint（服务端通过 ffprobe 获取的精确值）
+      final diff = (_duration - _durationHint).abs();
+      if (_duration > Duration.zero &&
+          diff.inMilliseconds < _durationHint.inMilliseconds * 0.05) {
+        return _duration > _durationHint ? _duration : _durationHint;
+      }
       return _durationHint;
     }
     return _duration;

@@ -574,38 +574,46 @@ class _EnhancedAudioPlayerPageState
   /// 将当前播放转移到全局 AudioPlayerService（后台播放），然后关闭页面。
   /// MiniAudioPlayer 会自动出现在底部导航栏上方，系统通知栏也会显示控制按钮。
   Future<void> _minimizeToBackground() async {
-    if (_closing) return;
+    if (_closing || _transferredToBackground) return;
+    _closing = true;
 
     final service = ref.read(audioPlayerServiceProvider.notifier);
 
+    // 1. 先捕获当前状态快照
     final wasPlaying = _isPlaying;
     final localPosition = _position;
     final localVolume = _volume;
     final localSpeed = _speed;
     final localLooping = _isLooping;
-
-    await _audioPlayer?.pause();
-    await _audioPlayer?.stop();
-
-    // 1. 用同一 URL & 文件名启动全局播放服务，并携带当前播放状态
     final url = _getStreamUrl();
-    await service.play(
-      url,
-      widget.fileName,
-      startPosition: localPosition,
-      startVolume: localVolume,
-      startSpeed: localSpeed,
-      startLooping: localLooping,
-      autoPlay: wasPlaying,
-    );
 
-    // 2. 停止本地播放器（不触发 dispose 错误）
-    _transferredToBackground = true;
-    _disposed = true;
+    // 2. 停止本地播放器（加超时防止挂起导致 UI 卡死）
     _visualizationTimer?.cancel();
     _cancelSubscriptions();
-    await _audioPlayer?.dispose();
+    try {
+      await _audioPlayer
+          ?.pause()
+          .timeout(const Duration(seconds: 2), onTimeout: () {});
+      await _audioPlayer
+          ?.stop()
+          .timeout(const Duration(seconds: 2), onTimeout: () {});
+    } catch (_) {
+      // 忽略停止阶段的错误 — 重要的是继续 pop 页面
+    }
+
+    _transferredToBackground = true;
+    _disposed = true;
+
+    // 异步释放本地播放器（不阻塞 UI 线程）
+    final localPlayer = _audioPlayer;
     _audioPlayer = null;
+    unawaited(Future(() async {
+      try {
+        await localPlayer
+            ?.dispose()
+            .timeout(const Duration(seconds: 2), onTimeout: () {});
+      } catch (_) {}
+    }));
 
     // 3. 恢复系统 UI（防止视频播放器遗留的 immersive 模式导致黑屏）
     SystemChrome.setEnabledSystemUIMode(
@@ -619,11 +627,22 @@ class _EnhancedAudioPlayerPageState
       DeviceOrientation.landscapeRight,
     ]);
 
-    // 4. 关闭页面，显示底部导航栏
+    // 4. 先关闭页面（立刻响应用户操作），再异步启动全局播放服务
     if (mounted) {
       ref.read(bottomNavVisibleProvider.notifier).show();
       Navigator.pop(context);
     }
+
+    // 5. 异步启动全局 AudioPlayerService（页面已关闭，不会阻塞 UI）
+    unawaited(service.play(
+      url,
+      widget.fileName,
+      startPosition: localPosition,
+      startVolume: localVolume,
+      startSpeed: localSpeed,
+      startLooping: localLooping,
+      autoPlay: wasPlaying,
+    ));
   }
 
   Future<void> _closePageAndStopAudio() async {
