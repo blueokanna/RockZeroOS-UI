@@ -262,7 +262,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       // ★ 强制允许在“直播”HLS 流中进行 seek 操作
       await mpv.setProperty('force-seekable', 'yes');
       // ★ 从cache里开始播放而不是等待实时流
-      await mpv.setProperty('stream-lavf-o', 'reconnect=1,reconnect_streamed=1');
+      await mpv.setProperty(
+          'stream-lavf-o', 'reconnect=1,reconnect_streamed=1');
     }
 
     _videoController = VideoController(_player!);
