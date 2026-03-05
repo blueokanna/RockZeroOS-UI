@@ -176,7 +176,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     setState(() => _loadingStatus = '正在等待视频分片...');
 
     bool playlistReady = false;
-    for (int i = 0; i < 30; i++) {
+    for (int i = 0; i < 90; i++) {
       if (!mounted) return;
 
       try {
@@ -214,7 +214,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     }
 
     if (!playlistReady) {
-      _setError('播放列表生成超时（已等待 30 秒），请检查服务器 ffmpeg 配置');
+      _setError('播放列表生成超时（已等待 90 秒），请检查视频编码格式或服务器 ffmpeg 配置');
       return;
     }
 

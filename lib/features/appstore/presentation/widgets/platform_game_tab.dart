@@ -142,6 +142,8 @@ final PlatformConfig _epicConfig = PlatformConfig(
       coverGradient: [Color(0xFFE65100), Color(0xFFFF6D00)],
       coverIcon: Icons.sports_soccer_rounded,
       isFeatured: true,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/252950/header.jpg',
     ),
     GameData(
       id: 'epic_gta5',
@@ -157,6 +159,8 @@ final PlatformConfig _epicConfig = PlatformConfig(
       coverGradient: [Color(0xFF1B5E20), Color(0xFF388E3C)],
       coverIcon: Icons.location_city_rounded,
       isFeatured: true,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/271590/header.jpg',
     ),
     GameData(
       id: 'epic_rdr2',
@@ -171,6 +175,8 @@ final PlatformConfig _epicConfig = PlatformConfig(
       tags: ['开放世界', '冒险', '西部', '叙事'],
       coverGradient: [Color(0xFFBF360C), Color(0xFFE64A19)],
       coverIcon: Icons.landscape_rounded,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/1174180/header.jpg',
     ),
     GameData(
       id: 'epic_control',
@@ -186,6 +192,8 @@ final PlatformConfig _epicConfig = PlatformConfig(
       coverGradient: [Color(0xFFB71C1C), Color(0xFFD32F2F)],
       coverIcon: Icons.auto_fix_high_rounded,
       isFeatured: true,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/870780/header.jpg',
     ),
     GameData(
       id: 'epic_alan2',
@@ -200,6 +208,8 @@ final PlatformConfig _epicConfig = PlatformConfig(
       tags: ['恐怖', '冒险', '叙事', '双主角'],
       coverGradient: [Color(0xFF1A237E), Color(0xFF283593)],
       coverIcon: Icons.flashlight_on_rounded,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/2104590/header.jpg',
     ),
     GameData(
       id: 'epic_kingdom',
@@ -228,6 +238,8 @@ final PlatformConfig _epicConfig = PlatformConfig(
       tags: ['潜行', '动作', '暗杀', '策略'],
       coverGradient: [Color(0xFF263238), Color(0xFF37474F)],
       coverIcon: Icons.security_rounded,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/1659040/header.jpg',
     ),
     GameData(
       id: 'epic_dying2',
@@ -242,6 +254,8 @@ final PlatformConfig _epicConfig = PlatformConfig(
       tags: ['开放世界', '跑酷', '生存', '合作'],
       coverGradient: [Color(0xFF33691E), Color(0xFF558B2F)],
       coverIcon: Icons.directions_run_rounded,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/534380/header.jpg',
     ),
     GameData(
       id: 'epic_fall',
@@ -257,6 +271,8 @@ final PlatformConfig _epicConfig = PlatformConfig(
       coverGradient: [Color(0xFFE91E63), Color(0xFFFF5722)],
       coverIcon: Icons.emoji_events_rounded,
       isFeatured: true,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/1097150/header.jpg',
     ),
     GameData(
       id: 'epic_sifu',
@@ -285,6 +301,8 @@ final PlatformConfig _epicConfig = PlatformConfig(
       tags: ['动作RPG', '北欧神话', '冒险', '叙事'],
       coverGradient: [Color(0xFF0D47A1), Color(0xFF1565C0)],
       coverIcon: Icons.flash_on_rounded,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/2322010/header.jpg',
     ),
   ],
 );
@@ -380,6 +398,8 @@ final PlatformConfig _wegameConfig = PlatformConfig(
       tags: ['大逃杀', 'FPS', '生存', '免费'],
       coverGradient: [Color(0xFFE65100), Color(0xFFF57C00)],
       coverIcon: Icons.military_tech_rounded,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/578080/header.jpg',
     ),
     GameData(
       id: 'wg_mhw',
@@ -395,6 +415,8 @@ final PlatformConfig _wegameConfig = PlatformConfig(
       coverGradient: [Color(0xFF1B5E20), Color(0xFF388E3C)],
       coverIcon: Icons.pets_rounded,
       isFeatured: true,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/582010/header.jpg',
     ),
     GameData(
       id: 'wg_lark',
@@ -409,6 +431,8 @@ final PlatformConfig _wegameConfig = PlatformConfig(
       tags: ['MMORPG', '动作', '开放世界', '免费'],
       coverGradient: [Color(0xFF0D47A1), Color(0xFF1565C0)],
       coverIcon: Icons.anchor_rounded,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/1599340/header.jpg',
     ),
     GameData(
       id: 'wg_genshin',
@@ -451,6 +475,8 @@ final PlatformConfig _wegameConfig = PlatformConfig(
       tags: ['大逃杀', '动作', '格斗', '免费'],
       coverGradient: [Color(0xFF263238), Color(0xFF455A64)],
       coverIcon: Icons.sports_martial_arts_rounded,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/1203220/header.jpg',
     ),
     GameData(
       id: 'wg_civ6',
@@ -465,6 +491,8 @@ final PlatformConfig _wegameConfig = PlatformConfig(
       tags: ['策略', '回合制', '4X', '历史'],
       coverGradient: [Color(0xFF4E342E), Color(0xFF6D4C41)],
       coverIcon: Icons.public_rounded,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/289070/header.jpg',
     ),
     GameData(
       id: 'wg_zzz',
@@ -546,6 +574,8 @@ final PlatformConfig _ubisoftConfig = PlatformConfig(
       coverGradient: [Color(0xFF37474F), Color(0xFF546E7A)],
       coverIcon: Icons.security_rounded,
       isFeatured: true,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/359550/header.jpg',
     ),
     GameData(
       id: 'ubi_fc6',
@@ -697,6 +727,8 @@ final PlatformConfig _xboxConfig = PlatformConfig(
       coverGradient: [Color(0xFF1B5E20), Color(0xFF2E7D32)],
       coverIcon: Icons.military_tech_rounded,
       isFeatured: true,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/1240440/header.jpg',
     ),
     GameData(
       id: 'xb_forza5',
@@ -712,6 +744,8 @@ final PlatformConfig _xboxConfig = PlatformConfig(
       coverGradient: [Color(0xFFE65100), Color(0xFFF57C00)],
       coverIcon: Icons.directions_car_rounded,
       isFeatured: true,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/1551360/header.jpg',
     ),
     GameData(
       id: 'xb_starfield',
@@ -727,6 +761,8 @@ final PlatformConfig _xboxConfig = PlatformConfig(
       coverGradient: [Color(0xFF0D47A1), Color(0xFF1565C0)],
       coverIcon: Icons.rocket_launch_rounded,
       isFeatured: true,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/1716740/header.jpg',
     ),
     GameData(
       id: 'xb_gears5',
@@ -741,6 +777,8 @@ final PlatformConfig _xboxConfig = PlatformConfig(
       tags: ['TPS', '动作', 'Game Pass', '合作'],
       coverGradient: [Color(0xFFB71C1C), Color(0xFFD32F2F)],
       coverIcon: Icons.construction_rounded,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/1097840/header.jpg',
     ),
     GameData(
       id: 'xb_sea',
@@ -756,6 +794,8 @@ final PlatformConfig _xboxConfig = PlatformConfig(
       coverGradient: [Color(0xFF006064), Color(0xFF00838F)],
       coverIcon: Icons.sailing_rounded,
       isFeatured: true,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/1172620/header.jpg',
     ),
     GameData(
       id: 'xb_hifi',
@@ -770,6 +810,8 @@ final PlatformConfig _xboxConfig = PlatformConfig(
       tags: ['动作', '节奏', 'Game Pass', '独立'],
       coverGradient: [Color(0xFFAD1457), Color(0xFFD81B60)],
       coverIcon: Icons.music_note_rounded,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/1817230/header.jpg',
     ),
     GameData(
       id: 'xb_fable',
@@ -798,6 +840,8 @@ final PlatformConfig _xboxConfig = PlatformConfig(
       tags: ['模拟', '飞行', 'Game Pass', '真实'],
       coverGradient: [Color(0xFF1565C0), Color(0xFF42A5F5)],
       coverIcon: Icons.flight_rounded,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/1250410/header.jpg',
     ),
     GameData(
       id: 'xb_pal',
@@ -812,6 +856,8 @@ final PlatformConfig _xboxConfig = PlatformConfig(
       tags: ['生存', '开放世界', 'Game Pass', '合作'],
       coverGradient: [Color(0xFF00695C), Color(0xFF00897B)],
       coverIcon: Icons.pets_rounded,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/1623730/header.jpg',
     ),
     GameData(
       id: 'xb_avowed',
@@ -826,6 +872,8 @@ final PlatformConfig _xboxConfig = PlatformConfig(
       tags: ['RPG', '第一人称', 'Game Pass', '奇幻'],
       coverGradient: [Color(0xFF4A148C), Color(0xFF6A1B9A)],
       coverIcon: Icons.auto_fix_high_rounded,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/2237870/header.jpg',
     ),
     GameData(
       id: 'xb_hellblade2',
@@ -840,6 +888,8 @@ final PlatformConfig _xboxConfig = PlatformConfig(
       tags: ['动作', '冒险', 'Game Pass', '叙事'],
       coverGradient: [Color(0xFF263238), Color(0xFF455A64)],
       coverIcon: Icons.psychology_rounded,
+      headerImageUrl:
+          'https://cdn.akamai.steamstatic.com/steam/apps/2461850/header.jpg',
     ),
   ],
 );

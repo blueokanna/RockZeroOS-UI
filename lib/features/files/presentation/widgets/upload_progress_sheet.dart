@@ -85,101 +85,152 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
       overallProgress = (done + activeProgress) / total;
     }
 
-    return Container(
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.85,
-      ),
-      decoration: const BoxDecoration(
-        color: Color(0xFF0D0D1A),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 拖拽指示条
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.only(top: 8, bottom: 16),
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 桌面端检测：宽度 > 600 时使用紧凑布局
+        final isDesktop = constraints.maxWidth > 600;
 
-            // 标题区
-            _buildHeader(colorScheme, activeUploads.length, overallProgress),
+        return Container(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.85,
+          ),
+          decoration: const BoxDecoration(
+            color: Color(0xFF0D0D1A),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 拖拽指示条 — 仅移动端显示
+                if (!isDesktop)
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      margin: const EdgeInsets.only(top: 8, bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  )
+                else
+                  const SizedBox(height: 12),
 
-            const SizedBox(height: 12),
+                // 标题区
+                _buildHeader(
+                    colorScheme, activeUploads.length, overallProgress),
 
-            // 整体波浪进度条
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: _WaveProgressBar(
-                progress: overallProgress,
-                color: colorScheme.primary,
-                waveController: _waveController,
-                height: 28,
-              ),
-            ),
+                SizedBox(height: isDesktop ? 8 : 12),
 
-            const SizedBox(height: 6),
-
-            // 统计概览
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  _StatChip(
-                    label: '进行中',
-                    count: activeUploads.length,
-                    color: Colors.orangeAccent,
+                // 桌面端：将进度条 + 统计 + 管道放在一行
+                if (isDesktop) ...[
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Row(
+                      children: [
+                        // 波浪进度条
+                        Expanded(
+                          flex: 3,
+                          child: _WaveProgressBar(
+                            progress: overallProgress,
+                            color: colorScheme.primary,
+                            waveController: _waveController,
+                            height: 22,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        // 统计概览
+                        _StatChip(
+                          label: '进行中',
+                          count: activeUploads.length,
+                          color: Colors.orangeAccent,
+                        ),
+                        const SizedBox(width: 12),
+                        _StatChip(
+                          label: '已完成',
+                          count: completedUploads.length,
+                          color: Colors.greenAccent,
+                        ),
+                        const SizedBox(width: 12),
+                        _StatChip(
+                          label: '失败',
+                          count: failedUploads.length,
+                          color: Colors.redAccent,
+                        ),
+                      ],
+                    ),
                   ),
-                  _StatChip(
-                    label: '已完成',
-                    count: completedUploads.length,
-                    color: Colors.greenAccent,
+                  const SizedBox(height: 8),
+                  // 加密管道 — 桌面端紧凑
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: _buildEncryptionPipeline(colorScheme),
                   ),
-                  _StatChip(
-                    label: '失败',
-                    count: failedUploads.length,
-                    color: Colors.redAccent,
+                ] else ...[
+                  // 移动端：保持纵向堆叠
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: _WaveProgressBar(
+                      progress: overallProgress,
+                      color: colorScheme.primary,
+                      waveController: _waveController,
+                      height: 28,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        _StatChip(
+                          label: '进行中',
+                          count: activeUploads.length,
+                          color: Colors.orangeAccent,
+                        ),
+                        _StatChip(
+                          label: '已完成',
+                          count: completedUploads.length,
+                          color: Colors.greenAccent,
+                        ),
+                        _StatChip(
+                          label: '失败',
+                          count: failedUploads.length,
+                          color: Colors.redAccent,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: _buildEncryptionPipeline(colorScheme),
                   ),
                 ],
-              ),
+
+                SizedBox(height: isDesktop ? 8 : 16),
+
+                // 文件列表
+                Flexible(
+                  child: allUploads.isEmpty
+                      ? _buildEmptyState(colorScheme)
+                      : ListView.builder(
+                          shrinkWrap: true,
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                          itemCount: allUploads.length,
+                          itemBuilder: (context, index) {
+                            return _buildUploadItem(
+                                allUploads[index], colorScheme, index);
+                          },
+                        ),
+                ),
+              ],
             ),
-
-            const SizedBox(height: 16),
-
-            // 加密管道 — 4 个安全步骤
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: _buildEncryptionPipeline(colorScheme),
-            ),
-
-            const SizedBox(height: 16),
-
-            // 文件列表
-            Flexible(
-              child: allUploads.isEmpty
-                  ? _buildEmptyState(colorScheme)
-                  : ListView.builder(
-                      shrinkWrap: true,
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                      itemCount: allUploads.length,
-                      itemBuilder: (context, index) {
-                        return _buildUploadItem(
-                            allUploads[index], colorScheme, index);
-                      },
-                    ),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 

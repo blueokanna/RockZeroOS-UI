@@ -1681,8 +1681,10 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
   /// SteamDB 数据查看器对话框
   void _showSteamDbDialog() {
     final appIdCtrl = TextEditingController();
+    final nameCtrl = TextEditingController();
     final colorScheme = Theme.of(context).colorScheme;
     Map<String, dynamic>? data;
+    List<dynamic>? searchResults;
     bool isLoading = false;
     String? error;
 
@@ -1700,35 +1702,127 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
             ),
             content: SizedBox(
               width: MediaQuery.of(context).size.width * 0.85,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: appIdCtrl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Steam App ID',
-                      hintText: '例如: 730 (CS2), 570 (Dota 2)',
-                      prefixIcon: Icon(Icons.search_rounded),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 游戏名称搜索（优先展示）
+                    TextField(
+                      controller: nameCtrl,
+                      decoration: InputDecoration(
+                        labelText: '游戏名称搜索',
+                        hintText: '例如: Counter-Strike, Dota 2',
+                        prefixIcon: const Icon(Icons.search_rounded),
+                        suffixIcon: nameCtrl.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear, size: 18),
+                                onPressed: () {
+                                  nameCtrl.clear();
+                                  setDialogState(() {
+                                    searchResults = null;
+                                  });
+                                },
+                              )
+                            : null,
+                      ),
+                      onChanged: (_) => setDialogState(() {}),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (isLoading) const LinearProgressIndicator(),
-                  if (error != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(error!,
-                          style: TextStyle(color: colorScheme.error)),
-                    ),
-                  if (data != null) ...[
-                    const SizedBox(height: 12),
-                    Flexible(
-                      child: SingleChildScrollView(
-                        child: _SteamDbResultCard(data: data!),
+                    const SizedBox(height: 8),
+                    // App ID 直接查询
+                    TextField(
+                      controller: appIdCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Steam App ID（可选）',
+                        hintText: '例如: 730 (CS2), 570 (Dota 2)',
+                        prefixIcon: Icon(Icons.tag_rounded),
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    if (isLoading) const LinearProgressIndicator(),
+                    if (error != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(error!,
+                            style: TextStyle(color: colorScheme.error)),
+                      ),
+                    // 名称搜索结果列表 — 点击选择后查询详情
+                    if (searchResults != null && searchResults!.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        '搜索结果 (${searchResults!.length})',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: colorScheme.primary,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      ...searchResults!.take(10).map((item) {
+                        final map = item as Map<String, dynamic>;
+                        final appId = map['app_id'] ?? 0;
+                        final name = map['name'] ?? '';
+                        final tinyImage = map['tiny_image'] ?? '';
+                        return ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: tinyImage.toString().isNotEmpty
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: Image.network(
+                                    tinyImage.toString(),
+                                    width: 40,
+                                    height: 20,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => const Icon(
+                                        Icons.games_rounded,
+                                        size: 20),
+                                  ),
+                                )
+                              : const Icon(Icons.games_rounded, size: 20),
+                          title: Text(name.toString(),
+                              style: const TextStyle(fontSize: 13)),
+                          subtitle: Text('AppID: $appId',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: colorScheme.onSurfaceVariant)),
+                          onTap: () async {
+                            // 选择游戏后查询详情
+                            appIdCtrl.text = appId.toString();
+                            setDialogState(() {
+                              isLoading = true;
+                              error = null;
+                              data = null;
+                              searchResults = null;
+                            });
+                            try {
+                              final api = ref.read(apiServiceProvider);
+                              final response = await api.get(
+                                '/api/v1/wasm-store/builtin/steamdb-viewer/run?app_id=$appId',
+                              );
+                              setDialogState(() {
+                                isLoading = false;
+                                data = response.data is Map<String, dynamic>
+                                    ? response.data as Map<String, dynamic>
+                                    : null;
+                              });
+                            } catch (e) {
+                              setDialogState(() {
+                                isLoading = false;
+                                error = e.toString();
+                              });
+                            }
+                          },
+                        );
+                      }),
+                    ],
+                    if (data != null) ...[
+                      const SizedBox(height: 12),
+                      _SteamDbResultCard(data: data!),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
             actions: [
@@ -1736,16 +1830,93 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                 onPressed: () => Navigator.pop(ctx),
                 child: const Text('关闭'),
               ),
+              // 名称搜索按钮
+              if (nameCtrl.text.trim().isNotEmpty &&
+                  appIdCtrl.text.trim().isEmpty)
+                OutlinedButton.icon(
+                  onPressed: isLoading
+                      ? null
+                      : () async {
+                          final name = nameCtrl.text.trim();
+                          if (name.isEmpty) return;
+                          setDialogState(() {
+                            isLoading = true;
+                            error = null;
+                            data = null;
+                            searchResults = null;
+                          });
+                          try {
+                            final api = ref.read(apiServiceProvider);
+                            final response = await api.get(
+                              '/api/v1/wasm-store/builtin/steamdb-viewer/run?name=${Uri.encodeComponent(name)}',
+                            );
+                            final resData =
+                                response.data as Map<String, dynamic>? ?? {};
+                            setDialogState(() {
+                              isLoading = false;
+                              searchResults =
+                                  resData['search_results'] as List<dynamic>?;
+                              if (searchResults == null ||
+                                  searchResults!.isEmpty) {
+                                error = '未找到匹配「$name」的游戏';
+                              }
+                            });
+                          } catch (e) {
+                            setDialogState(() {
+                              isLoading = false;
+                              error = e.toString();
+                            });
+                          }
+                        },
+                  icon: const Icon(Icons.search_rounded),
+                  label: const Text('搜索'),
+                ),
+              // AppID 查询按钮
               FilledButton.icon(
                 onPressed: isLoading
                     ? null
                     : () async {
                         final id = appIdCtrl.text.trim();
-                        if (id.isEmpty) return;
+                        if (id.isEmpty) {
+                          // 如果没有 AppID 但有名称搜索，走名称搜索
+                          final name = nameCtrl.text.trim();
+                          if (name.isNotEmpty) {
+                            setDialogState(() {
+                              isLoading = true;
+                              error = null;
+                              data = null;
+                              searchResults = null;
+                            });
+                            try {
+                              final api = ref.read(apiServiceProvider);
+                              final response = await api.get(
+                                '/api/v1/wasm-store/builtin/steamdb-viewer/run?name=${Uri.encodeComponent(name)}',
+                              );
+                              final resData =
+                                  response.data as Map<String, dynamic>? ?? {};
+                              setDialogState(() {
+                                isLoading = false;
+                                searchResults =
+                                    resData['search_results'] as List<dynamic>?;
+                                if (searchResults == null ||
+                                    searchResults!.isEmpty) {
+                                  error = '未找到匹配「$name」的游戏';
+                                }
+                              });
+                            } catch (e) {
+                              setDialogState(() {
+                                isLoading = false;
+                                error = e.toString();
+                              });
+                            }
+                          }
+                          return;
+                        }
                         setDialogState(() {
                           isLoading = true;
                           error = null;
                           data = null;
+                          searchResults = null;
                         });
                         try {
                           final api = ref.read(apiServiceProvider);
@@ -1785,6 +1956,8 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     bool isDownloading = false;
     String? error;
     String? downloadStatus;
+    String selectedSaveDir = 'default'; // 'default' | 'downloads' | 'custom'
+    String customSavePath = '';
 
     showDialog(
       context: context,
@@ -1823,6 +1996,65 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                       ),
                     ),
                     const SizedBox(height: 12),
+
+                    // 保存位置选择
+                    Text('保存位置',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                            color: colorScheme.onSurface)),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        ChoiceChip(
+                          label: const Text('NAS 默认'),
+                          selected: selectedSaveDir == 'default',
+                          onSelected: (_) =>
+                              setDialogState(() => selectedSaveDir = 'default'),
+                        ),
+                        ChoiceChip(
+                          label: const Text('Downloads'),
+                          selected: selectedSaveDir == 'downloads',
+                          onSelected: (_) => setDialogState(
+                              () => selectedSaveDir = 'downloads'),
+                        ),
+                        ChoiceChip(
+                          label: const Text('自定义路径'),
+                          selected: selectedSaveDir == 'custom',
+                          onSelected: (_) =>
+                              setDialogState(() => selectedSaveDir = 'custom'),
+                        ),
+                      ],
+                    ),
+                    if (selectedSaveDir == 'custom') ...[
+                      const SizedBox(height: 8),
+                      TextField(
+                        decoration: const InputDecoration(
+                          labelText: '自定义保存路径',
+                          hintText: 'Downloads/Videos 或 /mnt/external/Videos',
+                          prefixIcon: Icon(Icons.folder_open_rounded),
+                          helperText: '相对路径基于外部存储根目录',
+                          helperMaxLines: 2,
+                        ),
+                        onChanged: (v) => customSavePath = v,
+                      ),
+                    ],
+                    const SizedBox(height: 4),
+                    Text(
+                      selectedSaveDir == 'default'
+                          ? '保存到: NAS 存储 / wasm_store / downloads /'
+                          : selectedSaveDir == 'downloads'
+                              ? '保存到: NAS 存储 / Downloads /'
+                              : customSavePath.isNotEmpty
+                                  ? '保存到: $customSavePath'
+                                  : '请输入自定义路径',
+                      style: TextStyle(
+                          fontSize: 11, color: colorScheme.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 12),
+
                     if (isParsing || isDownloading)
                       const LinearProgressIndicator(),
                     if (error != null)
@@ -1917,6 +2149,16 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                     : () async {
                         final url = urlCtrl.text.trim();
                         if (url.isEmpty) return;
+
+                        // 构建保存目录参数
+                        String? saveDir;
+                        if (selectedSaveDir == 'downloads') {
+                          saveDir = 'Downloads';
+                        } else if (selectedSaveDir == 'custom' &&
+                            customSavePath.isNotEmpty) {
+                          saveDir = customSavePath;
+                        }
+
                         setDialogState(() {
                           isDownloading = true;
                           error = null;
@@ -1930,17 +2172,19 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                               'url': url,
                               if (nameCtrl.text.trim().isNotEmpty)
                                 'output_name': nameCtrl.text.trim(),
+                              if (saveDir != null) 'save_dir': saveDir,
                             },
                           );
                           final result =
                               response.data as Map<String, dynamic>? ?? {};
-                          final outputName = result['output_name'] ?? '';
+                          final outputPath =
+                              result['output_path']?.toString() ?? '';
                           setDialogState(() {
                             isDownloading = false;
                             downloadStatus =
                                 '✅ 下载完成: ${result['downloaded_segments']}/${result['total_segments']} 分片\n'
                                 '文件大小: ${_formatFileSize(result['file_size'] ?? 0)}\n'
-                                '保存位置: NAS 存储 / wasm_store / downloads / $outputName\n'
+                                '保存位置: $outputPath\n'
                                 '提示: 可在「文件管理」中找到此文件';
                           });
                         } catch (e) {
@@ -1968,6 +2212,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     Map<String, dynamic>? data;
     bool isLoading = false;
     String? error;
+    bool showHelp = false;
 
     showDialog(
       context: context,
@@ -1978,39 +2223,97 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
               children: [
                 Icon(Icons.lan_rounded, color: colorScheme.primary),
                 const SizedBox(width: 8),
-                const Text('Steam P2P 信息'),
+                const Expanded(child: Text('Steam P2P 信息')),
+                IconButton(
+                  icon: Icon(
+                    showHelp ? Icons.help_rounded : Icons.help_outline_rounded,
+                    color: colorScheme.primary,
+                    size: 20,
+                  ),
+                  tooltip: '使用说明',
+                  onPressed: () => setDialogState(() => showHelp = !showHelp),
+                ),
               ],
             ),
             content: SizedBox(
               width: MediaQuery.of(context).size.width * 0.85,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: steamIdCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Steam ID',
-                      hintText: '例如: 76561198000000000',
-                      prefixIcon: Icon(Icons.person_search_rounded),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (isLoading) const LinearProgressIndicator(),
-                  if (error != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(error!,
-                          style: TextStyle(color: colorScheme.error)),
-                    ),
-                  if (data != null) ...[
-                    const SizedBox(height: 12),
-                    Flexible(
-                      child: SingleChildScrollView(
-                        child: _SteamP2PResultCard(data: data!),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 使用说明 — 可折叠
+                    if (showHelp)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: colorScheme.primaryContainer
+                              .withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: colorScheme.primary.withValues(alpha: 0.2),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '使用说明',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: colorScheme.primary,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              '1. 获取 Steam ID\n'
+                              '   • 打开 Steam 客户端 → 右上角「查看个人资料」\n'
+                              '   • Steam ID 为个人资料 URL 末尾的 17 位数字\n'
+                              '   • 也可在 steamid.io 网站通过自定义 URL 查询\n\n'
+                              '2. 查询 P2P 信息\n'
+                              '   • 输入 Steam ID 后点击「查询」\n'
+                              '   • 返回该用户的在线状态、游戏信息和 NAT 类型\n'
+                              '   • 可用于诊断 P2P 联机连接问题\n\n'
+                              '3. NAT 类型说明\n'
+                              '   • 开放 (Open) — 最佳, 可与所有类型连接\n'
+                              '   • 中等 (Moderate) — 良好, 部分限制\n'
+                              '   • 严格 (Strict) — 受限, 仅可与开放类型连接\n\n'
+                              '4. 常见问题\n'
+                              '   • 若提示「查询失败」请检查 Steam ID 是否正确\n'
+                              '   • 对方需设置个人资料为公开才能查看详细信息\n'
+                              '   • P2P 连接质量取决于双方的网络环境和 NAT 类型',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                height: 1.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    TextField(
+                      controller: steamIdCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Steam ID',
+                        hintText: '例如: 76561198000000000',
+                        prefixIcon: Icon(Icons.person_search_rounded),
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    if (isLoading) const LinearProgressIndicator(),
+                    if (error != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(error!,
+                            style: TextStyle(color: colorScheme.error)),
+                      ),
+                    if (data != null) ...[
+                      const SizedBox(height: 12),
+                      _SteamP2PResultCard(data: data!),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
             actions: [

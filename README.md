@@ -24,10 +24,10 @@ RockZeroOS UI 是 RockZeroOS 私有云 NAS 操作系统的跨平台客户端，�
 ### 核心功能
 - **仪表盘** — CPU、内存、磁盘、网络实时监控，计时器风格速度测试
 - **文件管理** — 磁盘浏览、目录导航、文件上传/下载、LAN 文件传输
-- **视频播放** — SAE 加密 HLS 流媒体，media_kit (libmpv) 硬件加速解码，`SizedBox.expand()` 确保全平台正确显示
+- **视频播放** — SAE 加密 HLS 流媒体，media_kit (libmpv) 硬件加速解码，`SizedBox.expand()` 确保全平台正确显示，编解码自适应超时（90s 播放列表等待）
 - **音频播放** — `just_audio` 三级回退音频源策略，支持自动服务器端转码（15+ 不支持的编码格式自动转为 AAC/MP3）
-- **游戏中心** — 多平台游戏商城（Steam/Epic/WeGame/Ubisoft/Xbox），从官方 API 实时获取数据，支持游戏收藏和统一库
-- **WASM 应用** — 内置 SteamDB 查看器、M3U8 视频下载器、Steam P2P 连接分析
+- **游戏中心** — 多平台游戏商城（Steam/Epic/WeGame/Ubisoft/Xbox），从官方 API 实时获取数据，支持游戏收藏和统一库，内置目录 25+ 游戏使用 Steam CDN 封面图
+- **WASM 应用** — 内置 SteamDB 查看器（支持游戏名称 + AppID 双模式搜索）、M3U8 视频下载器（支持自定义保存路径）、Steam P2P 连接分析（包含 NAT 类型说明和排故指南）
 - **存储管理** — 智能格式化、自动挂载、分区管理、SMART 监控、安全擦除
 - **应用商店** — Docker 应用安装和管理
 
@@ -98,13 +98,15 @@ lib/
 ### 视频
 - 使用 `media_kit` (libmpv) 硬件加速解码
 - `SizedBox.expand()` 包裹确保视频画面正确显示
-- mpv 配置: `hwdec=auto-safe`, `cache=yes`, `demuxer-max-bytes=50MiB`
+- mpv 配置: `hwdec=auto-safe`, `cache=yes`, `demuxer-max-bytes=256MiB`, `cache-secs=90`
+- 编解码自适应: 播放列表等待超时从 30s 调整为 90s，支持 AV1/VP9 转码场景
 - Android: MediaCodec, iOS: VideoToolbox, Desktop: 自动检测
 
 ### 音频
 - 使用 `just_audio` 播放
 - **三级回退策略**: LockCachingAudioSource → AudioSource.uri → setUrl
 - 每级 20 秒超时，失败自动切换下一级
+- 关闭播放器时使用超时保护（stop 3s / dispose 2s），避免编解码器死锁导致黑屏
 - 15+ 不支持的编码格式 (wmav1/2, wmalossless, pcm_bluray, cook, atrac3, ape 等) 由服务端自动转码
 
 ### 音频小窗与后台播放行为（生产策略）

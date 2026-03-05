@@ -619,10 +619,31 @@ class _EnhancedAudioPlayerPageState
     try {
       _visualizationTimer?.cancel();
       _cancelSubscriptions();
-      await _audioPlayer?.stop();
-      await _audioPlayer?.dispose();
+      // Wrap player stop/dispose in a timeout so we never get stuck on a
+      // hung audio device. 3 seconds is generous — if it hasn't stopped by
+      // then the underlying native player is likely deadlocked and we must
+      // navigate away regardless.
+      await Future.wait<void>([
+        if (_audioPlayer != null)
+          _audioPlayer!.stop().timeout(
+                const Duration(seconds: 3),
+                onTimeout: () {},
+              ),
+      ]);
+      await Future.wait<void>([
+        if (_audioPlayer != null)
+          _audioPlayer!.dispose().timeout(
+                const Duration(seconds: 2),
+                onTimeout: () {},
+              ),
+      ]);
       _audioPlayer = null;
-      await ref.read(audioPlayerServiceProvider.notifier).stop();
+      await ref
+          .read(audioPlayerServiceProvider.notifier)
+          .stop()
+          .timeout(const Duration(seconds: 2), onTimeout: () {});
+    } catch (_) {
+      // Swallow any remaining errors — the important thing is to pop.
     } finally {
       if (mounted) {
         ref.read(bottomNavVisibleProvider.notifier).show();
