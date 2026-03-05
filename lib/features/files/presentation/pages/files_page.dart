@@ -27,12 +27,8 @@ import 'secure_hls_video_player.dart';
 import 'image_viewer_page.dart';
 import 'network_shares_page.dart';
 
-// ============ Path Encoding Utilities ============
-
-/// Safely encode a path for URL transmission (handles UTF-8/Chinese characters)
 String encodePathForUrl(String path) {
   if (path.isEmpty) return path;
-  // Split path into segments and encode each segment individually
   final segments = path.split('/');
   final encodedSegments = segments.map((segment) {
     if (segment.isEmpty) return segment;
@@ -41,18 +37,15 @@ String encodePathForUrl(String path) {
   return encodedSegments.join('/');
 }
 
-/// Safely decode a path from URL (handles UTF-8/Chinese characters)
 String decodePathFromUrl(String path) {
   if (path.isEmpty) return path;
   try {
     return Uri.decodeComponent(path);
   } catch (_) {
-    // If decoding fails, return original path
     return path;
   }
 }
 
-/// Safely decode a file/folder name for display
 String safeDisplayName(String name) {
   try {
     return Uri.decodeComponent(name);
@@ -62,8 +55,6 @@ String safeDisplayName(String name) {
 }
 
 // ============ Providers ============
-
-// View mode preference provider (persisted)
 class FilesViewModeNotifier extends Notifier<bool> {
   @override
   bool build() {
@@ -147,8 +138,6 @@ final diskInfoProvider = FutureProvider<List<DiskInfo>>((ref) async {
 
   final api = ref.read(apiServiceProvider);
   final allDisks = await api.getDiskInfo();
-
-  // 返回所有磁盘（包括未挂载的），但过滤掉无效的磁盘
   return allDisks.where((disk) => disk.totalSpace > 0).toList();
 });
 
@@ -3662,17 +3651,14 @@ class _FilesPageState extends ConsumerState<FilesPage>
       );
     } else if (mimeType.startsWith('audio/')) {
       final streamUrl = api.getMediaStreamUrl(entry.path);
-      // 直接通过全局 AudioPlayerService 启动播放
-      // MiniAudioPlayer 自动出现在底部导航栏上方，无需打开全屏页面
-      // 用户可通过点击 MiniAudioPlayer 打开完整播放器页面
       ref.read(audioPlayerServiceProvider.notifier).play(
             streamUrl,
             entry.name,
           );
     } else if (mimeType.startsWith('video/')) {
       final api = ref.read(apiServiceProvider);
+      ref.read(audioPlayerServiceProvider.notifier).stop();
 
-      // 只使用安全HLS - SAE握手 + ZKP验证 + AES-256-GCM加密
       final player = SecureHlsVideoPlayer(
         filePath: entry.path,
         fileName: entry.name,

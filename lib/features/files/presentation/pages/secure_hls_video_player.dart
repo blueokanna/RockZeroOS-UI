@@ -17,6 +17,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../../core/widgets/md3_loading_indicator.dart';
 import '../../../../core/widgets/shell_scaffold.dart';
+import '../../../../core/services/audio_player_service.dart';
 import '../../../../services/sae_handshake_service.dart';
 
 class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
@@ -100,6 +101,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
   Future<void> _initPlayer() async {
     try {
+      // ★ 播放视频前停止正在播放的音频，避免音视频同时播放
+      ref.read(audioPlayerServiceProvider.notifier).stop();
+
       setState(() {
         _isLoading = true;
         _error = null;
@@ -812,6 +816,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   /// Seek 到指定位置（接收 **显示坐标** = 用户看到的时间轴）
   ///
   /// 内部自动转换为播放器原始 PTS 坐标。
+  /// ★ 改进：异步预请求目标分片，触发服务端按需生成（减少 seek 延迟）。
   void _seekTo(Duration displayPos) {
     if (_player == null) return;
 
@@ -830,7 +835,47 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
             : targetMs);
     final clampedMs = targetMs.clamp(minMs, maxMs);
 
+    // ★ 预请求目标分片及相邻分片：触发服务端按需生成
+    // 当用户 seek 到远超缓冲区的位置时，服务端 get_segment_direct
+    // 会自动调用 generate_segment_on_demand 按需生成目标分片。
+    // 通过 HEAD 请求预触发生成，减少 mpv 实际请求时的等待时间。
+    final displaySeconds = displayPos.inSeconds;
+    final targetSegmentIndex = displaySeconds ~/ 2; // 2 秒一个分片
+    if (_hlsSessionId != null) {
+      _preRequestSegments(targetSegmentIndex);
+    }
+
     _player!.seek(Duration(milliseconds: clampedMs));
+  }
+
+  /// 预请求目标分片及相邻分片（后台 fire-and-forget）
+  ///
+  /// 使用 HTTP HEAD 请求触发服务端按需生成，不下载完整分片数据。
+  /// 这样当 mpv 随后请求这些分片时，它们已经生成完毕或正在生成中。
+  void _preRequestSegments(int centerIndex) {
+    final sessionId = _hlsSessionId;
+    if (sessionId == null || widget.baseUrl.isEmpty) return;
+
+    // 预请求 [center-1, center, center+1, center+2] 分片
+    for (int offset = -1; offset <= 2; offset++) {
+      final idx = centerIndex + offset;
+      if (idx < 0) continue;
+
+      final segmentUrl =
+          '${widget.baseUrl}/api/v1/secure-hls/$sessionId/segment_$idx.ts';
+
+      // HEAD 请求触发服务端 get_segment_direct 处理逻辑（含按需生成）
+      // 但不下载分片数据，节省带宽
+      http
+          .head(Uri.parse(segmentUrl))
+          .timeout(const Duration(seconds: 60))
+          .then((resp) {
+        debugPrint(
+            '[SecureHLS] Pre-requested segment_$idx.ts (status=${resp.statusCode})');
+      }).catchError((e) {
+        debugPrint('[SecureHLS] Pre-request segment_$idx.ts failed: $e');
+      });
+    }
   }
 
   /// 基于当前 **显示位置** 做相对 seek
