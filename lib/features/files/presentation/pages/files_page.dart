@@ -17,13 +17,13 @@ import '../../../../core/services/biometric_service.dart';
 import '../../../../core/services/device_discovery_service.dart';
 import '../../../../core/services/filesystem_monitor_service.dart';
 import '../../../../core/services/download_manager.dart';
+import '../../../../core/services/audio_player_service.dart';
 import '../../../../core/services/wallpaper_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../storage/presentation/pages/disk_management_page.dart';
 import '../widgets/transport_manager_page.dart';
 import '../widgets/upload_progress_sheet.dart';
 import 'secure_hls_video_player.dart';
-import 'enhanced_audio_player_page.dart';
 import 'image_viewer_page.dart';
 import 'network_shares_page.dart';
 
@@ -3662,30 +3662,13 @@ class _FilesPageState extends ConsumerState<FilesPage>
       );
     } else if (mimeType.startsWith('audio/')) {
       final streamUrl = api.getMediaStreamUrl(entry.path);
-      // Use enhanced audio player with visualizations
-      Navigator.push(
-        context,
-        PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) =>
-              EnhancedAudioPlayerPage(
-            mediaUrl: streamUrl,
-            fileName: entry.name,
-          ),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0, 1),
-                end: Offset.zero,
-              ).animate(CurvedAnimation(
-                parent: animation,
-                curve: M3Curves.emphasized,
-              )),
-              child: child,
-            );
-          },
-          transitionDuration: M3Durations.long2,
-        ),
-      );
+      // 直接通过全局 AudioPlayerService 启动播放
+      // MiniAudioPlayer 自动出现在底部导航栏上方，无需打开全屏页面
+      // 用户可通过点击 MiniAudioPlayer 打开完整播放器页面
+      ref.read(audioPlayerServiceProvider.notifier).play(
+            streamUrl,
+            entry.name,
+          );
     } else if (mimeType.startsWith('video/')) {
       final api = ref.read(apiServiceProvider);
 

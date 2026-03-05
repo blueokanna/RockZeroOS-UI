@@ -992,14 +992,12 @@ class _BufferingRingPainter extends CustomPainter {
     final radius = size.width / 2 - 3;
     final rect = Rect.fromCircle(center: center, radius: radius);
 
-    // 背景环
     final bgPaint = Paint()
       ..color = color.withValues(alpha: 0.1)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 3;
     canvas.drawCircle(center, radius, bgPaint);
 
-    // 动态弧线 — sweep 长度随时间变化（模拟 Material 3 spinner 效果）
     final sweep = 0.5 + 0.8 * ((math.sin(phase * 2 * math.pi) + 1) / 2);
     final startAngle = phase * 4 * math.pi;
 
@@ -1011,7 +1009,6 @@ class _BufferingRingPainter extends CustomPainter {
 
     canvas.drawArc(rect, startAngle, sweep * math.pi, false, arcPaint);
 
-    // 第二条较淡弧线（对面位置）
     final secondArc = Paint()
       ..color = color.withValues(alpha: 0.3)
       ..style = PaintingStyle.stroke

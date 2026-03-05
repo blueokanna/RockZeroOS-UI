@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -606,7 +607,19 @@ class _EnhancedAudioPlayerPageState
     await _audioPlayer?.dispose();
     _audioPlayer = null;
 
-    // 3. 关闭页面，显示底部导航栏
+    // 3. 恢复系统 UI（防止视频播放器遗留的 immersive 模式导致黑屏）
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.edgeToEdge,
+      overlays: SystemUiOverlay.values,
+    );
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+
+    // 4. 关闭页面，显示底部导航栏
     if (mounted) {
       ref.read(bottomNavVisibleProvider.notifier).show();
       Navigator.pop(context);
@@ -646,6 +659,17 @@ class _EnhancedAudioPlayerPageState
     } catch (_) {
       // Swallow any remaining errors — the important thing is to pop.
     } finally {
+      // 恢复系统 UI（防止视频播放器遗留的 immersive 模式导致黑屏）
+      SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.edgeToEdge,
+        overlays: SystemUiOverlay.values,
+      );
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
       if (mounted) {
         ref.read(bottomNavVisibleProvider.notifier).show();
         Navigator.pop(context);

@@ -365,9 +365,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       if (mounted) {
         setState(() {
           _duration = duration;
-          if (duration > _durationHint) {
-            _durationHint = duration;
-          }
+          // ⚠️ 不要将播放器报告的时长覆盖 _durationHint（服务端真实时长）
+          // 否则 PTS 偏移检测会因 diff=0 而失败
+          // _durationHint 仅来自服务端 media info API
         });
         // 尝试检测 PTS 偏移（基于时长对比）
         _detectTimestampOffsetFromDuration();
@@ -545,10 +545,21 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   }
 
   Duration get _effectiveTotalDuration {
-    if (_offsetDetected && _durationHint > Duration.zero) {
+    if (_offsetDetected) {
+      // 优先使用服务端返回的真实时长
+      if (_durationHint > Duration.zero) {
+        return _durationHint;
+      }
+      // 无服务端时长提示时，用播放器时长减去 PTS 偏移估算真实时长
+      final estimated = _duration - _startOffset;
+      if (estimated > Duration.zero) {
+        return estimated;
+      }
+    }
+    // 正常视频：使用服务端提示（如果更大）或播放器时长
+    if (_durationHint > Duration.zero && _durationHint > _duration) {
       return _durationHint;
     }
-    if (_durationHint > _duration) return _durationHint;
     return _duration;
   }
 
@@ -666,10 +677,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   }
 
   void _enterFullscreen() {
-    SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.edgeToEdge,
-      overlays: SystemUiOverlay.values,
-    );
+    // 使用 immersiveSticky 完全隐藏状态栏和导航栏，实现真正全屏
+    // 用户从边缘滑动可临时显示系统 UI，松手后自动隐藏
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
