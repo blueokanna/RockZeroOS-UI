@@ -3128,7 +3128,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
             FilledButton.icon(
               onPressed: () {
                 Navigator.of(dialogContext).pop();
-                // 导入存储管理页面
                 Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (context) => const DiskManagementPage(),
@@ -3258,10 +3257,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
     try {
       final api = ref.read(apiServiceProvider);
 
-      // Generate mount point
       final mountPoint = '/mnt/${disk.name}';
 
-      // Call mount API
       await api.mountDisk(
         device: '/dev/${disk.name}',
         mountPoint: mountPoint,
@@ -3269,20 +3266,16 @@ class _FilesPageState extends ConsumerState<FilesPage>
             disk.fileSystem != 'Unknown' ? disk.fileSystem.toLowerCase() : null,
       );
 
-      // Wait for the system to update
       await Future.delayed(const Duration(milliseconds: 1500));
 
-      // Close loading dialog
       if (mounted) {
         rootNavigator.pop();
       }
 
-      // Refresh disk list and file list
       ref.invalidate(diskInfoProvider);
       final currentPath = ref.read(currentPathProvider);
       ref.invalidate(directoryListingProvider(currentPath));
 
-      // Show success message
       if (mounted) {
         scaffoldMessenger.showSnackBar(
           SnackBar(

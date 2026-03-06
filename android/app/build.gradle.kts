@@ -4,7 +4,6 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// 根目录的 assets 文件夹（从 android/app/ 往上 3 层到项目根目录）
 val localAssetsDir = file("../../../assets")
 
 val mediaKitJars = mapOf(
@@ -16,17 +15,24 @@ val mediaKitJars = mapOf(
 
 val jniLibsDir = file("${projectDir}/src/main/jniLibs")
 
-// 在配置阶段设置本地 JAR 文件
 fun setupMediaKitLocalJars() {
-    val pubCacheDir = if (System.getProperty("os.name").lowercase().contains("win")) {
-        file(System.getenv("LOCALAPPDATA") + "/Pub/Cache/hosted/pub.dev")
+    val pubCacheHostedDir = if (System.getProperty("os.name").lowercase().contains("win")) {
+        file(System.getenv("LOCALAPPDATA") + "/Pub/Cache/hosted")
     } else {
-        file(System.getProperty("user.home") + "/.pub-cache/hosted/pub.dev")
+        file(System.getProperty("user.home") + "/.pub-cache/hosted")
     }
     
-    val mediaKitPluginDirs = pubCacheDir.listFiles()?.filter { 
-        it.isDirectory && it.name.startsWith("media_kit_libs_android_video-") 
-    } ?: emptyList()
+    val mediaKitPluginDirs = if (pubCacheHostedDir.exists()) {
+        pubCacheHostedDir.listFiles()
+            ?.filter { it.isDirectory }
+            ?.flatMap { hostDir ->
+                hostDir.listFiles()
+                    ?.filter { it.isDirectory && it.name.startsWith("media_kit_libs_android_video-") }
+                    ?: emptyList()
+            } ?: emptyList()
+    } else {
+        emptyList()
+    }
     
     if (mediaKitPluginDirs.isEmpty()) {
         println("[media_kit] Plugin not found in pub cache")
@@ -40,7 +46,6 @@ fun setupMediaKitLocalJars() {
         "full-x86_64.jar"
     )
     
-    // 检查本地文件是否都存在
     val allLocalFilesExist = jarFiles.all { file("${localAssetsDir}/${it}").exists() }
     if (!allLocalFilesExist) {
         println("[media_kit] Local JAR files not found in ${localAssetsDir.absolutePath}")
@@ -52,17 +57,16 @@ fun setupMediaKitLocalJars() {
     mediaKitPluginDirs.forEach { pluginDir ->
         val pluginBuildGradle = file("${pluginDir}/android/build.gradle")
         
-        // 完全重写插件的 build.gradle，使用本地文件
         if (pluginBuildGradle.exists()) {
             val content = pluginBuildGradle.readText()
             
-            if (!content.contains("// ROCKZERO_PATCHED_V2")) {
-                println("[media_kit] Patching plugin build.gradle...")
+            if (!content.contains("// ROCKZERO_PATCHED_V3")) {
+                println("[media_kit] Patching plugin build.gradle in ${pluginDir.name}...")
                 
                 val localPath = localAssetsDir.absolutePath.replace("\\", "/")
                 
                 val newBuildGradle = """
-// ROCKZERO_PATCHED_V2: Using local JAR files from $localPath
+// ROCKZERO_PATCHED_V3 — libmpv v1.1.11 full variant, auto-patched by build.gradle.kts
 import java.io.File
 import java.nio.file.Files
 
@@ -148,9 +152,9 @@ assemble.dependsOn(downloadDependencies)
 """
                 
                 pluginBuildGradle.writeText(newBuildGradle)
-                println("[media_kit] Plugin patched successfully!")
+                println("[media_kit] Plugin patched successfully: ${pluginDir.name}")
             } else {
-                println("[media_kit] Plugin already patched (v2)")
+                println("[media_kit] Plugin already patched (v3): ${pluginDir.name}")
             }
         }
     }
@@ -258,7 +262,6 @@ android {
         }
     }
     
-    // 打包选项：排除重复文件
     packaging {
         resources {
             excludes += listOf(
