@@ -141,31 +141,56 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
       final playUrl = _securePlayer!.getDirectPlaylistUrl();
 
       // 3. 创建播放器
+      //    ★ 缓冲区仅在内存中，不写入内部存储
       _player = Player(
         configuration: const PlayerConfiguration(
-          bufferSize: 64 * 1024 * 1024,
+          bufferSize: 96 * 1024 * 1024,
         ),
       );
 
       _videoController = VideoController(_player!);
 
-      // 3.5. 设置 mpv 属性：PTS 时间戳修正 + HLS 优化
+      // 3.5. 设置 mpv 属性：PTS 修正 + HLS 优化 + ARM 多核 + 零磁盘缓存
       if (_player!.platform is NativePlayer) {
         final mpv = _player!.platform as NativePlayer;
-        // ★ 将流的起始时间重新基准为 0（修复源文件非零 PTS 偏移）
+
+        // ── 缓存策略：仅内存，不写入内部存储 ──
+        await mpv.setProperty('cache', 'yes');
+        await mpv.setProperty('cache-on-disk', 'no');
+        await mpv.setProperty('cache-secs', '45');
+        await mpv.setProperty('demuxer-max-bytes', '96MiB');
+        await mpv.setProperty('demuxer-readahead-secs', '20');
+        await mpv.setProperty('demuxer-max-back-bytes', '24MiB');
+
+        // ── 多核并行解码：自动利用所有 CPU 核心 ──
+        await mpv.setProperty('vd-lavc-threads', '0');
+        await mpv.setProperty('ad-lavc-threads', '0');
+        await mpv.setProperty('demuxer-thread', 'yes');
+
+        // ── 硬件解码 + CPU 回退（AV1 等不支持的编码自动回退软解码）──
+        await mpv.setProperty('hwdec', 'auto-safe');
+        await mpv.setProperty('hwdec-codecs', 'all');
+        await mpv.setProperty('vd-lavc-software-fallback', 'inf');
+        await mpv.setProperty('vd-lavc-dr', 'yes');
+
+        // ── PTS 时间戳修正 ──
         await mpv.setProperty('rebase-start-time', 'yes');
-        // ★ live_start_index=0: 从第一个分片开始（修复渐进式 HLS 进度条满的问题）
+
+        // ── HLS 优化 ──
         await mpv.setProperty(
           'demuxer-lavf-o',
           'fflags=+genpts+discardcorrupt,live_start_index=0',
         );
-        await mpv.setProperty('cache', 'yes');
-        await mpv.setProperty('cache-secs', '60');
-        await mpv.setProperty('demuxer-max-bytes', '128MiB');
-        await mpv.setProperty('demuxer-readahead-secs', '30');
-        await mpv.setProperty('hwdec', 'auto-safe');
-        // ★ 强制允许在 live HLS 流中 seek
         await mpv.setProperty('force-seekable', 'yes');
+        await mpv.setProperty(
+            'stream-lavf-o', 'reconnect=1,reconnect_streamed=1');
+
+        // ── 音视频同步 ──
+        await mpv.setProperty('video-sync', 'audio');
+
+        // ── 渲染优化 ──
+        await mpv.setProperty('vo', 'gpu');
+        await mpv.setProperty('gpu-context', 'auto');
       }
 
       // 4. 设置监听器

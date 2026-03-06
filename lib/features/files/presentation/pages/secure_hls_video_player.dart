@@ -10,7 +10,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:path_provider/path_provider.dart' show getApplicationDocumentsDirectory, getDownloadsDirectory;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -1051,18 +1051,26 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
                 ),
               ),
 
-            // 缓冲指示器 (MD3 风格)
+            // 缓冲指示器 (MD3 风格) —— 使用 RepaintBoundary 隔离重绘
             if (_isBuffering && !_isLoading)
               const Center(
-                child: MD3BufferingIndicator(
-                  color: Colors.white70,
-                  size: 48,
+                child: RepaintBoundary(
+                  child: MD3BufferingIndicator(
+                    color: Colors.white70,
+                    size: 48,
+                  ),
                 ),
               ),
 
-            // 自定义控制栏
-            if (!_isLoading && _error == null && _showControls)
-              _buildControlsOverlay(),
+            // 自定义控制栏 —— AnimatedSwitcher 实现丝滑淡入/淡出
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              child: (!_isLoading && _error == null && _showControls)
+                  ? _buildControlsOverlay()
+                  : const SizedBox.shrink(key: ValueKey('controls_hidden')),
+            ),
 
             // 加载状态
             if (_isLoading) _buildLoading(),
@@ -1079,37 +1087,33 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   }
 
   Widget _buildControlsOverlay() {
-    return AnimatedOpacity(
-      opacity: _showControls ? 1.0 : 0.0,
-      duration: const Duration(milliseconds: 300),
-      child: IgnorePointer(
-        ignoring: !_showControls,
-        child: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Colors.black54,
-                Colors.transparent,
-                Colors.transparent,
-                Colors.black54,
-              ],
-              stops: [0.0, 0.15, 0.85, 1.0],
-            ),
-          ),
-          child: Column(
-            children: [
-              // 顶部栏
-              _buildTopBar(),
-              const Spacer(),
-              // 中间播放按钮
-              _buildCenterControls(),
-              const Spacer(),
-              // 底部进度条和控制按钮
-              _buildBottomBar(),
+    return KeyedSubtree(
+      key: const ValueKey('controls_visible'),
+      child: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.black54,
+              Colors.transparent,
+              Colors.transparent,
+              Colors.black54,
             ],
+            stops: [0.0, 0.15, 0.85, 1.0],
           ),
+        ),
+        child: Column(
+          children: [
+            // 顶部栏
+            _buildTopBar(),
+            const Spacer(),
+            // 中间播放按钮
+            _buildCenterControls(),
+            const Spacer(),
+            // 底部进度条和控制按钮
+            _buildBottomBar(),
+          ],
         ),
       ),
     );
