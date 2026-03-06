@@ -209,19 +209,14 @@ class SecureHlsProxyServer {
       debugPrint('[SecureHLS Proxy] Fetching segment: $segmentName');
 
       for (int attempt = 0; attempt < 2; attempt++) {
-        final zkpProof = await _generateBulletproofZkpProof();
         final segmentUrl =
             '$baseUrl/api/v1/secure-hls/$_sessionId/$segmentName';
 
         final client = HttpClient();
-        final backendRequest = await client.postUrl(Uri.parse(segmentUrl));
-        backendRequest.headers.contentType = ContentType.json;
+        final backendRequest = await client.getUrl(Uri.parse(segmentUrl));
         if (jwtToken != null) {
           backendRequest.headers.add('Authorization', 'Bearer $jwtToken');
         }
-
-        final body = jsonEncode({'zkp_proof': zkpProof});
-        backendRequest.write(body);
 
         final backendResponse = await backendRequest.close();
 

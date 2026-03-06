@@ -16,10 +16,13 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import 'package:flutter/foundation.dart' show Uint8List;
+
 import '../../../../core/widgets/md3_loading_indicator.dart';
 import '../../../../core/widgets/shell_scaffold.dart';
 import '../../../../core/services/audio_player_service.dart';
 import '../../../../services/sae_handshake_service.dart';
+import '../../../../services/secure_hls_proxy.dart';
 
 class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
   final String? filePath;
@@ -54,6 +57,10 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   String? _userPassword;
   bool _isDownloading = false;
   double _downloadProgress = 0;
+
+  // 安全代理：拦截 libmpv 请求，解密 AES-256-GCM 加密的视频段
+  SecureHlsProxyServer? _proxyServer;
+  Uint8List? _pmk; // SAE 握手派生的 Pairwise Master Key
 
   bool _isPlaying = false;
   bool _isBuffering = false;
@@ -153,39 +160,77 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
     final filePath = widget.filePath ?? '';
 
-    // ── Step 1: SAE 握手 + 会话创建（direct 模式，无需 ZKP 证明）───
+    // ── Step 1: SAE 握手 + 会话创建（加密模式，所有段 AES-256-GCM 加密传输）───
     late final String sessionId;
+    late final Uint8List pmk;
 
     try {
       final result = await handshakeService.performHandshake(
         filePath: filePath,
         password: _userPassword!,
         userId: _userId!,
-        directMode: true,
+        directMode: false, // ★ 禁用 direct 模式，强制加密传输
       );
 
       sessionId = result.$1;
+      pmk = result.$2;
       _hlsSessionId = sessionId;
+      _pmk = pmk;
     } catch (e) {
       debugPrint('[VideoPlayer] SAE handshake failed: $e');
       _setError('SAE 安全握手失败: ${_formatError(e.toString())}');
       return;
     }
 
-    debugPrint('[VideoPlayer] HLS session (direct mode): $sessionId');
+    debugPrint('[VideoPlayer] HLS session (encrypted mode): $sessionId');
 
-    // ── Step 2: 等待首个分片就绪（渐进式分片）────────────────
+    // ── Step 2: 启动本地安全代理（解密 AES-256-GCM 加密的视频段）────
     //
-    // Direct 模式：media_kit 直接 GET 明文视频段（session_id 鉴权）。
-    // 安全性保证：
-    //   - session_id 是 128 位随机 UUID，不可猜测
-    //   - 创建 session 前已完成 JWT + SAE 握手双重认证
-    //   - session 有 3 小时过期时间
-    //   - 磁盘上的缓存段使用 AES-256-GCM 静态加密
+    // 安全架构：
+    //   - 服务端所有视频段均使用 AES-256-GCM 加密传输（不允许明文）
+    //   - 本地代理拦截 libmpv 的 HTTP 请求
+    //   - 代理从服务端获取加密数据，使用 PMK 派生密钥本地解密
+    //   - 解密后的明文仅存在于设备内存中，不落盘
+    //   - libmpv 从 127.0.0.1 获取解密后的明文视频段
 
-    final directPlaylistUrl =
-        '${widget.baseUrl}/api/v1/secure-hls/$sessionId/playlist.m3u8';
+    if (!mounted) return;
+    setState(() => _loadingStatus = '正在启动安全代理...');
 
+    late final String proxyPlaylistUrl;
+
+    try {
+      // 创建会话重建回调（当 session 过期时自动重新握手）
+      Future<(String, Uint8List)> rebuildSession() async {
+        debugPrint('[VideoPlayer] Rebuilding SAE session...');
+        final newResult = await handshakeService.performHandshake(
+          filePath: filePath,
+          password: _userPassword!,
+          userId: _userId!,
+          directMode: false,
+        );
+        _hlsSessionId = newResult.$1;
+        _pmk = newResult.$2;
+        return newResult;
+      }
+
+      _proxyServer = SecureHlsProxyServer(
+        baseUrl: widget.baseUrl,
+        sessionId: sessionId,
+        pmk: pmk,
+        password: _userPassword!,
+        jwtToken: _authToken,
+        onSessionRebuild: rebuildSession,
+      );
+
+      proxyPlaylistUrl = await _proxyServer!.start();
+      debugPrint('[VideoPlayer] Secure proxy started: $proxyPlaylistUrl');
+    } catch (e) {
+      debugPrint('[VideoPlayer] Failed to start secure proxy: $e');
+      _setError('安全代理启动失败: ${_formatError(e.toString())}');
+      return;
+    }
+
+    // ── Step 3: 等待首个分片就绪（通过代理检查播放列表）────────
     if (!mounted) return;
     setState(() => _loadingStatus = '正在等待视频分片...');
 
@@ -195,7 +240,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
       try {
         final checkResponse = await http
-            .get(Uri.parse(directPlaylistUrl))
+            .get(Uri.parse(proxyPlaylistUrl))
             .timeout(const Duration(seconds: 5));
 
         if (checkResponse.statusCode == 200) {
@@ -236,7 +281,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
     setState(() => _loadingStatus = '正在初始化播放器...');
 
-    // ── Step 3: 创建 media_kit 播放器 ────────────────────────
+    // ── Step 4: 创建 media_kit 播放器 ────────────────────────
     _player = Player(
       configuration: const PlayerConfiguration(
         bufferSize: 256 * 1024 * 1024,
@@ -304,18 +349,24 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       }
     });
 
-    // ── 直接使用服务端播放列表 URL（direct 模式，明文传输）───
+    // ── 使用本地安全代理 URL（加密传输 + 本地解密）───────────
     //
-    // media_kit → GET /api/v1/secure-hls/{session_id}/playlist.m3u8
-    //          → GET /api/v1/secure-hls/{session_id}/segment_N.ts
-    //          → 服务端返回明文 MPEG-TS 数据（session_id 鉴权）
+    // media_kit → GET http://127.0.0.1:{port}/playlist.m3u8  (本地代理)
+    //           → GET http://127.0.0.1:{port}/segment_N.ts   (本地代理)
     //
-    // 安全保障依然完整：
+    // 代理内部流程：
+    //   代理 → GET /api/v1/secure-hls/{session_id}/segment_N.ts (服务端，加密数据)
+    //        → AES-256-GCM 解密（使用 PMK 派生密钥）
+    //        → 返回明文 MPEG-TS 给 libmpv
+    //
+    // 安全保障：
+    //   - 网络传输全程 AES-256-GCM 加密
     //   - SAE 握手确保会话密钥安全交换
     //   - Session ID 不可猜测（128 位随机）
+    //   - 明文数据仅存在于设备内存中
     //   - 磁盘缓存段使用 AES-256-GCM 静态加密
     await _player!.open(
-      Media(directPlaylistUrl),
+      Media(proxyPlaylistUrl),
       play: true,
     );
 
@@ -723,6 +774,10 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     await _player?.dispose();
     _player = null;
     _videoController = null;
+    // 停止安全代理
+    await _proxyServer?.stop();
+    _proxyServer = null;
+    _pmk = null;
     await _initPlayer();
   }
 
@@ -752,6 +807,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     _hideControlsTimer?.cancel();
     _cancelSubscriptions();
     _player?.dispose();
+    // 停止安全代理服务器
+    _proxyServer?.stop();
+    _proxyServer = null;
     unawaited(_saveResumeProgressIfNeeded(_position));
     _cleanupHlsSession();
     _exitFullscreen();
