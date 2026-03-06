@@ -29,6 +29,10 @@ class SecureHlsProxyServer {
   final Future<(String, Uint8List)> Function()? onSessionRebuild;
   Future<(String, Uint8List)>? _sessionRebuildFuture;
 
+  /// ★ 复用单个 HttpClient 实例，启用 HTTP keep-alive 连接池
+  /// 避免每个 segment 请求都创建新连接（大幅减少 TCP 握手开销）
+  late final HttpClient _backendClient;
+
   SecureHlsProxyServer({
     required this.baseUrl,
     required String sessionId,
@@ -37,7 +41,11 @@ class SecureHlsProxyServer {
     this.jwtToken,
     this.onSessionRebuild,
   })  : _sessionId = sessionId,
-        _pmk = pmk;
+        _pmk = pmk {
+    _backendClient = HttpClient()
+      ..idleTimeout = const Duration(seconds: 30)
+      ..maxConnectionsPerHost = 6;
+  }
 
   /// 启动代理服务器
   Future<String> start() async {
@@ -62,6 +70,7 @@ class SecureHlsProxyServer {
 
   /// 停止代理服务器
   Future<void> stop() async {
+    _backendClient.close(force: true);
     await _server?.close(force: true);
     _server = null;
     _port = null;
@@ -150,7 +159,7 @@ class SecureHlsProxyServer {
         final playlistUrl =
             '$baseUrl/api/v1/secure-hls/$_sessionId/playlist.m3u8';
         final response =
-            await HttpClient().getUrl(Uri.parse(playlistUrl)).then((req) {
+            await _backendClient.getUrl(Uri.parse(playlistUrl)).then((req) {
           if (jwtToken != null) {
             req.headers.add('Authorization', 'Bearer $jwtToken');
           }
@@ -212,8 +221,8 @@ class SecureHlsProxyServer {
         final segmentUrl =
             '$baseUrl/api/v1/secure-hls/$_sessionId/$segmentName';
 
-        final client = HttpClient();
-        final backendRequest = await client.getUrl(Uri.parse(segmentUrl));
+        final backendRequest =
+            await _backendClient.getUrl(Uri.parse(segmentUrl));
         if (jwtToken != null) {
           backendRequest.headers.add('Authorization', 'Bearer $jwtToken');
         }

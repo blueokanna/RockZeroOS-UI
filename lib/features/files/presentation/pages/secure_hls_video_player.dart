@@ -836,9 +836,10 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   bool _isPlaylistReadyForPlayback(String content) {
     if (!content.contains('#EXTM3U')) return false;
 
-    final segmentCount = RegExp(r'^segment_\d+\.ts(?:\?.*)?$', multiLine: true)
-        .allMatches(content)
-        .length;
+    // ★ 修复：代理将 segment_N.ts 重写为 http://127.0.0.1:PORT/segment_N.ts，
+    //   旧的 ^segment_ 锚点无法匹配代理 URL，导致 segmentCount 始终为 0。
+    //   去掉行首锚点，匹配 segment 模式在行内任意位置出现的情况。
+    final segmentCount = RegExp(r'segment_\d+\.ts').allMatches(content).length;
     final hasEndList = content.contains('#EXT-X-ENDLIST');
 
     // 进行中的长视频：至少 2 段再开播，避免播放器立刻请求 segment_1 命中 404。
