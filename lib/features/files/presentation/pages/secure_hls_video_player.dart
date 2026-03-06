@@ -10,7 +10,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:path_provider/path_provider.dart' show getApplicationDocumentsDirectory, getDownloadsDirectory;
+import 'package:path_provider/path_provider.dart'
+    show getApplicationDocumentsDirectory, getDownloadsDirectory;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
