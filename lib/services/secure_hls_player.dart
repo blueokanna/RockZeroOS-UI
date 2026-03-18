@@ -265,6 +265,20 @@ class SecureHlsPlayer {
 
   /// 停止播放
   Future<void> stop() async {
+    final sid = _sessionId;
+    if (sid != null) {
+      try {
+        await http.post(
+          Uri.parse('$baseUrl/api/v1/secure-hls/$sid/stop'),
+          headers: {
+            if (jwtToken.isNotEmpty) 'Authorization': 'Bearer $jwtToken',
+          },
+        ).timeout(const Duration(seconds: 5));
+      } catch (_) {
+        // 会话 stop 失败不应阻止本地资源释放
+      }
+    }
+
     await _proxy?.stop();
     _proxy = null;
     await _controller?.dispose();

@@ -141,10 +141,10 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
       final playUrl = _securePlayer!.getDirectPlaylistUrl();
 
       // 3. 创建播放器
-      //    ★ 缓冲区仅在内存中，不写入内部存储
+      //    ★ 低内存策略：限制播放器内部缓存，避免高内存设备压力
       _player = Player(
         configuration: const PlayerConfiguration(
-          bufferSize: 96 * 1024 * 1024,
+          bufferSize: 16 * 1024 * 1024,
         ),
       );
 
@@ -154,13 +154,13 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
       if (_player!.platform is NativePlayer) {
         final mpv = _player!.platform as NativePlayer;
 
-        // ── 缓存策略：仅内存，不写入内部存储 ──
-        await mpv.setProperty('cache', 'yes');
+        // ── 缓存策略：禁用磁盘缓存，限制内存缓存 ──
+        await mpv.setProperty('cache', 'no');
         await mpv.setProperty('cache-on-disk', 'no');
-        await mpv.setProperty('cache-secs', '45');
-        await mpv.setProperty('demuxer-max-bytes', '96MiB');
-        await mpv.setProperty('demuxer-readahead-secs', '20');
-        await mpv.setProperty('demuxer-max-back-bytes', '24MiB');
+        await mpv.setProperty('cache-secs', '0');
+        await mpv.setProperty('demuxer-max-bytes', '16MiB');
+        await mpv.setProperty('demuxer-readahead-secs', '1');
+        await mpv.setProperty('demuxer-max-back-bytes', '2MiB');
 
         // ── 多核并行解码：自动利用所有 CPU 核心 ──
         await mpv.setProperty('vd-lavc-threads', '0');

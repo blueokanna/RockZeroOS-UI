@@ -1675,7 +1675,84 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
       case 'steam-p2p-info':
         _showSteamP2PInfoDialog();
         break;
+      case 'wxy-edge-node':
+        _showWxyEdgeDialog();
+        break;
     }
+  }
+
+  void _showWxyEdgeDialog() {
+    final api = ref.read(apiServiceProvider);
+    final statusFuture = api
+        .get<Map<String, dynamic>>('/api/v1/edge/wxy/auth/status')
+        .then((r) => (r.data ?? <String, dynamic>{}));
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.hub_rounded),
+            SizedBox(width: 8),
+            Text('网心云边缘节点'),
+          ],
+        ),
+        content: SizedBox(
+          width: 420,
+          child: FutureBuilder<Map<String, dynamic>>(
+            future: statusFuture,
+            builder: (context, snapshot) {
+              if (!snapshot.hasData &&
+                  snapshot.connectionState != ConnectionState.done) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: LinearProgressIndicator(),
+                );
+              }
+
+              if (snapshot.hasError) {
+                return Text('状态读取失败: ${snapshot.error}');
+              }
+
+              final data = snapshot.data ?? const <String, dynamic>{};
+              final authenticated = data['authenticated'] == true;
+              final accountId = data['account_id']?.toString() ?? '-';
+              final expiresAt = data['expires_at']?.toString() ?? '-';
+
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    authenticated ? '当前已绑定网心云账号' : '当前未绑定网心云账号',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: authenticated ? Colors.green : Colors.orange,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text('account_id: $accountId'),
+                  const SizedBox(height: 6),
+                  Text('expires_at: $expiresAt'),
+                  const SizedBox(height: 10),
+                  Text(
+                    '提示: 扫码登录与任务能力由 /api/v1/edge/wxy/* 提供，'
+                    '该条目用于在 WASM 应用页快速可见并检查状态。',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// SteamDB 数据查看器对话框
@@ -3517,6 +3594,8 @@ class _WasmAppTile extends StatelessWidget {
         return Icons.download_rounded;
       case 'steam-p2p-info':
         return Icons.lan_rounded;
+      case 'wxy-edge-node':
+        return Icons.hub_rounded;
       default:
         return _getCategoryIcon(category);
     }

@@ -56,7 +56,8 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
   static const int _pingTestCount = 20;
   static const int _downloadTestDurationSec = 10;
   static const int _uploadTestDurationSec = 10;
-  static const int _downloadChunkSizeMB = 65;
+  static const int _downloadChunkSizeMB = 96;
+  static const int _uploadChunkSizeMB = 20;
 
   /// 复用 HTTP 客户端以保持 TCP 连接
   late final http.Client _httpClient;
@@ -286,7 +287,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
             }
           }
         } catch (_) {}
-        await Future.delayed(const Duration(milliseconds: 100));
       }
       _downloadUpdateTimer?.cancel();
       sw.stop();
@@ -308,7 +308,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     final List<double> speeds = [];
     final startTime = DateTime.now();
     final testDuration = Duration(seconds: _uploadTestDurationSec);
-    final testData = Uint8List(5 * 1024 * 1024);
+    final testData = Uint8List(_uploadChunkSizeMB * 1024 * 1024);
     final rng = math.Random();
     for (int i = 0; i < testData.length; i++) {
       testData[i] = rng.nextInt(256);
@@ -363,7 +363,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
             if (e > 0) speeds.add((testData.length * 8) / (e * 1000000));
           }
         } catch (_) {}
-        await Future.delayed(const Duration(milliseconds: 100));
       }
       _uploadUpdateTimer?.cancel();
       sw.stop();
