@@ -16,8 +16,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
-import 'package:flutter/foundation.dart' show Uint8List;
-
 import '../../../../core/widgets/md3_loading_indicator.dart';
 import '../../../../core/widgets/shell_scaffold.dart';
 import '../../../../core/services/audio_player_service.dart';
@@ -60,7 +58,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
   // 安全代理：拦截 libmpv 请求，解密 AES-256-GCM 加密的视频段
   SecureHlsProxyServer? _proxyServer;
-  Uint8List? _pmk; // SAE 握手派生的 Pairwise Master Key
 
   bool _isPlaying = false;
   bool _isBuffering = false;
@@ -158,7 +155,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       jwtToken: _authToken!,
     );
 
-    final filePath = widget.filePath ?? '';
+    final filePath = widget.filePath;
+    final fileId = widget.fileId;
 
     // ── Step 1: SAE 握手 + 会话创建（加密模式，所有段 AES-256-GCM 加密传输）───
     late final String sessionId;
@@ -167,6 +165,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     try {
       final result = await handshakeService.performHandshake(
         filePath: filePath,
+        fileId: fileId,
         password: _userPassword!,
         userId: _userId!,
         directMode: false, // ★ 禁用 direct 模式，强制加密传输
@@ -175,7 +174,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       sessionId = result.$1;
       pmk = result.$2;
       _hlsSessionId = sessionId;
-      _pmk = pmk;
     } catch (e) {
       debugPrint('[VideoPlayer] SAE handshake failed: $e');
       _setError('SAE 安全握手失败: ${_formatError(e.toString())}');
@@ -204,12 +202,12 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         debugPrint('[VideoPlayer] Rebuilding SAE session...');
         final newResult = await handshakeService.performHandshake(
           filePath: filePath,
+          fileId: fileId,
           password: _userPassword!,
           userId: _userId!,
           directMode: false,
         );
         _hlsSessionId = newResult.$1;
-        _pmk = newResult.$2;
         return newResult;
       }
 
@@ -777,7 +775,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     // 停止安全代理
     await _proxyServer?.stop();
     _proxyServer = null;
-    _pmk = null;
     await _initPlayer();
   }
 

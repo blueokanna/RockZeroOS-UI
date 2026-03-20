@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:pointycastle/export.dart' as pc;
+import 'package:thirds/blake3.dart' as blake3;
 import 'package:video_player/video_player.dart';
 
 import 'hkdf_blake3.dart';
@@ -25,6 +26,7 @@ import 'secure_hls_proxy.dart';
 class SecureHlsPlayer {
   final String baseUrl;
   final String jwtToken;
+  static const int _requiredSaeGroup = 19;
 
   // SAE 握手相关
   Uint8List? _pmk; // Pairwise Master Key
@@ -69,10 +71,16 @@ class SecureHlsPlayer {
     _password = password;
 
     // 1. 创建 SAE 客户端
+    final normalizedClientId =
+        Uint8List.fromList(blake3.blake3(utf8.encode(userId), 32));
+    final normalizedServerId = Uint8List.fromList(
+      blake3.blake3(utf8.encode('rockzero-server-device-id'), 32),
+    );
+
     final saeClient = SaeClient(
       password: Uint8List.fromList(utf8.encode(password)),
-      deviceIdSelf: Uint8List.fromList(utf8.encode(userId)),
-      deviceIdPeer: Uint8List.fromList(utf8.encode('rockzero-server')),
+      deviceIdSelf: normalizedClientId,
+      deviceIdPeer: normalizedServerId,
     );
 
     // 2. 生成客户端 commit（返回 Map）
@@ -97,6 +105,27 @@ class SecureHlsPlayer {
 
     final initData = jsonDecode(initResponse.body);
     final tempSessionId = initData['temp_session_id'];
+    final antiCloggingToken = initData['anti_clogging_token'];
+
+    if (antiCloggingToken == null ||
+        (antiCloggingToken is String && antiCloggingToken.isEmpty)) {
+      throw Exception('SAE anti-clogging token is missing');
+    }
+
+    final selectedGroup = initData['selected_group'];
+    if (selectedGroup is! int || selectedGroup != _requiredSaeGroup) {
+      throw Exception(
+        'SAE selected_group invalid: expected $_requiredSaeGroup, got $selectedGroup',
+      );
+    }
+
+    final supportedGroups = initData['supported_groups'];
+    if (supportedGroups is! List ||
+        !supportedGroups.any((g) => g == _requiredSaeGroup)) {
+      throw Exception(
+        'SAE supported_groups does not include required group $_requiredSaeGroup',
+      );
+    }
 
     debugPrint('[SecureHLS] Got temp session: $tempSessionId');
 
@@ -110,6 +139,7 @@ class SecureHlsPlayer {
       body: jsonEncode({
         'temp_session_id': tempSessionId,
         'client_commit': clientCommit,
+        'anti_clogging_token': antiCloggingToken,
       }),
     );
 
@@ -136,6 +166,7 @@ class SecureHlsPlayer {
       body: jsonEncode({
         'temp_session_id': tempSessionId,
         'client_confirm': clientConfirm,
+        'anti_clogging_token': antiCloggingToken,
       }),
     );
 

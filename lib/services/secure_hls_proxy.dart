@@ -221,11 +221,14 @@ class SecureHlsProxyServer {
         final segmentUrl =
             '$baseUrl/api/v1/secure-hls/$_sessionId/$segmentName';
 
+        final zkpProof = await _generateBulletproofZkpProof();
         final backendRequest =
-            await _backendClient.getUrl(Uri.parse(segmentUrl));
+            await _backendClient.postUrl(Uri.parse(segmentUrl));
+        backendRequest.headers.contentType = ContentType.json;
         if (jwtToken != null) {
           backendRequest.headers.add('Authorization', 'Bearer $jwtToken');
         }
+        backendRequest.write(jsonEncode({'zkp_proof': zkpProof}));
 
         final backendResponse = await backendRequest.close();
 
