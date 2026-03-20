@@ -68,6 +68,7 @@ class SecureHlsProxyServer {
   final Queue<String> _proofQueue = Queue<String>();
   Future<void>? _proofBatchInFlight;
   static const int _proofBatchTarget = 6;
+  static const Duration _segmentRequestTimeout = Duration(seconds: 75);
 
   SecureHlsRuntimeSnapshot get runtimeSnapshot => SecureHlsRuntimeSnapshot(
         proofGenerateRequests: _proofGenerateRequests,
@@ -738,7 +739,7 @@ class SecureHlsProxyServer {
     if (parsed == null || parsed < 1) {
       return defaultValue;
     }
-    return parsed.clamp(1, 5);
+    return parsed.clamp(1, 8);
   }
 
   void _applyBackendNoDiskSignal(HttpHeaders headers) {
@@ -789,7 +790,8 @@ class SecureHlsProxyServer {
       if (zkpProof != null) 'zkp_proof': zkpProof,
     }));
 
-    final backendResponse = await backendRequest.close();
+    final backendResponse =
+        await backendRequest.close().timeout(_segmentRequestTimeout);
     _applyBackendNoDiskSignal(backendResponse.headers);
 
     if (backendResponse.statusCode == HttpStatus.ok) {
@@ -797,7 +799,7 @@ class SecureHlsProxyServer {
       final encryptedData = await backendResponse.fold<List<int>>(
         [],
         (previous, element) => previous..addAll(element),
-      );
+      ).timeout(_segmentRequestTimeout);
       _updateAdaptiveNetworkTuning(
         statusCode: HttpStatus.ok,
         elapsedMs: DateTime.now().difference(startedAt).inMilliseconds,
@@ -808,7 +810,10 @@ class SecureHlsProxyServer {
       );
     }
 
-    final errorBody = await backendResponse.transform(utf8.decoder).join();
+    final errorBody = await backendResponse
+        .transform(utf8.decoder)
+        .join()
+        .timeout(_segmentRequestTimeout);
     debugPrint(
       '[SecureHLS Proxy] Backend error: ${backendResponse.statusCode} - $errorBody',
     );
