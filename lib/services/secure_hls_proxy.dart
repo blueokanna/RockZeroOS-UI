@@ -31,10 +31,6 @@ class SecureHlsProxyServer {
   final SecureHlsAdaptiveConfig adaptiveConfig;
   Future<(String, Uint8List)>? _sessionRebuildFuture;
 
-  String? _cachedProof;
-  DateTime? _cachedProofAt;
-  Future<String>? _proofGenerationFuture;
-
   final Set<String> _prefetchInFlight = <String>{};
   int? _lastPrefetchCenter;
   DateTime? _lastPrefetchAt;
@@ -43,7 +39,6 @@ class SecureHlsProxyServer {
   /// 避免每个 segment 请求都创建新连接（大幅减少 TCP 握手开销）
   late final HttpClient _backendClient;
 
-  static const Duration _proofCacheTtl = Duration(seconds: 20);
   static const Duration _minPrefetchCooldown = Duration(milliseconds: 450);
   static const Duration _maxPrefetchCooldown = Duration(milliseconds: 1400);
   static const int _minPrefetchRadius = 1;
@@ -482,27 +477,9 @@ class SecureHlsProxyServer {
   Future<String> _generateBulletproofZkpProofCached({
     bool forceRefresh = false,
   }) async {
-    final now = DateTime.now();
-    if (!forceRefresh &&
-        _cachedProof != null &&
-        _cachedProofAt != null &&
-        now.difference(_cachedProofAt!) < _proofCacheTtl) {
-      return _cachedProof!;
-    }
-
-    if (!forceRefresh && _proofGenerationFuture != null) {
-      return _proofGenerationFuture!;
-    }
-
-    _proofGenerationFuture = _generateBulletproofZkpProof();
-    try {
-      final proof = await _proofGenerationFuture!;
-      _cachedProof = proof;
-      _cachedProofAt = DateTime.now();
-      return proof;
-    } finally {
-      _proofGenerationFuture = null;
-    }
+    // 必须每次请求都生成唯一 proof，避免服务端 nonce 重放检测误判。
+    // forceRefresh 参数保留用于调用方语义，但不再执行缓存复用。
+    return _generateBulletproofZkpProof();
   }
 
   Future<String> _generateBulletproofZkpProof() async {
@@ -564,8 +541,7 @@ class SecureHlsProxyServer {
   }
 
   void _invalidateProofCache() {
-    _cachedProof = null;
-    _cachedProofAt = null;
+    // Proof is no longer cached; keep hook for compatibility with existing callsites.
   }
 
   int _parseRetryAfterSeconds(String? headerValue, {int defaultValue = 1}) {
