@@ -62,6 +62,8 @@ class SecureHlsProxyServer {
   int _segmentRetries = 0;
   int _postProofSuccessHits = 0;
   bool _backendNoDiskMode = false;
+  String? _segmentTicket;
+  int? _segmentTicketExpiresAtMs;
   final Queue<String> _proofQueue = Queue<String>();
   Future<void>? _proofBatchInFlight;
   static const int _proofBatchTarget = 6;
@@ -175,6 +177,7 @@ class SecureHlsProxyServer {
 
       // 预热一批 proof，避免首批 segment 请求阻塞在 proof 生成 RTT。
       unawaited(_warmProofQueueIfNeeded(force: true));
+      unawaited(_ensureSegmentTicket(forceRefresh: true));
 
       // 返回代理服务器的播放列表 URL
       return 'http://127.0.0.1:$_port/playlist.m3u8';
@@ -240,7 +243,9 @@ class SecureHlsProxyServer {
 
     _prefetchInFlight.add(segmentName);
     try {
-      final zkpProof = await _generateBulletproofZkpProofCached();
+      final ticket = await _ensureSegmentTicket();
+      final zkpProof =
+          ticket == null ? await _generateBulletproofZkpProofCached() : null;
       final segmentUrl = '$baseUrl/api/v1/secure-hls/$_sessionId/$segmentName';
 
       final request = await _backendClient.postUrl(Uri.parse(segmentUrl));
@@ -248,7 +253,10 @@ class SecureHlsProxyServer {
       if (jwtToken != null) {
         request.headers.add('Authorization', 'Bearer $jwtToken');
       }
-      request.write(jsonEncode({'zkp_proof': zkpProof}));
+      request.write(jsonEncode({
+        if (ticket != null) 'zkp_ticket': ticket,
+        if (zkpProof != null) 'zkp_proof': zkpProof,
+      }));
 
       final response = await request.close();
 
@@ -398,7 +406,8 @@ class SecureHlsProxyServer {
 
         final lower = lastErrorBody.toLowerCase();
         final invalidProof = lastStatus == HttpStatus.unauthorized &&
-            lower.contains('invalid zkp proof');
+            (lower.contains('invalid zkp proof') ||
+                lower.contains('invalid segment access ticket'));
 
         if (invalidProof) {
           _invalidateProofCache();
@@ -498,6 +507,71 @@ class SecureHlsProxyServer {
 
     // 兜底：批量接口不可用时回退单个 proof。
     return _generateBulletproofZkpProof();
+  }
+
+  bool _isSegmentTicketUsable() {
+    if (_segmentTicket == null || _segmentTicket!.isEmpty) {
+      return false;
+    }
+    final expiresAtMs = _segmentTicketExpiresAtMs;
+    if (expiresAtMs == null) {
+      return true;
+    }
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    return nowMs < (expiresAtMs - 5000);
+  }
+
+  Future<String?> _ensureSegmentTicket({bool forceRefresh = false}) async {
+    if (!forceRefresh && _isSegmentTicketUsable()) {
+      return _segmentTicket;
+    }
+
+    if (jwtToken == null || jwtToken!.isEmpty) {
+      return null;
+    }
+
+    final proof = await _generateBulletproofZkpProofCached(
+      forceRefresh: forceRefresh,
+    );
+
+    final client = HttpClient();
+    try {
+      final uri = Uri.parse(
+        '$baseUrl/api/v1/secure-hls/session/$_sessionId/proof-ticket',
+      );
+      final request = await client.postUrl(uri);
+      request.headers.contentType = ContentType.json;
+      request.headers.add('Authorization', 'Bearer $jwtToken');
+      request.write(jsonEncode({'zkp_proof': proof}));
+
+      final response = await request.close();
+      final body = await response.transform(utf8.decoder).join();
+
+      if (response.statusCode == HttpStatus.ok) {
+        final payload = jsonDecode(body);
+        if (payload is Map<String, dynamic> && payload['ticket'] is String) {
+          _segmentTicket = payload['ticket'] as String;
+          final expiresAt = payload['expires_at'];
+          if (expiresAt is int) {
+            _segmentTicketExpiresAtMs = expiresAt * 1000;
+          } else {
+            _segmentTicketExpiresAtMs = null;
+          }
+          return _segmentTicket;
+        }
+      }
+
+      if (response.statusCode == HttpStatus.notFound) {
+        // Legacy backend without ticket endpoint.
+        return null;
+      }
+
+      throw StateError(
+        'Failed to obtain segment ticket: ${response.statusCode} - $body',
+      );
+    } finally {
+      client.close(force: true);
+    }
   }
 
   Future<void> _warmProofQueueIfNeeded({bool force = false}) async {
@@ -638,7 +712,9 @@ class SecureHlsProxyServer {
   }
 
   void _invalidateProofCache() {
-    // Proof is no longer cached; keep hook for compatibility with existing callsites.
+    _segmentTicket = null;
+    _segmentTicketExpiresAtMs = null;
+    _proofQueue.clear();
   }
 
   int _parseRetryAfterSeconds(String? headerValue, {int defaultValue = 1}) {
@@ -683,16 +759,22 @@ class SecureHlsProxyServer {
   }) async {
     final startedAt = DateTime.now();
     final segmentUrl = '$baseUrl/api/v1/secure-hls/$_sessionId/$segmentName';
-    final zkpProof = await _generateBulletproofZkpProofCached(
-      forceRefresh: forceRefreshProof,
-    );
+    final ticket = await _ensureSegmentTicket(forceRefresh: forceRefreshProof);
+    final zkpProof = ticket == null
+        ? await _generateBulletproofZkpProofCached(
+            forceRefresh: forceRefreshProof,
+          )
+        : null;
 
     final backendRequest = await _backendClient.postUrl(Uri.parse(segmentUrl));
     backendRequest.headers.contentType = ContentType.json;
     if (jwtToken != null) {
       backendRequest.headers.add('Authorization', 'Bearer $jwtToken');
     }
-    backendRequest.write(jsonEncode({'zkp_proof': zkpProof}));
+    backendRequest.write(jsonEncode({
+      if (ticket != null) 'zkp_ticket': ticket,
+      if (zkpProof != null) 'zkp_proof': zkpProof,
+    }));
 
     final backendResponse = await backendRequest.close();
     _applyBackendNoDiskSignal(backendResponse.headers);
