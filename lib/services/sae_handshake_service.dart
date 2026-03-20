@@ -8,6 +8,29 @@ import 'package:thirds/blake3.dart' as blake3;
 import 'hkdf_blake3.dart';
 import 'sae_client_curve25519.dart';
 
+enum SaeStage {
+  init,
+  commit,
+  confirm,
+  createSession,
+}
+
+class SaeHandshakeException implements Exception {
+  final SaeStage stage;
+  final int statusCode;
+  final String message;
+
+  const SaeHandshakeException({
+    required this.stage,
+    required this.statusCode,
+    required this.message,
+  });
+
+  @override
+  String toString() =>
+      'SaeHandshakeException(stage: $stage, status: $statusCode, message: $message)';
+}
+
 class SaeHandshakeService {
   final String baseUrl;
   final String jwtToken;
@@ -22,6 +45,19 @@ class SaeHandshakeService {
 
   bool _isSuccessStatus(int statusCode) =>
       statusCode >= 200 && statusCode < 300;
+
+  String _extractBackendMessage(String body) {
+    try {
+      final parsed = jsonDecode(body);
+      if (parsed is Map<String, dynamic>) {
+        final msg = parsed['message'];
+        final err = parsed['error'];
+        if (msg is String && msg.isNotEmpty) return msg;
+        if (err is String && err.isNotEmpty) return err;
+      }
+    } catch (_) {}
+    return body;
+  }
 
   Future<(String, Uint8List)> performHandshake({
     String? filePath,
@@ -166,7 +202,11 @@ class SaeHandshakeService {
         .timeout(_requestTimeout);
 
     if (!_isSuccessStatus(response.statusCode)) {
-      throw Exception('SAE init failed: ${response.statusCode}');
+      throw SaeHandshakeException(
+        stage: SaeStage.init,
+        statusCode: response.statusCode,
+        message: _extractBackendMessage(response.body),
+      );
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
@@ -192,7 +232,11 @@ class SaeHandshakeService {
         .timeout(_requestTimeout);
 
     if (!_isSuccessStatus(response.statusCode)) {
-      throw Exception('SAE commit failed: ${response.statusCode}');
+      throw SaeHandshakeException(
+        stage: SaeStage.commit,
+        statusCode: response.statusCode,
+        message: _extractBackendMessage(response.body),
+      );
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
@@ -218,7 +262,11 @@ class SaeHandshakeService {
         .timeout(_requestTimeout);
 
     if (!_isSuccessStatus(response.statusCode)) {
-      throw Exception('SAE confirm failed: ${response.statusCode}');
+      throw SaeHandshakeException(
+        stage: SaeStage.confirm,
+        statusCode: response.statusCode,
+        message: _extractBackendMessage(response.body),
+      );
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
@@ -251,7 +299,11 @@ class SaeHandshakeService {
         .timeout(_requestTimeout);
 
     if (!_isSuccessStatus(response.statusCode)) {
-      throw Exception('Create session failed: ${response.statusCode}');
+      throw SaeHandshakeException(
+        stage: SaeStage.createSession,
+        statusCode: response.statusCode,
+        message: _extractBackendMessage(response.body),
+      );
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
   }

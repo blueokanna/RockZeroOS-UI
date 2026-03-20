@@ -175,6 +175,23 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       sessionId = result.$1;
       pmk = result.$2;
       _hlsSessionId = sessionId;
+    } on SaeHandshakeException catch (e) {
+      debugPrint('[VideoPlayer] SAE/session stage failed: $e');
+      if (e.stage == SaeStage.createSession) {
+        if (e.statusCode == 412) {
+          _setError(
+            '会话创建被拒绝（外部缓存不可用）。\n'
+            '请检查 HLS_CACHE_PATH 是否指向已挂载外部存储，或关闭 ROCKZERO_STRICT_EXTERNAL_HLS_CACHE。\n'
+            '后端信息: ${_formatError(e.message)}',
+          );
+        } else {
+          _setError('会话创建失败(${e.statusCode}): ${_formatError(e.message)}');
+        }
+      } else {
+        _setError(
+            'SAE 安全握手失败(${e.stage.name}/${e.statusCode}): ${_formatError(e.message)}');
+      }
+      return;
     } catch (e) {
       debugPrint('[VideoPlayer] SAE handshake failed: $e');
       _setError('SAE 安全握手失败: ${_formatError(e.toString())}');
