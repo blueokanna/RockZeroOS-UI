@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:pointycastle/export.dart';
@@ -24,27 +25,140 @@ class SecureHlsProxyServer {
   final String baseUrl;
   String _sessionId;
   Uint8List _pmk; // Pairwise Master Key
-  final String password; // User password for ZKP proof generation
+  final String? password;
   final String? jwtToken; // JWT token for authenticated requests
   final Future<(String, Uint8List)> Function()? onSessionRebuild;
+  final SecureHlsAdaptiveConfig adaptiveConfig;
   Future<(String, Uint8List)>? _sessionRebuildFuture;
+
+  String? _cachedProof;
+  DateTime? _cachedProofAt;
+  Future<String>? _proofGenerationFuture;
+
+  final Set<String> _prefetchInFlight = <String>{};
+  int? _lastPrefetchCenter;
+  DateTime? _lastPrefetchAt;
 
   /// ★ 复用单个 HttpClient 实例，启用 HTTP keep-alive 连接池
   /// 避免每个 segment 请求都创建新连接（大幅减少 TCP 握手开销）
   late final HttpClient _backendClient;
 
+  static const Duration _proofCacheTtl = Duration(seconds: 20);
+  static const Duration _minPrefetchCooldown = Duration(milliseconds: 450);
+  static const Duration _maxPrefetchCooldown = Duration(milliseconds: 1400);
+  static const int _minPrefetchRadius = 1;
+  static const int _maxPrefetchRadius = 3;
+
+  int _dynamicPrefetchRadius = 2;
+  Duration _dynamicPrefetchCooldown = const Duration(milliseconds: 800);
+  int _dynamicMaxAttempts = 6;
+  int _dynamicBaseBackoffMs = 280;
+  int _dynamicMaxBackoffMs = 2600;
+  int _dynamicMaxConnections = 6;
+  final Random _jitter = Random();
+
+  int _networkSampleCount = 0;
+  double _emaFetchMs = 900;
+  double _emaFailureRate = 0;
+
+  int _proofGenerateRequests = 0;
+  int _proofGenerateFailures = 0;
+  int _segmentRetries = 0;
+  int _fallbackGetHits = 0;
+  int _postProofSuccessHits = 0;
+
+  SecureHlsRuntimeSnapshot get runtimeSnapshot => SecureHlsRuntimeSnapshot(
+        proofGenerateRequests: _proofGenerateRequests,
+        proofGenerateFailures: _proofGenerateFailures,
+        segmentRetries: _segmentRetries,
+        fallbackGetHits: _fallbackGetHits,
+        postProofSuccessHits: _postProofSuccessHits,
+      );
+
   SecureHlsProxyServer({
     required this.baseUrl,
     required String sessionId,
     required Uint8List pmk,
-    required this.password,
+    this.password,
     this.jwtToken,
     this.onSessionRebuild,
+    SecureHlsAdaptiveConfig? adaptiveConfig,
   })  : _sessionId = sessionId,
-        _pmk = pmk {
+        _pmk = pmk,
+        adaptiveConfig = adaptiveConfig ?? const SecureHlsAdaptiveConfig() {
+    _applyInitialAdaptiveTuning();
     _backendClient = HttpClient()
       ..idleTimeout = const Duration(seconds: 30)
-      ..maxConnectionsPerHost = 6;
+      ..maxConnectionsPerHost = _dynamicMaxConnections;
+  }
+
+  void _applyInitialAdaptiveTuning() {
+    _dynamicMaxConnections = adaptiveConfig.recommendedConnections;
+    _dynamicPrefetchRadius = adaptiveConfig.recommendedPrefetchRadius;
+    _dynamicPrefetchCooldown = adaptiveConfig.recommendedPrefetchCooldown;
+    _dynamicMaxAttempts = adaptiveConfig.recommendedMaxAttempts;
+    _dynamicBaseBackoffMs = adaptiveConfig.recommendedBaseBackoffMs;
+    _dynamicMaxBackoffMs = adaptiveConfig.recommendedMaxBackoffMs;
+  }
+
+  void _updateAdaptiveNetworkTuning({
+    required int statusCode,
+    required int elapsedMs,
+  }) {
+    _networkSampleCount += 1;
+    const alpha = 0.20;
+    _emaFetchMs = (_emaFetchMs * (1 - alpha)) + (elapsedMs * alpha);
+
+    final failed = statusCode >= 400;
+    final sampleFailure = failed ? 1.0 : 0.0;
+    _emaFailureRate = (_emaFailureRate * (1 - alpha)) + (sampleFailure * alpha);
+
+    if (_networkSampleCount < 8) {
+      return;
+    }
+
+    final poorNetwork = _emaFetchMs > 1500 || _emaFailureRate > 0.22;
+    final goodNetwork = _emaFetchMs < 520 && _emaFailureRate < 0.08;
+
+    if (poorNetwork) {
+      _dynamicPrefetchRadius = _minPrefetchRadius;
+      _dynamicPrefetchCooldown = _maxPrefetchCooldown;
+      _dynamicMaxAttempts = 8;
+      _dynamicBaseBackoffMs = 420;
+      _dynamicMaxBackoffMs = 3600;
+      return;
+    }
+
+    if (goodNetwork) {
+      _dynamicPrefetchRadius = _maxPrefetchRadius;
+      _dynamicPrefetchCooldown = _minPrefetchCooldown;
+      _dynamicMaxAttempts = adaptiveConfig.recommendedMaxAttempts;
+      _dynamicBaseBackoffMs =
+          max(220, adaptiveConfig.recommendedBaseBackoffMs - 40);
+      _dynamicMaxBackoffMs = adaptiveConfig.recommendedMaxBackoffMs;
+      return;
+    }
+
+    _dynamicPrefetchRadius = adaptiveConfig.recommendedPrefetchRadius;
+    _dynamicPrefetchCooldown = adaptiveConfig.recommendedPrefetchCooldown;
+    _dynamicMaxAttempts = adaptiveConfig.recommendedMaxAttempts;
+    _dynamicBaseBackoffMs = adaptiveConfig.recommendedBaseBackoffMs;
+    _dynamicMaxBackoffMs = adaptiveConfig.recommendedMaxBackoffMs;
+  }
+
+  Future<void> _adaptiveBackoffDelay(int attempt,
+      {int? serverRetryAfterSec}) async {
+    if (serverRetryAfterSec != null && serverRetryAfterSec > 0) {
+      final clamped = serverRetryAfterSec.clamp(1, 6);
+      await Future.delayed(Duration(seconds: clamped));
+      return;
+    }
+
+    final factor = 1 << attempt.clamp(0, 5);
+    final rawMs = _dynamicBaseBackoffMs * factor;
+    final cappedMs = rawMs.clamp(_dynamicBaseBackoffMs, _dynamicMaxBackoffMs);
+    final jitterMs = _jitter.nextInt(140);
+    await Future.delayed(Duration(milliseconds: cappedMs + jitterMs));
   }
 
   /// 启动代理服务器
@@ -83,15 +197,30 @@ class SecureHlsProxyServer {
   void prefetchAroundSegment(int segmentIndex) {
     if (_server == null) return;
 
+    final now = DateTime.now();
+    if (_lastPrefetchCenter == segmentIndex &&
+        _lastPrefetchAt != null &&
+        now.difference(_lastPrefetchAt!) < _dynamicPrefetchCooldown) {
+      return;
+    }
+    _lastPrefetchCenter = segmentIndex;
+    _lastPrefetchAt = now;
+
     debugPrint(
         '[SecureHLS Proxy] Prefetch requested around segment $segmentIndex');
 
-    // 预取当前段及前后各 2 个段（共 5 个段）
-    final start = (segmentIndex - 2).clamp(0, segmentIndex);
-    final end = segmentIndex + 2;
+    // 预取窗口按实时网络状态动态调整。
+    final radius =
+        _dynamicPrefetchRadius.clamp(_minPrefetchRadius, _maxPrefetchRadius);
+    final start = max(0, segmentIndex - radius);
+    final end = segmentIndex + radius;
 
     for (int i = start; i <= end; i++) {
       final segmentName = 'segment_$i.ts';
+
+      if (_prefetchInFlight.length >= adaptiveConfig.maxPrefetchInFlight) {
+        break;
+      }
 
       // 异步预取，不阻塞当前操作
       _prefetchSegment(segmentName).catchError((e) {
@@ -102,12 +231,16 @@ class SecureHlsProxyServer {
 
   /// 异步预取单个视频段
   Future<void> _prefetchSegment(String segmentName) async {
+    if (_prefetchInFlight.contains(segmentName)) {
+      return;
+    }
+
+    _prefetchInFlight.add(segmentName);
     try {
-      final zkpProof = await _generateBulletproofZkpProof();
+      final zkpProof = await _generateBulletproofZkpProofCached();
       final segmentUrl = '$baseUrl/api/v1/secure-hls/$_sessionId/$segmentName';
 
-      final client = HttpClient();
-      final request = await client.postUrl(Uri.parse(segmentUrl));
+      final request = await _backendClient.postUrl(Uri.parse(segmentUrl));
       request.headers.contentType = ContentType.json;
       if (jwtToken != null) {
         request.headers.add('Authorization', 'Bearer $jwtToken');
@@ -124,6 +257,8 @@ class SecureHlsProxyServer {
     } catch (e) {
       // 预取失败不影响正常播放
       debugPrint('[SecureHLS Proxy] Prefetch error for $segmentName: $e');
+    } finally {
+      _prefetchInFlight.remove(segmentName);
     }
   }
 
@@ -217,26 +352,28 @@ class SecureHlsProxyServer {
 
       debugPrint('[SecureHLS Proxy] Fetching segment: $segmentName');
 
-      for (int attempt = 0; attempt < 2; attempt++) {
-        final segmentUrl =
-            '$baseUrl/api/v1/secure-hls/$_sessionId/$segmentName';
+      final int maxAttempts = _dynamicMaxAttempts;
+      int lastStatus = HttpStatus.internalServerError;
+      String lastErrorBody = 'Unknown error';
 
-        final zkpProof = await _generateBulletproofZkpProof();
-        final backendRequest =
-            await _backendClient.postUrl(Uri.parse(segmentUrl));
-        backendRequest.headers.contentType = ContentType.json;
-        if (jwtToken != null) {
-          backendRequest.headers.add('Authorization', 'Bearer $jwtToken');
+      for (int attempt = 0; attempt < maxAttempts; attempt++) {
+        if (attempt > 0) {
+          _segmentRetries += 1;
         }
-        backendRequest.write(jsonEncode({'zkp_proof': zkpProof}));
+        _SegmentFetchResult result;
+        try {
+          result = await _fetchEncryptedSegment(
+            segmentName,
+            forceRefreshProof: false,
+          );
+        } catch (e) {
+          debugPrint(
+              '[SecureHLS Proxy] Proof path failed, using encrypted GET fallback: $e');
+          result = await _fetchEncryptedSegmentViaGet(segmentName);
+        }
 
-        final backendResponse = await backendRequest.close();
-
-        if (backendResponse.statusCode == 200) {
-          final encryptedData = await backendResponse.fold<List<int>>(
-              [], (previous, element) => previous..addAll(element));
-          final decryptedData =
-              _decryptSegment(Uint8List.fromList(encryptedData));
+        if (result.statusCode == HttpStatus.ok && result.data != null) {
+          final decryptedData = _decryptSegment(result.data!);
 
           request.response.statusCode = HttpStatus.ok;
           request.response.headers.contentType = ContentType('video', 'mp2t');
@@ -248,24 +385,86 @@ class SecureHlsProxyServer {
           return;
         }
 
-        final errorBody = await backendResponse.transform(utf8.decoder).join();
-        debugPrint(
-            '[SecureHLS Proxy] Backend error: ${backendResponse.statusCode} - $errorBody');
+        lastStatus = result.statusCode;
+        lastErrorBody = result.errorBody ?? 'Unknown backend error';
+
+        final lower = lastErrorBody.toLowerCase();
+        final invalidProof = lastStatus == HttpStatus.unauthorized &&
+            lower.contains('invalid zkp proof');
+
+        if (invalidProof) {
+          _invalidateProofCache();
+          _SegmentFetchResult retryAfterProofRefresh;
+          try {
+            retryAfterProofRefresh = await _fetchEncryptedSegment(
+              segmentName,
+              forceRefreshProof: true,
+            );
+          } catch (e) {
+            debugPrint(
+              '[SecureHLS Proxy] Refreshed proof path failed, using encrypted GET fallback: $e',
+            );
+            retryAfterProofRefresh =
+                await _fetchEncryptedSegmentViaGet(segmentName);
+          }
+          if (retryAfterProofRefresh.statusCode == HttpStatus.ok &&
+              retryAfterProofRefresh.data != null) {
+            final decryptedData = _decryptSegment(retryAfterProofRefresh.data!);
+            request.response.statusCode = HttpStatus.ok;
+            request.response.headers.contentType = ContentType('video', 'mp2t');
+            request.response.headers.contentLength = decryptedData.length;
+            request.response.add(decryptedData);
+            return;
+          }
+
+          final fallbackGet = await _fetchEncryptedSegmentViaGet(segmentName);
+          if (fallbackGet.statusCode == HttpStatus.ok &&
+              fallbackGet.data != null) {
+            final decryptedData = _decryptSegment(fallbackGet.data!);
+            request.response.statusCode = HttpStatus.ok;
+            request.response.headers.contentType = ContentType('video', 'mp2t');
+            request.response.headers.contentLength = decryptedData.length;
+            request.response.add(decryptedData);
+            return;
+          }
+
+          lastStatus = retryAfterProofRefresh.statusCode;
+          lastErrorBody =
+              retryAfterProofRefresh.errorBody ?? 'Invalid proof after refresh';
+        }
 
         final rebuilt = await _rebuildSessionIfNeeded(
-          statusCode: backendResponse.statusCode,
-          errorBody: errorBody,
+          statusCode: lastStatus,
+          errorBody: lastErrorBody,
           trigger: segmentName,
         );
 
-        if (rebuilt && attempt == 0) {
+        if (rebuilt) {
+          _invalidateProofCache();
           continue;
         }
 
-        request.response.statusCode = backendResponse.statusCode;
-        request.response.write('Backend error: $errorBody');
-        return;
+        if (lastStatus == HttpStatus.serviceUnavailable ||
+            lastStatus == HttpStatus.notFound) {
+          final retryAfterSec =
+              _parseRetryAfterSeconds(result.retryAfterHeader, defaultValue: 1);
+          await _adaptiveBackoffDelay(
+            attempt,
+            serverRetryAfterSec: retryAfterSec,
+          );
+          continue;
+        }
+
+        if (attempt + 1 >= maxAttempts) {
+          break;
+        }
+
+        await _adaptiveBackoffDelay(attempt);
       }
+
+      request.response.statusCode = lastStatus;
+      request.response.write('Backend error: $lastErrorBody');
+      return;
     } catch (e, stack) {
       debugPrint('[SecureHLS Proxy] Segment error: $e');
       debugPrint('[SecureHLS Proxy] Stack: $stack');
@@ -280,10 +479,38 @@ class SecureHlsProxyServer {
   ///
   /// 通过受保护接口 `/api/v1/zkp/proof/generate` 调用服务端
   /// `rockzero_crypto::ZkpContext::generate_enhanced_proof`，确保前后端证明格式完全一致。
+  Future<String> _generateBulletproofZkpProofCached({
+    bool forceRefresh = false,
+  }) async {
+    final now = DateTime.now();
+    if (!forceRefresh &&
+        _cachedProof != null &&
+        _cachedProofAt != null &&
+        now.difference(_cachedProofAt!) < _proofCacheTtl) {
+      return _cachedProof!;
+    }
+
+    if (!forceRefresh && _proofGenerationFuture != null) {
+      return _proofGenerationFuture!;
+    }
+
+    _proofGenerationFuture = _generateBulletproofZkpProof();
+    try {
+      final proof = await _proofGenerationFuture!;
+      _cachedProof = proof;
+      _cachedProofAt = DateTime.now();
+      return proof;
+    } finally {
+      _proofGenerationFuture = null;
+    }
+  }
+
   Future<String> _generateBulletproofZkpProof() async {
     if (jwtToken == null || jwtToken!.isEmpty) {
       throw StateError('JWT token is required for ZKP proof generation');
     }
+
+    _proofGenerateRequests += 1;
 
     final client = HttpClient();
     try {
@@ -292,7 +519,6 @@ class SecureHlsProxyServer {
       request.headers.contentType = ContentType.json;
       request.headers.add('Authorization', 'Bearer $jwtToken');
       request.write(jsonEncode({
-        'password': password,
         'context': 'hls_segment_access',
       }));
 
@@ -300,6 +526,7 @@ class SecureHlsProxyServer {
       final responseBody = await response.transform(utf8.decoder).join();
 
       if (response.statusCode != 200) {
+        _proofGenerateFailures += 1;
         throw StateError(
           'Backend proof generation failed: ${response.statusCode} - $responseBody',
         );
@@ -313,6 +540,7 @@ class SecureHlsProxyServer {
       final success = payload['success'] == true;
       if (!success) {
         final error = payload['error']?.toString() ?? 'unknown error';
+        _proofGenerateFailures += 1;
         throw StateError('Backend proof generation failed: $error');
       }
 
@@ -327,9 +555,109 @@ class SecureHlsProxyServer {
       }
 
       throw StateError('Invalid proof field type from backend');
+    } catch (_) {
+      _proofGenerateFailures += 1;
+      rethrow;
     } finally {
       client.close(force: true);
     }
+  }
+
+  void _invalidateProofCache() {
+    _cachedProof = null;
+    _cachedProofAt = null;
+  }
+
+  int _parseRetryAfterSeconds(String? headerValue, {int defaultValue = 1}) {
+    if (headerValue == null || headerValue.isEmpty) {
+      return defaultValue;
+    }
+    final parsed = int.tryParse(headerValue.trim());
+    if (parsed == null || parsed < 1) {
+      return defaultValue;
+    }
+    return parsed.clamp(1, 5);
+  }
+
+  Future<_SegmentFetchResult> _fetchEncryptedSegment(
+    String segmentName, {
+    required bool forceRefreshProof,
+  }) async {
+    final startedAt = DateTime.now();
+    final segmentUrl = '$baseUrl/api/v1/secure-hls/$_sessionId/$segmentName';
+    final zkpProof = await _generateBulletproofZkpProofCached(
+      forceRefresh: forceRefreshProof,
+    );
+
+    final backendRequest = await _backendClient.postUrl(Uri.parse(segmentUrl));
+    backendRequest.headers.contentType = ContentType.json;
+    if (jwtToken != null) {
+      backendRequest.headers.add('Authorization', 'Bearer $jwtToken');
+    }
+    backendRequest.write(jsonEncode({'zkp_proof': zkpProof}));
+
+    final backendResponse = await backendRequest.close();
+
+    if (backendResponse.statusCode == HttpStatus.ok) {
+      _postProofSuccessHits += 1;
+      final encryptedData = await backendResponse.fold<List<int>>(
+        [],
+        (previous, element) => previous..addAll(element),
+      );
+      _updateAdaptiveNetworkTuning(
+        statusCode: HttpStatus.ok,
+        elapsedMs: DateTime.now().difference(startedAt).inMilliseconds,
+      );
+      return _SegmentFetchResult(
+        statusCode: HttpStatus.ok,
+        data: Uint8List.fromList(encryptedData),
+      );
+    }
+
+    final errorBody = await backendResponse.transform(utf8.decoder).join();
+    debugPrint(
+      '[SecureHLS Proxy] Backend error: ${backendResponse.statusCode} - $errorBody',
+    );
+    _updateAdaptiveNetworkTuning(
+      statusCode: backendResponse.statusCode,
+      elapsedMs: DateTime.now().difference(startedAt).inMilliseconds,
+    );
+    return _SegmentFetchResult(
+      statusCode: backendResponse.statusCode,
+      errorBody: errorBody,
+      retryAfterHeader: backendResponse.headers.value('retry-after'),
+    );
+  }
+
+  Future<_SegmentFetchResult> _fetchEncryptedSegmentViaGet(
+    String segmentName,
+  ) async {
+    _fallbackGetHits += 1;
+    final segmentUrl = '$baseUrl/api/v1/secure-hls/$_sessionId/$segmentName';
+
+    final request = await _backendClient.getUrl(Uri.parse(segmentUrl));
+    if (jwtToken != null) {
+      request.headers.add('Authorization', 'Bearer $jwtToken');
+    }
+
+    final response = await request.close();
+    if (response.statusCode == HttpStatus.ok) {
+      final encryptedData = await response.fold<List<int>>(
+        [],
+        (previous, element) => previous..addAll(element),
+      );
+      return _SegmentFetchResult(
+        statusCode: HttpStatus.ok,
+        data: Uint8List.fromList(encryptedData),
+      );
+    }
+
+    final errorBody = await response.transform(utf8.decoder).join();
+    return _SegmentFetchResult(
+      statusCode: response.statusCode,
+      errorBody: errorBody,
+      retryAfterHeader: response.headers.value('retry-after'),
+    );
   }
 
   /// 解密视频段（完整的 AES-256-GCM 实现）
@@ -487,6 +815,7 @@ class SecureHlsProxyServer {
       final rebuilt = await _sessionRebuildFuture!;
       _sessionId = rebuilt.$1;
       _pmk = rebuilt.$2;
+      _invalidateProofCache();
       return true;
     }
 
@@ -498,6 +827,7 @@ class SecureHlsProxyServer {
       final rebuilt = await _sessionRebuildFuture!;
       _sessionId = rebuilt.$1;
       _pmk = rebuilt.$2;
+      _invalidateProofCache();
       debugPrint('[SecureHLS Proxy] Session rebuilt: $_sessionId');
       return true;
     } catch (e) {
@@ -506,5 +836,92 @@ class SecureHlsProxyServer {
     } finally {
       _sessionRebuildFuture = null;
     }
+  }
+}
+
+class _SegmentFetchResult {
+  final int statusCode;
+  final Uint8List? data;
+  final String? errorBody;
+  final String? retryAfterHeader;
+
+  const _SegmentFetchResult({
+    required this.statusCode,
+    this.data,
+    this.errorBody,
+    this.retryAfterHeader,
+  });
+}
+
+class SecureHlsRuntimeSnapshot {
+  final int proofGenerateRequests;
+  final int proofGenerateFailures;
+  final int segmentRetries;
+  final int fallbackGetHits;
+  final int postProofSuccessHits;
+
+  const SecureHlsRuntimeSnapshot({
+    required this.proofGenerateRequests,
+    required this.proofGenerateFailures,
+    required this.segmentRetries,
+    required this.fallbackGetHits,
+    required this.postProofSuccessHits,
+  });
+
+  bool get zkpActive => postProofSuccessHits > 0;
+  bool get fallbackActive => fallbackGetHits > 0;
+}
+
+class SecureHlsAdaptiveConfig {
+  final int cpuCores;
+  final int? bitrateBps;
+  final bool lowMemoryMode;
+  final int maxPrefetchInFlight;
+
+  const SecureHlsAdaptiveConfig({
+    this.cpuCores = 4,
+    this.bitrateBps,
+    this.lowMemoryMode = false,
+    this.maxPrefetchInFlight = 4,
+  });
+
+  int get bitrateMbps => ((bitrateBps ?? 0) / 1000000).round();
+
+  int get recommendedConnections {
+    if (lowMemoryMode || cpuCores <= 4) return 3;
+    if (cpuCores <= 6) return 4;
+    return 6;
+  }
+
+  int get recommendedPrefetchRadius {
+    if (lowMemoryMode || cpuCores <= 4) return 1;
+    if (bitrateMbps >= 15) return 1;
+    if (bitrateMbps >= 8) return 2;
+    return 3;
+  }
+
+  Duration get recommendedPrefetchCooldown {
+    if (lowMemoryMode || cpuCores <= 4) {
+      return const Duration(milliseconds: 1200);
+    }
+    if (bitrateMbps >= 12) {
+      return const Duration(milliseconds: 900);
+    }
+    return const Duration(milliseconds: 700);
+  }
+
+  int get recommendedMaxAttempts {
+    if (bitrateMbps >= 18 || lowMemoryMode) return 7;
+    return 6;
+  }
+
+  int get recommendedBaseBackoffMs {
+    if (bitrateMbps >= 18) return 360;
+    return 280;
+  }
+
+  int get recommendedMaxBackoffMs {
+    if (bitrateMbps >= 18) return 3200;
+    return 2400;
   }
 }

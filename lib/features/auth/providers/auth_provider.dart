@@ -267,6 +267,7 @@ class AuthNotifier extends Notifier<AuthState> {
       if (password != null) {
         final passwordHash = _hashPassword(password);
         await _storage.write(key: 'user_password_hash', value: passwordHash);
+        await _storage.delete(key: 'user_password_plain');
         debugPrint('[Auth] ✅ Saved password hash for SAE handshake');
       }
     }

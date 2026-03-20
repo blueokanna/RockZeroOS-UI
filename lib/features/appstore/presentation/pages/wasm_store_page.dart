@@ -1711,11 +1711,25 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
               }
 
               if (snapshot.hasError) {
-                return Text('状态读取失败: ${snapshot.error}');
+                final err = snapshot.error;
+                var message = '状态读取失败，请稍后重试';
+                if (err is DioException) {
+                  final code = err.response?.statusCode;
+                  if (code == 404) {
+                    message =
+                        '当前服务端未启用网心云节点接口（404）。\n请确认后端已升级并开启 /api/v1/edge 路由。';
+                  } else if (code == 401 || code == 403) {
+                    message = '未授权访问网心云状态，请重新登录并完成安全认证。';
+                  } else if (code != null) {
+                    message = '状态读取失败（HTTP $code），请稍后重试。';
+                  }
+                }
+                return Text(message);
               }
 
               final data = snapshot.data ?? const <String, dynamic>{};
-              final authenticated = data['authenticated'] == true;
+              final authenticated =
+                  data['authenticated'] == true || data['logged_in'] == true;
               final accountId = data['account_id']?.toString() ?? '-';
               final expiresAt = data['expires_at']?.toString() ?? '-';
 

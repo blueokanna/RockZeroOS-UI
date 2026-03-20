@@ -52,7 +52,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   String? _authToken;
   String? _hlsSessionId;
   String? _userId;
-  String? _userPassword;
+  String? _userSaeSecret;
   bool _isDownloading = false;
   double _downloadProgress = 0;
 
@@ -65,6 +65,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   Duration _durationHint = Duration.zero;
+  int? _videoBitrateBps;
   bool _isDraggingProgress = false;
   Duration? _dragPreviewPosition;
   Duration? _lastSavedPosition;
@@ -119,14 +120,14 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       const storage = FlutterSecureStorage();
       _authToken = await storage.read(key: 'access_token');
       _userId = await storage.read(key: 'user_id');
-      _userPassword = await storage.read(key: 'user_password_hash');
+      _userSaeSecret = await storage.read(key: 'user_password_hash');
 
       if (_authToken == null || _authToken!.isEmpty) {
         _setError('未登录，请先登录');
         return;
       }
 
-      if (_userId == null || _userPassword == null) {
+      if (_userId == null || _userSaeSecret == null) {
         _setError('无法获取用户凭据，请重新登录');
         return;
       }
@@ -166,7 +167,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       final result = await handshakeService.performHandshake(
         filePath: filePath,
         fileId: fileId,
-        password: _userPassword!,
+        password: _userSaeSecret!,
         userId: _userId!,
         directMode: false, // ★ 禁用 direct 模式，强制加密传输
       );
@@ -203,7 +204,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         final newResult = await handshakeService.performHandshake(
           filePath: filePath,
           fileId: fileId,
-          password: _userPassword!,
+          password: _userSaeSecret!,
           userId: _userId!,
           directMode: false,
         );
@@ -215,9 +216,10 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         baseUrl: widget.baseUrl,
         sessionId: sessionId,
         pmk: pmk,
-        password: _userPassword!,
+        password: _userSaeSecret!,
         jwtToken: _authToken,
         onSessionRebuild: rebuildSession,
+        adaptiveConfig: _buildAdaptiveConfig(),
       );
 
       proxyPlaylistUrl = await _proxyServer!.start();
@@ -281,8 +283,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
     // ── Step 4: 创建 media_kit 播放器 ────────────────────────
     _player = Player(
-      configuration: const PlayerConfiguration(
-        bufferSize: 256 * 1024 * 1024,
+      configuration: PlayerConfiguration(
+        bufferSize: _calculateAdaptiveBufferBytes(),
       ),
     );
 
@@ -312,6 +314,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       // ★ 从cache里开始播放而不是等待实时流
       await mpv.setProperty(
           'stream-lavf-o', 'reconnect=1,reconnect_streamed=1');
+
+      // 结合设备性能和码率动态调整缓冲与回读窗口。
+      await _applyAdaptiveMpvTuning(mpv);
     }
 
     _videoController = VideoController(_player!);
@@ -532,6 +537,10 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       final dynamic rawDuration = data['duration'];
       final double? durationSeconds =
           rawDuration is num ? rawDuration.toDouble() : null;
+      final dynamic rawBitrate = data['bitrate'] ?? data['bit_rate'];
+      final int? bitrate = rawBitrate is num
+          ? rawBitrate.toInt()
+          : int.tryParse(rawBitrate?.toString() ?? '');
       if (durationSeconds != null && durationSeconds > 0) {
         final hint = Duration(milliseconds: (durationSeconds * 1000).round());
         if (!mounted) return;
@@ -539,11 +548,76 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           if (hint > _durationHint) {
             _durationHint = hint;
           }
+          if (bitrate != null && bitrate > 0) {
+            _videoBitrateBps = bitrate;
+          }
         });
       }
     } catch (e) {
       debugPrint('[SecureHLS] Failed to fetch duration hint: $e');
     }
+  }
+
+  int _calculateAdaptiveBufferBytes() {
+    final bitrate = _videoBitrateBps;
+    final cores = Platform.numberOfProcessors;
+    final lowEnd = cores <= 4;
+
+    if (bitrate == null || bitrate <= 0) {
+      return lowEnd ? 96 * 1024 * 1024 : 160 * 1024 * 1024;
+    }
+
+    final bitrateBytesPerSec = bitrate / 8.0;
+    final targetSeconds = bitrate >= 18 * 1000000
+        ? 18
+        : bitrate >= 10 * 1000000
+            ? 22
+            : bitrate >= 6 * 1000000
+                ? 28
+                : 34;
+    final estimated = (bitrateBytesPerSec * targetSeconds * 1.8).round();
+
+    final minBuffer = 48 * 1024 * 1024;
+    final maxBuffer = lowEnd ? 128 * 1024 * 1024 : 220 * 1024 * 1024;
+    return estimated.clamp(minBuffer, maxBuffer);
+  }
+
+  SecureHlsAdaptiveConfig _buildAdaptiveConfig() {
+    final cores = Platform.numberOfProcessors;
+    final lowMemoryMode = cores <= 4;
+    return SecureHlsAdaptiveConfig(
+      cpuCores: cores,
+      bitrateBps: _videoBitrateBps,
+      lowMemoryMode: lowMemoryMode,
+      maxPrefetchInFlight: lowMemoryMode ? 2 : 4,
+    );
+  }
+
+  Future<void> _applyAdaptiveMpvTuning(NativePlayer mpv) async {
+    final bitrate = _videoBitrateBps ?? 0;
+    final highBitrate = bitrate >= 12 * 1000000;
+    final ultraBitrate = bitrate >= 18 * 1000000;
+    final lowEnd = Platform.numberOfProcessors <= 4;
+
+    final readahead = ultraBitrate
+        ? 80
+        : highBitrate
+            ? 56
+            : lowEnd
+                ? 28
+                : 40;
+    final cacheSecs = ultraBitrate
+        ? 120
+        : highBitrate
+            ? 95
+            : lowEnd
+                ? 40
+                : 70;
+    final maxBackBytes = lowEnd ? '48MiB' : (highBitrate ? '96MiB' : '72MiB');
+
+    await mpv.setProperty('demuxer-readahead-secs', '$readahead');
+    await mpv.setProperty('cache-secs', '$cacheSecs');
+    await mpv.setProperty('demuxer-max-back-bytes', maxBackBytes);
   }
 
   /// PTS 偏移检测（基于时长对比）
@@ -817,6 +891,15 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   void _enterFullscreen() {
     // 使用 immersiveSticky 完全隐藏状态栏和导航栏，实现真正全屏
     // 用户从边缘滑动可临时显示系统 UI，松手后自动隐藏
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.black,
+      systemNavigationBarColor: Colors.black,
+      systemNavigationBarDividerColor: Colors.black,
+      statusBarIconBrightness: Brightness.light,
+      systemNavigationBarIconBrightness: Brightness.light,
+      systemStatusBarContrastEnforced: false,
+      systemNavigationBarContrastEnforced: false,
+    ));
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
@@ -848,6 +931,15 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   }
 
   void _exitFullscreen() {
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarDividerColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+      systemNavigationBarIconBrightness: Brightness.dark,
+      systemStatusBarContrastEnforced: false,
+      systemNavigationBarContrastEnforced: false,
+    ));
     SystemChrome.setEnabledSystemUIMode(
       SystemUiMode.edgeToEdge,
       overlays: SystemUiOverlay.values,
@@ -898,41 +990,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     // 通过 HEAD 请求预触发生成，减少 mpv 实际请求时的等待时间。
     final displaySeconds = displayPos.inSeconds;
     final targetSegmentIndex = displaySeconds ~/ 2; // 2 秒一个分片
-    if (_hlsSessionId != null) {
-      _preRequestSegments(targetSegmentIndex);
-    }
+    _proxyServer?.prefetchAroundSegment(targetSegmentIndex);
 
     _player!.seek(Duration(milliseconds: clampedMs));
-  }
-
-  /// 预请求目标分片及相邻分片（后台 fire-and-forget）
-  ///
-  /// 使用 HTTP HEAD 请求触发服务端按需生成，不下载完整分片数据。
-  /// 这样当 mpv 随后请求这些分片时，它们已经生成完毕或正在生成中。
-  void _preRequestSegments(int centerIndex) {
-    final sessionId = _hlsSessionId;
-    if (sessionId == null || widget.baseUrl.isEmpty) return;
-
-    // 预请求 [center-1, center, center+1, center+2] 分片
-    for (int offset = -1; offset <= 2; offset++) {
-      final idx = centerIndex + offset;
-      if (idx < 0) continue;
-
-      final segmentUrl =
-          '${widget.baseUrl}/api/v1/secure-hls/$sessionId/segment_$idx.ts';
-
-      // HEAD 请求触发服务端 get_segment_direct 处理逻辑（含按需生成）
-      // 但不下载分片数据，节省带宽
-      http
-          .head(Uri.parse(segmentUrl))
-          .timeout(const Duration(seconds: 60))
-          .then((resp) {
-        debugPrint(
-            '[SecureHLS] Pre-requested segment_$idx.ts (status=${resp.statusCode})');
-      }).catchError((e) {
-        debugPrint('[SecureHLS] Pre-request segment_$idx.ts failed: $e');
-      });
-    }
   }
 
   /// 基于当前 **显示位置** 做相对 seek
@@ -1082,62 +1142,72 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           _exitFullscreen();
         }
       },
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: Stack(
-          fit: StackFit.expand,
-          children: [
-            // 视频画面
-            if (_videoController != null && !_isLoading && _error == null)
-              GestureDetector(
-                onTap: _toggleControls,
-                onDoubleTapDown: (details) {
-                  final screenWidth = MediaQuery.of(context).size.width;
-                  if (details.globalPosition.dx < screenWidth / 3) {
-                    _seekRelative(-10);
-                  } else if (details.globalPosition.dx > screenWidth * 2 / 3) {
-                    _seekRelative(10);
-                  } else {
-                    _togglePlayPause();
-                  }
-                },
-                child: Video(
-                  controller: _videoController!,
-                  fill: Colors.black,
-                  controls: NoVideoControls,
-                ),
-              ),
-
-            // 缓冲指示器 (MD3 风格) —— 使用 RepaintBoundary 隔离重绘
-            if (_isBuffering && !_isLoading)
-              const Center(
-                child: RepaintBoundary(
-                  child: MD3BufferingIndicator(
-                    color: Colors.white70,
-                    size: 48,
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: const SystemUiOverlayStyle(
+          statusBarColor: Colors.black,
+          systemNavigationBarColor: Colors.black,
+          systemNavigationBarDividerColor: Colors.black,
+          statusBarIconBrightness: Brightness.light,
+          systemNavigationBarIconBrightness: Brightness.light,
+        ),
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Stack(
+            fit: StackFit.expand,
+            children: [
+              // 视频画面
+              if (_videoController != null && !_isLoading && _error == null)
+                GestureDetector(
+                  onTap: _toggleControls,
+                  onDoubleTapDown: (details) {
+                    final screenWidth = MediaQuery.of(context).size.width;
+                    if (details.globalPosition.dx < screenWidth / 3) {
+                      _seekRelative(-10);
+                    } else if (details.globalPosition.dx >
+                        screenWidth * 2 / 3) {
+                      _seekRelative(10);
+                    } else {
+                      _togglePlayPause();
+                    }
+                  },
+                  child: Video(
+                    controller: _videoController!,
+                    fill: Colors.black,
+                    controls: NoVideoControls,
                   ),
                 ),
+
+              // 缓冲指示器 (MD3 风格) —— 使用 RepaintBoundary 隔离重绘
+              if (_isBuffering && !_isLoading)
+                const Center(
+                  child: RepaintBoundary(
+                    child: MD3BufferingIndicator(
+                      color: Colors.white70,
+                      size: 48,
+                    ),
+                  ),
+                ),
+
+              // 自定义控制栏 —— AnimatedSwitcher 实现丝滑淡入/淡出
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 250),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                child: (!_isLoading && _error == null && _showControls)
+                    ? _buildControlsOverlay()
+                    : const SizedBox.shrink(key: ValueKey('controls_hidden')),
               ),
 
-            // 自定义控制栏 —— AnimatedSwitcher 实现丝滑淡入/淡出
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 250),
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeInCubic,
-              child: (!_isLoading && _error == null && _showControls)
-                  ? _buildControlsOverlay()
-                  : const SizedBox.shrink(key: ValueKey('controls_hidden')),
-            ),
+              // 加载状态
+              if (_isLoading) _buildLoading(),
 
-            // 加载状态
-            if (_isLoading) _buildLoading(),
+              // 错误状态
+              if (_error != null && !_isLoading) _buildError(),
 
-            // 错误状态
-            if (_error != null && !_isLoading) _buildError(),
-
-            // 下载进度
-            if (_isDownloading) _buildDownloadProgress(),
-          ],
+              // 下载进度
+              if (_isDownloading) _buildDownloadProgress(),
+            ],
+          ),
         ),
       ),
     );
@@ -1451,12 +1521,14 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
 
   /// 显示加密协议详情弹窗 — 带流水线动画
   void _showEncryptionDetails() {
+    final runtime = _proxyServer?.runtimeSnapshot;
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) => _EncryptionPipelineSheet(
         sessionId: _hlsSessionId,
+        runtime: runtime,
       ),
     );
   }
@@ -1607,9 +1679,11 @@ class _ProtocolNode {
 /// 动画加密详情面板 —— 工厂流水线风格
 class _EncryptionPipelineSheet extends StatefulWidget {
   final String? sessionId;
+  final SecureHlsRuntimeSnapshot? runtime;
 
   const _EncryptionPipelineSheet({
     this.sessionId,
+    this.runtime,
   });
 
   @override
@@ -1729,7 +1803,10 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
   }
 
   List<_ProtocolNode> _buildNodes() {
-    return const [
+    final runtime = widget.runtime;
+    final zkpPath = runtime?.zkpActive == true;
+    final fallbackPath = runtime?.fallbackActive == true;
+    return [
       _ProtocolNode(
         icon: Icons.vpn_key_rounded,
         title: '密钥交换',
@@ -1746,16 +1823,21 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
       ),
       _ProtocolNode(
         icon: Icons.security_rounded,
-        title: 'Session 鉴权',
-        subtitle: '128-bit UUID Session Token',
-        detail: '会话令牌不可猜测，创建前经过 JWT + SAE 双重认证，3 小时自动过期',
+        title: '分片访问鉴权',
+        subtitle: zkpPath
+            ? 'Bulletproofs ZKP (POST)'
+            : 'Session Token + Encrypted GET Fallback',
+        detail: fallbackPath
+            ? '检测到 proof 失败时已切换加密 GET 兜底，链路仍为 AES-256-GCM 加密分片传输'
+            : '当前分片请求通过 ZKP proof 校验，失败时会自动会话重建后重试',
         color: Colors.purpleAccent,
       ),
       _ProtocolNode(
         icon: Icons.fingerprint_rounded,
-        title: '完整性校验',
+        title: '链路运行状态',
         subtitle: 'Blake3 Cryptographic Hash',
-        detail: '所有传输数据使用 Blake3 哈希验证完整性，防止篡改',
+        detail:
+            'proof请求: ${runtime?.proofGenerateRequests ?? 0}，失败: ${runtime?.proofGenerateFailures ?? 0}，分片重试: ${runtime?.segmentRetries ?? 0}',
         color: Colors.tealAccent,
       ),
     ];
@@ -1859,8 +1941,12 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
   }
 
   Widget _buildSubtitleRow() {
-    return const Text(
-      'SAE + AES-256-GCM + Session Auth + Blake3',
+    final runtime = widget.runtime;
+    final mode = runtime?.fallbackActive == true
+        ? 'ZKP + Encrypted GET Fallback'
+        : 'ZKP Verified Segment Path';
+    return Text(
+      'SAE + AES-256-GCM + $mode + Blake3',
       style: TextStyle(
         color: Colors.greenAccent,
         fontSize: 13,
@@ -1992,9 +2078,9 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
                     ),
                   ),
                   const SizedBox(height: 4),
-                  const Text(
-                    '传输模式: Direct HLS (Session 鉴权)',
-                    style: TextStyle(
+                  Text(
+                    '传输模式: ${widget.runtime?.fallbackActive == true ? 'ZKP + Encrypted GET Fallback' : 'ZKP POST + AES-256-GCM'}',
+                    style: const TextStyle(
                       color: Colors.white38,
                       fontSize: 11,
                     ),
