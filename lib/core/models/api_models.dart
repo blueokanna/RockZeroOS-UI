@@ -601,6 +601,10 @@ class HardwareInfo {
   final List<UsbDevice> usbDevices;
   @JsonKey(name: 'network_interfaces')
   final List<NetworkInterfaceInfo>? networkInterfaces;
+  @JsonKey(name: 'no_disk_playback_mode_active', defaultValue: false)
+  final bool noDiskPlaybackModeActive;
+  @JsonKey(name: 'no_disk_playback_session_count', defaultValue: 0)
+  final int noDiskPlaybackSessionCount;
 
   HardwareInfo({
     required this.system,
@@ -609,6 +613,8 @@ class HardwareInfo {
     required this.disks,
     required this.usbDevices,
     this.networkInterfaces,
+    this.noDiskPlaybackModeActive = false,
+    this.noDiskPlaybackSessionCount = 0,
   });
 
   factory HardwareInfo.fromJson(Map<String, dynamic> json) =>

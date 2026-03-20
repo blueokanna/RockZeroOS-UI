@@ -442,6 +442,10 @@ HardwareInfo _$HardwareInfoFromJson(Map<String, dynamic> json) => HardwareInfo(
       networkInterfaces: (json['network_interfaces'] as List<dynamic>?)
           ?.map((e) => NetworkInterfaceInfo.fromJson(e as Map<String, dynamic>))
           .toList(),
+      noDiskPlaybackModeActive:
+          json['no_disk_playback_mode_active'] as bool? ?? false,
+      noDiskPlaybackSessionCount:
+          (json['no_disk_playback_session_count'] as num?)?.toInt() ?? 0,
     );
 
 Map<String, dynamic> _$HardwareInfoToJson(HardwareInfo instance) =>
@@ -453,6 +457,8 @@ Map<String, dynamic> _$HardwareInfoToJson(HardwareInfo instance) =>
       'usb_devices': instance.usbDevices.map((e) => e.toJson()).toList(),
       'network_interfaces':
           instance.networkInterfaces?.map((e) => e.toJson()).toList(),
+      'no_disk_playback_mode_active': instance.noDiskPlaybackModeActive,
+      'no_disk_playback_session_count': instance.noDiskPlaybackSessionCount,
     };
 
 NetworkInterfaceInfo _$NetworkInterfaceInfoFromJson(

@@ -60,6 +60,20 @@ final usbDevicesProvider = FutureProvider.autoDispose<List<UsbDevice>>((
   return await api.getUsbDevices();
 });
 
+final hardwareInfoAllProvider = StreamProvider.autoDispose<HardwareInfo?>(
+  (ref) async* {
+    final api = ref.read(apiServiceProvider);
+    while (true) {
+      try {
+        yield await api.getHardwareInfo();
+      } catch (_) {
+        yield null;
+      }
+      await Future.delayed(const Duration(seconds: 3));
+    }
+  },
+);
+
 class SystemPage extends ConsumerWidget {
   const SystemPage({super.key});
 
@@ -70,6 +84,7 @@ class SystemPage extends ConsumerWidget {
     final memoryInfo = ref.watch(memoryInfoProvider);
     final diskInfo = ref.watch(diskInfoProvider);
     final usbDevices = ref.watch(usbDevicesProvider);
+    final hardwareInfo = ref.watch(hardwareInfoAllProvider);
     final hasWallpaper =
         ref.watch(backgroundModeProvider) == BackgroundMode.customWallpaper &&
             (ref.watch(customWallpaperPathProvider)?.isNotEmpty ?? false);
@@ -104,6 +119,7 @@ class SystemPage extends ConsumerWidget {
                 // System Info Card
                 _SystemInfoCard(
                   systemInfo: systemInfo,
+                  hardwareInfo: hardwareInfo,
                 ),
                 const SizedBox(height: 20),
 
@@ -140,8 +156,9 @@ class SystemPage extends ConsumerWidget {
 
 class _SystemInfoCard extends StatelessWidget {
   final AsyncValue<SystemInfo?> systemInfo;
+  final AsyncValue<HardwareInfo?> hardwareInfo;
 
-  const _SystemInfoCard({required this.systemInfo});
+  const _SystemInfoCard({required this.systemInfo, required this.hardwareInfo});
 
   @override
   Widget build(BuildContext context) {
@@ -197,6 +214,51 @@ class _SystemInfoCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 20),
+            hardwareInfo.when(
+              data: (info) {
+                final active = info?.noDiskPlaybackModeActive ?? false;
+                final sessions = info?.noDiskPlaybackSessionCount ?? 0;
+                final statusColor =
+                    active ? colorScheme.error : colorScheme.primary;
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(12),
+                    border:
+                        Border.all(color: statusColor.withValues(alpha: 0.25)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        active
+                            ? Icons.warning_amber_rounded
+                            : Icons.verified_rounded,
+                        size: 18,
+                        color: statusColor,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          active
+                              ? 'No-disk playback mode ACTIVE ($sessions session${sessions == 1 ? '' : 's'})'
+                              : 'No-disk playback mode inactive',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: statusColor,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+              loading: () => const SizedBox.shrink(),
+              error: (_, __) => const SizedBox.shrink(),
+            ),
             systemInfo.when(
               data: (info) {
                 if (info == null) {

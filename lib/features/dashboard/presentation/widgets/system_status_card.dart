@@ -76,6 +76,11 @@ class SystemStatusCard extends StatelessWidget {
 
     return Column(
       children: [
+        _buildNoDiskModeRow(context, info)
+            .animate()
+            .fadeIn(delay: 80.ms, curve: M3Curves.emphasizedDecelerate),
+        const SizedBox(height: 12),
+
         // System info row
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
@@ -143,6 +148,44 @@ class SystemStatusCard extends StatelessWidget {
               .fadeIn(delay: 250.ms, curve: M3Curves.emphasizedDecelerate),
         ],
       ],
+    );
+  }
+
+  Widget _buildNoDiskModeRow(BuildContext context, HardwareInfo info) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final active = info.noDiskPlaybackModeActive;
+    final sessions = info.noDiskPlaybackSessionCount;
+    final statusColor = active ? colorScheme.error : colorScheme.primary;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: statusColor.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: statusColor.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            active ? Icons.warning_amber_rounded : Icons.verified_rounded,
+            size: 20,
+            color: statusColor,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              active
+                  ? 'No-disk playback mode ACTIVE ($sessions session${sessions == 1 ? '' : 's'})'
+                  : 'No-disk playback mode inactive',
+              style: textTheme.bodyMedium?.copyWith(
+                color: statusColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
