@@ -81,6 +81,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   Duration _startOffset = Duration.zero;
   bool _offsetDetected = false;
   bool _initialSeekDone = false;
+  DateTime? _playbackOpenAt;
 
   double _playbackSpeed = 1.0;
   static const List<double> _speedOptions = [
@@ -319,7 +320,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       await mpv.setProperty('ad-lavc-threads', '0');
       await mpv.setProperty('hwdec', 'auto-safe');
       await mpv.setProperty('vd-lavc-software-fallback', 'yes');
-      await mpv.setProperty('video-sync', 'display-resample');
+      await mpv.setProperty('video-sync', 'audio');
+      await mpv.setProperty('interpolation', 'no');
       await mpv.setProperty('audio-pitch-correction', 'yes');
       await mpv.setProperty('hr-seek', 'yes');
       // 强制将流起始时间重定向为 0，修复 PTS 偏移导致的时间显示错误
@@ -389,6 +391,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       Media(proxyPlaylistUrl),
       play: true,
     );
+    _playbackOpenAt = DateTime.now();
 
     // 不再在 open 后立即 seek — 等待播放确认后再处理
 
@@ -688,6 +691,11 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     if (!_offsetDetected || _initialSeekDone) return;
     if (_startOffset <= Duration.zero) return;
 
+    // 避免误判导致回跳：仅对明显异常的大偏移执行一次纠正。
+    if (_startOffset.inSeconds < 300) {
+      return;
+    }
+
     _initialSeekDone = true;
     debugPrint(
         '[SecureHLS] Performing initial seek to content start: $_startOffset');
@@ -709,6 +717,12 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     Future.delayed(const Duration(milliseconds: 800), () {
       if (!mounted || _player == null) return;
 
+      final openedAt = _playbackOpenAt;
+      if (openedAt == null ||
+          DateTime.now().difference(openedAt).inSeconds > 4) {
+        return;
+      }
+
       final total = _effectiveTotalDuration;
       final displayPos = _displayPosition;
 
@@ -722,7 +736,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       // 条件：总时长 > 30秒（不是极短视频），且当前显示位置已超过总时长 70%
       if (total.inSeconds > 30 &&
           displayPos.inSeconds > 0 &&
-          displayPos.inMilliseconds > total.inMilliseconds * 0.7) {
+          displayPos.inMilliseconds > total.inMilliseconds * 0.9 &&
+          displayPos.inSeconds > 120) {
         debugPrint(
           '[SecureHLS] ★ Detected live-edge start! '
           'displayPos=$displayPos is >70% of total=$total. '
@@ -740,7 +755,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           _duration.inSeconds > 0 &&
           !_offsetDetected &&
           _position.inMilliseconds > _duration.inMilliseconds * 0.9 &&
-          _duration.inSeconds > 60) {
+          _duration.inSeconds > 240) {
         // 备用检查：rawPosition > 90% rawDuration（无偏移检测的情况）
         debugPrint(
           '[SecureHLS] ★ Fallback: rawPos=$_position > 90% of rawDur=$_duration. '
