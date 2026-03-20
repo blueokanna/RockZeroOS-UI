@@ -59,14 +59,14 @@ class SecureHlsProxyServer {
   int _proofGenerateRequests = 0;
   int _proofGenerateFailures = 0;
   int _segmentRetries = 0;
-  int _fallbackGetHits = 0;
   int _postProofSuccessHits = 0;
+  bool _backendNoDiskMode = false;
 
   SecureHlsRuntimeSnapshot get runtimeSnapshot => SecureHlsRuntimeSnapshot(
         proofGenerateRequests: _proofGenerateRequests,
         proofGenerateFailures: _proofGenerateFailures,
         segmentRetries: _segmentRetries,
-        fallbackGetHits: _fallbackGetHits,
+        fallbackGetHits: 0,
         postProofSuccessHits: _postProofSuccessHits,
       );
 
@@ -191,6 +191,7 @@ class SecureHlsProxyServer {
   /// 在 seek 操作时调用，提前请求目标段附近的数据以减少延迟。
   void prefetchAroundSegment(int segmentIndex) {
     if (_server == null) return;
+    if (_backendNoDiskMode) return;
 
     final now = DateTime.now();
     if (_lastPrefetchCenter == segmentIndex &&
@@ -248,6 +249,9 @@ class SecureHlsProxyServer {
         // 读取并丢弃——让系统层面的缓存生效
         await response.drain<void>();
         debugPrint('[SecureHLS Proxy] Prefetched: $segmentName');
+      } else {
+        // 失败响应同样要消费完，避免连接池中残留脏流。
+        await response.drain<void>();
       }
     } catch (e) {
       // 预取失败不影响正常播放
@@ -362,9 +366,11 @@ class SecureHlsProxyServer {
             forceRefreshProof: false,
           );
         } catch (e) {
-          debugPrint(
-              '[SecureHLS Proxy] Proof path failed, using encrypted GET fallback: $e');
-          result = await _fetchEncryptedSegmentViaGet(segmentName);
+          debugPrint('[SecureHLS Proxy] Proof path failed: $e');
+          result = _SegmentFetchResult(
+            statusCode: HttpStatus.serviceUnavailable,
+            errorBody: e.toString(),
+          );
         }
 
         if (result.statusCode == HttpStatus.ok && result.data != null) {
@@ -396,26 +402,15 @@ class SecureHlsProxyServer {
               forceRefreshProof: true,
             );
           } catch (e) {
-            debugPrint(
-              '[SecureHLS Proxy] Refreshed proof path failed, using encrypted GET fallback: $e',
+            debugPrint('[SecureHLS Proxy] Refreshed proof path failed: $e');
+            retryAfterProofRefresh = _SegmentFetchResult(
+              statusCode: HttpStatus.serviceUnavailable,
+              errorBody: e.toString(),
             );
-            retryAfterProofRefresh =
-                await _fetchEncryptedSegmentViaGet(segmentName);
           }
           if (retryAfterProofRefresh.statusCode == HttpStatus.ok &&
               retryAfterProofRefresh.data != null) {
             final decryptedData = _decryptSegment(retryAfterProofRefresh.data!);
-            request.response.statusCode = HttpStatus.ok;
-            request.response.headers.contentType = ContentType('video', 'mp2t');
-            request.response.headers.contentLength = decryptedData.length;
-            request.response.add(decryptedData);
-            return;
-          }
-
-          final fallbackGet = await _fetchEncryptedSegmentViaGet(segmentName);
-          if (fallbackGet.statusCode == HttpStatus.ok &&
-              fallbackGet.data != null) {
-            final decryptedData = _decryptSegment(fallbackGet.data!);
             request.response.statusCode = HttpStatus.ok;
             request.response.headers.contentType = ContentType('video', 'mp2t');
             request.response.headers.contentLength = decryptedData.length;
@@ -555,6 +550,31 @@ class SecureHlsProxyServer {
     return parsed.clamp(1, 5);
   }
 
+  void _applyBackendNoDiskSignal(HttpHeaders headers) {
+    final noDiskHeader = headers.value('x-no-disk-mode');
+    final noDisk = noDiskHeader != null && noDiskHeader.toLowerCase() == 'true';
+
+    if (noDisk == _backendNoDiskMode) {
+      return;
+    }
+
+    _backendNoDiskMode = noDisk;
+    if (_backendNoDiskMode) {
+      _dynamicPrefetchRadius = 0;
+      _dynamicPrefetchCooldown = const Duration(seconds: 2);
+      _dynamicMaxAttempts = max(_dynamicMaxAttempts, 10);
+      _dynamicBaseBackoffMs = max(_dynamicBaseBackoffMs, 420);
+      _dynamicMaxBackoffMs = max(_dynamicMaxBackoffMs, 3800);
+      _backendClient.maxConnectionsPerHost = 2;
+      debugPrint(
+        '[SecureHLS Proxy] Backend in no-disk mode; prefetch disabled and concurrency reduced',
+      );
+    } else {
+      _applyInitialAdaptiveTuning();
+      _backendClient.maxConnectionsPerHost = _dynamicMaxConnections;
+    }
+  }
+
   Future<_SegmentFetchResult> _fetchEncryptedSegment(
     String segmentName, {
     required bool forceRefreshProof,
@@ -573,6 +593,7 @@ class SecureHlsProxyServer {
     backendRequest.write(jsonEncode({'zkp_proof': zkpProof}));
 
     final backendResponse = await backendRequest.close();
+    _applyBackendNoDiskSignal(backendResponse.headers);
 
     if (backendResponse.statusCode == HttpStatus.ok) {
       _postProofSuccessHits += 1;
@@ -602,37 +623,6 @@ class SecureHlsProxyServer {
       statusCode: backendResponse.statusCode,
       errorBody: errorBody,
       retryAfterHeader: backendResponse.headers.value('retry-after'),
-    );
-  }
-
-  Future<_SegmentFetchResult> _fetchEncryptedSegmentViaGet(
-    String segmentName,
-  ) async {
-    _fallbackGetHits += 1;
-    final segmentUrl = '$baseUrl/api/v1/secure-hls/$_sessionId/$segmentName';
-
-    final request = await _backendClient.getUrl(Uri.parse(segmentUrl));
-    if (jwtToken != null) {
-      request.headers.add('Authorization', 'Bearer $jwtToken');
-    }
-
-    final response = await request.close();
-    if (response.statusCode == HttpStatus.ok) {
-      final encryptedData = await response.fold<List<int>>(
-        [],
-        (previous, element) => previous..addAll(element),
-      );
-      return _SegmentFetchResult(
-        statusCode: HttpStatus.ok,
-        data: Uint8List.fromList(encryptedData),
-      );
-    }
-
-    final errorBody = await response.transform(utf8.decoder).join();
-    return _SegmentFetchResult(
-      statusCode: response.statusCode,
-      errorBody: errorBody,
-      retryAfterHeader: response.headers.value('retry-after'),
     );
   }
 
