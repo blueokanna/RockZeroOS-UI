@@ -64,6 +64,7 @@ class SecureHlsProxyServer {
   bool _backendNoDiskMode = false;
   String? _segmentTicket;
   int? _segmentTicketExpiresAtMs;
+  Future<String?>? _segmentTicketInFlight;
   final Queue<String> _proofQueue = Queue<String>();
   Future<void>? _proofBatchInFlight;
   static const int _proofBatchTarget = 6;
@@ -526,51 +527,63 @@ class SecureHlsProxyServer {
       return _segmentTicket;
     }
 
+    if (_segmentTicketInFlight != null) {
+      return _segmentTicketInFlight;
+    }
+
     if (jwtToken == null || jwtToken!.isEmpty) {
       return null;
     }
 
-    final proof = await _generateBulletproofZkpProofCached(
-      forceRefresh: forceRefresh,
-    );
-
-    final client = HttpClient();
-    try {
-      final uri = Uri.parse(
-        '$baseUrl/api/v1/secure-hls/session/$_sessionId/proof-ticket',
+    _segmentTicketInFlight = () async {
+      final proof = await _generateBulletproofZkpProofCached(
+        forceRefresh: forceRefresh,
       );
-      final request = await client.postUrl(uri);
-      request.headers.contentType = ContentType.json;
-      request.headers.add('Authorization', 'Bearer $jwtToken');
-      request.write(jsonEncode({'zkp_proof': proof}));
 
-      final response = await request.close();
-      final body = await response.transform(utf8.decoder).join();
+      final client = HttpClient();
+      try {
+        final uri = Uri.parse(
+          '$baseUrl/api/v1/secure-hls/session/$_sessionId/proof-ticket',
+        );
+        final request = await client.postUrl(uri);
+        request.headers.contentType = ContentType.json;
+        request.headers.add('Authorization', 'Bearer $jwtToken');
+        request.write(jsonEncode({'zkp_proof': proof}));
 
-      if (response.statusCode == HttpStatus.ok) {
-        final payload = jsonDecode(body);
-        if (payload is Map<String, dynamic> && payload['ticket'] is String) {
-          _segmentTicket = payload['ticket'] as String;
-          final expiresAt = payload['expires_at'];
-          if (expiresAt is int) {
-            _segmentTicketExpiresAtMs = expiresAt * 1000;
-          } else {
-            _segmentTicketExpiresAtMs = null;
+        final response = await request.close();
+        final body = await response.transform(utf8.decoder).join();
+
+        if (response.statusCode == HttpStatus.ok) {
+          final payload = jsonDecode(body);
+          if (payload is Map<String, dynamic> && payload['ticket'] is String) {
+            _segmentTicket = payload['ticket'] as String;
+            final expiresAt = payload['expires_at'];
+            if (expiresAt is int) {
+              _segmentTicketExpiresAtMs = expiresAt * 1000;
+            } else {
+              _segmentTicketExpiresAtMs = null;
+            }
+            return _segmentTicket;
           }
-          return _segmentTicket;
         }
-      }
 
-      if (response.statusCode == HttpStatus.notFound) {
-        // Legacy backend without ticket endpoint.
-        return null;
-      }
+        if (response.statusCode == HttpStatus.notFound) {
+          // Legacy backend without ticket endpoint.
+          return null;
+        }
 
-      throw StateError(
-        'Failed to obtain segment ticket: ${response.statusCode} - $body',
-      );
+        throw StateError(
+          'Failed to obtain segment ticket: ${response.statusCode} - $body',
+        );
+      } finally {
+        client.close(force: true);
+      }
+    }();
+
+    try {
+      return await _segmentTicketInFlight;
     } finally {
-      client.close(force: true);
+      _segmentTicketInFlight = null;
     }
   }
 
