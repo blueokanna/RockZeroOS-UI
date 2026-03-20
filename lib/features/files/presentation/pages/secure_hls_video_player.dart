@@ -309,28 +309,28 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     if (_player!.platform is NativePlayer) {
       final mpv = _player!.platform as NativePlayer;
       await mpv.setProperty('demuxer-max-bytes', '256MiB');
-      await mpv.setProperty('demuxer-readahead-secs', '45');
+      await mpv.setProperty('demuxer-readahead-secs', '32');
       await mpv.setProperty('cache', 'yes');
-      await mpv.setProperty('cache-secs', '90');
+      await mpv.setProperty('cache-secs', '48');
+      await mpv.setProperty('cache-pause', 'yes');
+      await mpv.setProperty('cache-pause-wait', '1.0');
       await mpv.setProperty('demuxer-max-back-bytes', '64MiB');
       await mpv.setProperty('vd-lavc-threads', '0');
       await mpv.setProperty('ad-lavc-threads', '0');
       await mpv.setProperty('hwdec', 'auto-safe');
       await mpv.setProperty('vd-lavc-software-fallback', 'yes');
-      await mpv.setProperty('video-sync', 'audio');
+      await mpv.setProperty('video-sync', 'display-resample');
+      await mpv.setProperty('audio-pitch-correction', 'yes');
+      await mpv.setProperty('hr-seek', 'yes');
       // 强制将流起始时间重定向为 0，修复 PTS 偏移导致的时间显示错误
       await mpv.setProperty('rebase-start-time', 'yes');
-      // ★ live_start_index=0 让播放器从第一个分片开始播放（而非渐进式 HLS 的最新位置）
-      // ★ fflags=+genpts+discardcorrupt 生成缺失的 PTS 并丢弃损坏帧
+      // 生成缺失 PTS 并丢弃损坏帧，减少音画漂移与卡顿。
       await mpv.setProperty(
         'demuxer-lavf-o',
-        'fflags=+genpts+discardcorrupt,live_start_index=0',
+        'fflags=+genpts+discardcorrupt',
       );
       // ★ 强制允许在“直播”HLS 流中进行 seek 操作
       await mpv.setProperty('force-seekable', 'yes');
-      // ★ 从cache里开始播放而不是等待实时流
-      await mpv.setProperty(
-          'stream-lavf-o', 'reconnect=1,reconnect_streamed=1');
 
       // 结合设备性能和码率动态调整缓冲与回读窗口。
       await _applyAdaptiveMpvTuning(mpv);

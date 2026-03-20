@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -61,6 +62,9 @@ class SecureHlsProxyServer {
   int _segmentRetries = 0;
   int _postProofSuccessHits = 0;
   bool _backendNoDiskMode = false;
+  final Queue<String> _proofQueue = Queue<String>();
+  Future<void>? _proofBatchInFlight;
+  static const int _proofBatchTarget = 6;
 
   SecureHlsRuntimeSnapshot get runtimeSnapshot => SecureHlsRuntimeSnapshot(
         proofGenerateRequests: _proofGenerateRequests,
@@ -168,6 +172,9 @@ class SecureHlsProxyServer {
 
       // 处理请求
       _server!.listen(_handleRequest);
+
+      // 预热一批 proof，避免首批 segment 请求阻塞在 proof 生成 RTT。
+      unawaited(_warmProofQueueIfNeeded(force: true));
 
       // 返回代理服务器的播放列表 URL
       return 'http://127.0.0.1:$_port/playlist.m3u8';
@@ -472,9 +479,104 @@ class SecureHlsProxyServer {
   Future<String> _generateBulletproofZkpProofCached({
     bool forceRefresh = false,
   }) async {
-    // 必须每次请求都生成唯一 proof，避免服务端 nonce 重放检测误判。
-    // forceRefresh 参数保留用于调用方语义，但不再执行缓存复用。
+    if (forceRefresh) {
+      _proofQueue.clear();
+    }
+
+    if (_proofQueue.isNotEmpty) {
+      final proof = _proofQueue.removeFirst();
+      _warmProofQueueIfNeeded();
+      return proof;
+    }
+
+    await _warmProofQueueIfNeeded(force: true);
+    if (_proofQueue.isNotEmpty) {
+      final proof = _proofQueue.removeFirst();
+      _warmProofQueueIfNeeded();
+      return proof;
+    }
+
+    // 兜底：批量接口不可用时回退单个 proof。
     return _generateBulletproofZkpProof();
+  }
+
+  Future<void> _warmProofQueueIfNeeded({bool force = false}) async {
+    if (!force && (_proofQueue.length >= 2 || _proofBatchInFlight != null)) {
+      return;
+    }
+
+    _proofBatchInFlight =
+        _generateBulletproofZkpProofBatch(_proofBatchTarget).then((proofs) {
+      for (final proof in proofs) {
+        _proofQueue.addLast(proof);
+      }
+    }).catchError((_) {
+      // 忽略批量生成错误，调用方会回退单个 proof。
+    }).whenComplete(() {
+      _proofBatchInFlight = null;
+    });
+
+    await _proofBatchInFlight;
+  }
+
+  Future<List<String>> _generateBulletproofZkpProofBatch(int count) async {
+    if (jwtToken == null || jwtToken!.isEmpty) {
+      throw StateError('JWT token is required for batch proof generation');
+    }
+
+    final client = HttpClient();
+    try {
+      final uri = Uri.parse('$baseUrl/api/v1/zkp/proof/generate-batch');
+      final request = await client.postUrl(uri);
+      request.headers.contentType = ContentType.json;
+      request.headers.add('Authorization', 'Bearer $jwtToken');
+      request.write(jsonEncode({
+        'context': 'hls_segment_access',
+        'count': count,
+      }));
+
+      final response = await request.close();
+      final responseBody = await response.transform(utf8.decoder).join();
+
+      if (response.statusCode != 200) {
+        throw StateError(
+          'Backend batch proof generation failed: ${response.statusCode} - $responseBody',
+        );
+      }
+
+      final payload = jsonDecode(responseBody);
+      if (payload is! Map<String, dynamic>) {
+        throw StateError('Invalid batch proof payload format');
+      }
+
+      if (payload['success'] != true) {
+        throw StateError(
+          'Backend batch proof generation returned failure: ${payload['error']}',
+        );
+      }
+
+      final proofsRaw = payload['proofs'];
+      if (proofsRaw is! List) {
+        throw StateError('Invalid proofs field in batch proof response');
+      }
+
+      final proofs = <String>[];
+      for (final item in proofsRaw) {
+        if (item is String) {
+          proofs.add(item);
+        } else if (item is Map) {
+          proofs.add(base64Encode(utf8.encode(jsonEncode(item))));
+        }
+      }
+
+      if (proofs.isEmpty) {
+        throw StateError('Batch proof response did not include usable proofs');
+      }
+
+      return proofs;
+    } finally {
+      client.close(force: true);
+    }
   }
 
   Future<String> _generateBulletproofZkpProof() async {
