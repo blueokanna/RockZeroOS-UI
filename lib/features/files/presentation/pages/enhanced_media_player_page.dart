@@ -181,6 +181,7 @@ class _EnhancedMediaPlayerPageState
           'demuxer-lavf-o',
           'fflags=+genpts+discardcorrupt',
         );
+<<<<<<< HEAD
         // Android: enforce MediaCodec hardware decode and disable software fallback.
         if (Platform.isAndroid) {
           await mpv.setProperty('hwdec', 'mediacodec-copy');
@@ -191,6 +192,10 @@ class _EnhancedMediaPlayerPageState
         } else {
           await mpv.setProperty('hwdec', 'auto-safe');
         }
+=======
+        // Video output: prefer GPU-accelerated rendering
+        await mpv.setProperty('hwdec', 'auto-safe');
+>>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
         // Cache settings for network streams
         await mpv.setProperty('cache', 'yes');
         await mpv.setProperty('cache-secs', '30');

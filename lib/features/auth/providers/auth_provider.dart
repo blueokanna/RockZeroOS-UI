@@ -263,7 +263,11 @@ class AuthNotifier extends Notifier<AuthState> {
       await _storage.write(key: 'user_role', value: response.user!.role);
 
       // 保存密码哈希（用于 SAE 握手）
+<<<<<<< HEAD
       // 注意：这里保存的是密码的 BLAKE3 哈希，不是明文密码
+=======
+      // 注意：这里保存的是密码的 SHA3-256 哈希，不是明文密码
+>>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
       if (password != null) {
         final passwordHash = _hashPassword(password);
         await _storage.write(key: 'user_password_hash', value: passwordHash);

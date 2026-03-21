@@ -185,7 +185,11 @@ class _SecureVideoPlayerScreenState
           ),
           const SizedBox(height: 12),
           Text(
+<<<<<<< HEAD
             'SAE 握手 + ChaCha20-Poly1305 加密',
+=======
+            'SAE 握手 + AES-256-GCM 加密',
+>>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
             style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
           ),
           const SizedBox(height: 32),
@@ -363,7 +367,11 @@ class _SecureVideoPlayerScreenState
                       Icon(Icons.lock, color: Colors.green, size: 14),
                       SizedBox(width: 4),
                       Text(
+<<<<<<< HEAD
                         'ChaCha20-Poly1305',
+=======
+                        'AES-256-GCM',
+>>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
                         style: TextStyle(
                           color: Colors.green,
                           fontSize: 11,

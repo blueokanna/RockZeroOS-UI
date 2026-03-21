@@ -1,5 +1,8 @@
 import 'dart:async';
+<<<<<<< HEAD
 import 'dart:io';
+=======
+>>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -168,6 +171,7 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
         await mpv.setProperty('ad-lavc-threads', '0');
         await mpv.setProperty('demuxer-thread', 'yes');
 
+<<<<<<< HEAD
         // ── 安卓平台强制硬件解码（MediaCodec），禁用软解回退 ──
         if (Platform.isAndroid) {
           await mpv.setProperty('hwdec', 'mediacodec-copy');
@@ -182,6 +186,13 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
           await mpv.setProperty('vd-lavc-software-fallback', 'inf');
           await mpv.setProperty('vd-lavc-dr', 'yes');
         }
+=======
+        // ── 硬件解码 + CPU 回退（AV1 等不支持的编码自动回退软解码）──
+        await mpv.setProperty('hwdec', 'auto-safe');
+        await mpv.setProperty('hwdec-codecs', 'all');
+        await mpv.setProperty('vd-lavc-software-fallback', 'inf');
+        await mpv.setProperty('vd-lavc-dr', 'yes');
+>>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
 
         // ── PTS 时间戳修正 ──
         await mpv.setProperty('rebase-start-time', 'yes');

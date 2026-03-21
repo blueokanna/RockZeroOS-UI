@@ -1,5 +1,8 @@
 import 'dart:async';
+<<<<<<< HEAD
 import 'dart:io';
+=======
+>>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -58,6 +61,7 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
         ),
       );
 
+<<<<<<< HEAD
       if (_player!.platform is NativePlayer) {
         final mpv = _player!.platform as NativePlayer;
         if (Platform.isAndroid) {
@@ -71,6 +75,8 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
         }
       }
 
+=======
+>>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
       _controller = VideoController(_player!);
 
       _player!.stream.playing.listen((playing) {

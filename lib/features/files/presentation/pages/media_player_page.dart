@@ -203,6 +203,7 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
         ),
       );
 
+<<<<<<< HEAD
       if (_player!.platform is NativePlayer) {
         final mpv = _player!.platform as NativePlayer;
         if (Platform.isAndroid) {
@@ -216,6 +217,8 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
         }
       }
 
+=======
+>>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
       _videoController = VideoController(_player!);
 
       _player!.stream.playing.listen((playing) {
