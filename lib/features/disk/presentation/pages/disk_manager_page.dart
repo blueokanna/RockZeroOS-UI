@@ -492,6 +492,95 @@ class _DiskCard extends ConsumerWidget {
   }
 
   void _showMountDialog(BuildContext context, WidgetRef ref) {
+    // 检查磁盘是否需要初始化
+    final fs = disk.fileSystem.trim().toLowerCase();
+    final needsInitialization = fs.isEmpty || fs == 'unknown';
+
+    if (needsInitialization) {
+      // 磁盘没有文件系统，需要先初始化
+      showDialog(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          icon: Icon(
+            Icons.warning_rounded,
+            color: Theme.of(context).colorScheme.error,
+            size: 48,
+          ),
+          title: const Text('磁盘未初始化'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '设备 ${disk.name} 没有分区和文件系统。',
+                style: const TextStyle(fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .errorContainer
+                      .withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .error
+                        .withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          size: 20,
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                        const SizedBox(width: 8),
+                        const Text(
+                          '磁盘信息',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text('大小: ${_formatBytes(disk.totalSpace)}'),
+                    Text('类型: ${disk.diskType}'),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                '请先初始化磁盘以创建分区表和文件系统，然后才能挂载使用。',
+                style: TextStyle(fontSize: 13),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('取消'),
+            ),
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                _showInitializeDialog(context, ref);
+              },
+              icon: const Icon(Icons.settings_rounded),
+              label: const Text('初始化磁盘'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    // 磁盘已有文件系统，显示挂载对话框
     final mountPointController = TextEditingController(
       text: '/mnt/${disk.name}',
     );
@@ -503,6 +592,52 @@ class _DiskCard extends ConsumerWidget {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    size: 20,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Do you want to mount "${disk.name}"?',
+                          style: const TextStyle(fontWeight: FontWeight.w500),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Size: ${_formatBytes(disk.totalSpace)}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        Text(
+                          'Type: ${disk.diskType}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
             TextField(
               controller: mountPointController,
               decoration: const InputDecoration(
@@ -528,6 +663,167 @@ class _DiskCard extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  void _showInitializeDialog(BuildContext context, WidgetRef ref) {
+    String selectedFs = 'ext4';
+    final labelController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('初始化磁盘'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border:
+                        Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.warning, color: Colors.red),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '警告：此操作将清除磁盘上的所有数据！',
+                          style: TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  '磁盘: ${disk.name}',
+                  style: const TextStyle(fontWeight: FontWeight.w500),
+                ),
+                Text(
+                  '大小: ${_formatBytes(disk.totalSpace)}',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  initialValue: selectedFs,
+                  decoration: const InputDecoration(
+                    labelText: '文件系统',
+                    prefixIcon: Icon(Icons.folder_special),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                        value: 'ext4', child: Text('ext4 (推荐 Linux)')),
+                    DropdownMenuItem(
+                        value: 'ext3', child: Text('ext3 (Linux)')),
+                    DropdownMenuItem(value: 'xfs', child: Text('XFS (Linux)')),
+                    DropdownMenuItem(
+                        value: 'btrfs', child: Text('Btrfs (Linux)')),
+                    DropdownMenuItem(value: 'fat32', child: Text('FAT32 (通用)')),
+                    DropdownMenuItem(value: 'exfat', child: Text('exFAT (通用)')),
+                    DropdownMenuItem(
+                        value: 'ntfs', child: Text('NTFS (Windows)')),
+                  ],
+                  onChanged: (value) => setState(() => selectedFs = value!),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: labelController,
+                  decoration: const InputDecoration(
+                    labelText: '卷标 (可选)',
+                    hintText: 'My Disk',
+                    prefixIcon: Icon(Icons.label),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                Navigator.pop(dialogContext);
+                await _initializeDisk(
+                  context,
+                  ref,
+                  selectedFs,
+                  labelController.text,
+                );
+              },
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+              ),
+              child: const Text('初始化'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _initializeDisk(
+    BuildContext context,
+    WidgetRef ref,
+    String fileSystem,
+    String label,
+  ) async {
+    // 显示进度对话框
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => const AlertDialog(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('正在初始化磁盘...'),
+            SizedBox(height: 8),
+            Text(
+              '这可能需要几分钟时间',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      final api = ref.read(apiServiceProvider);
+      await api.initializeDisk(
+        device: disk.devicePath,
+        fileSystem: fileSystem,
+        label: label.isNotEmpty ? label : null,
+        partitionTable: 'gpt',
+      );
+
+      if (!context.mounted) return;
+      Navigator.pop(context); // 关闭进度对话框
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('磁盘初始化成功')),
+      );
+      ref.invalidate(diskListProvider);
+    } catch (e) {
+      if (!context.mounted) return;
+      Navigator.pop(context); // 关闭进度对话框
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('初始化失败: $e')),
+      );
+    }
   }
 
   Future<void> _mountDisk(
@@ -636,6 +932,133 @@ class _DiskCard extends ConsumerWidget {
   }
 
   void _showFormatDialog(BuildContext context, WidgetRef ref) {
+    // 检查磁盘是否已挂载
+    if (disk.isMounted) {
+      // 磁盘已挂载，需要先卸载
+      showDialog(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          icon: Icon(
+            Icons.warning_rounded,
+            color: Theme.of(context).colorScheme.error,
+            size: 48,
+          ),
+          title: const Text('磁盘已挂载'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '设备 ${disk.name} 当前已挂载在 ${disk.mountPoint}',
+                style: const TextStyle(fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .errorContainer
+                      .withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .error
+                        .withValues(alpha: 0.3),
+                  ),
+                ),
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.info_outline, size: 20),
+                        SizedBox(width: 8),
+                        Text(
+                          '格式化前必须先卸载磁盘',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      '格式化会清除磁盘上的所有数据，请确保已备份重要文件。',
+                      style: TextStyle(fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('取消'),
+            ),
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                // 先卸载，然后显示格式化对话框
+                _unmountAndFormat(context, ref);
+              },
+              icon: const Icon(Icons.eject),
+              label: const Text('卸载并格式化'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    // 磁盘未挂载，直接显示格式化对话框
+    _showFormatOptionsDialog(context, ref);
+  }
+
+  Future<void> _unmountAndFormat(BuildContext context, WidgetRef ref) async {
+    // 显示卸载进度
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => const AlertDialog(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('正在卸载磁盘...'),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      final api = ref.read(apiServiceProvider);
+      await api.unmountDisk(disk.devicePath);
+
+      if (!context.mounted) return;
+      Navigator.pop(context); // 关闭进度对话框
+
+      // 刷新磁盘列表
+      ref.invalidate(diskListProvider);
+
+      // 等待一下让状态更新
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // 显示格式化对话框
+      if (context.mounted) {
+        _showFormatOptionsDialog(context, ref);
+      }
+    } catch (e) {
+      if (!context.mounted) return;
+      Navigator.pop(context); // 关闭进度对话框
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('卸载失败: $e')),
+      );
+    }
+  }
+
+  void _showFormatOptionsDialog(BuildContext context, WidgetRef ref) {
     String selectedFs = 'ext4';
     final labelController = TextEditingController();
     bool quickFormat = true;
@@ -644,85 +1067,85 @@ class _DiskCard extends ConsumerWidget {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: const Text('Format Disk'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.warning, color: Colors.red),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'WARNING: This will erase all data on the disk!',
-                        style: TextStyle(
-                          color: Colors.red,
-                          fontWeight: FontWeight.bold,
+          title: const Text('格式化磁盘'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border:
+                        Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.warning, color: Colors.red),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '警告：此操作将清除磁盘上的所有数据！',
+                          style: TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
-                    ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  '磁盘: ${disk.name}',
+                  style: const TextStyle(fontWeight: FontWeight.w500),
+                ),
+                Text(
+                  '大小: ${_formatBytes(disk.totalSpace)}',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  initialValue: selectedFs,
+                  decoration: const InputDecoration(
+                    labelText: '文件系统',
+                    prefixIcon: Icon(Icons.folder_special),
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                        value: 'ext4', child: Text('ext4 (推荐 Linux)')),
+                    DropdownMenuItem(
+                        value: 'ext3', child: Text('ext3 (Linux)')),
+                    DropdownMenuItem(value: 'xfs', child: Text('XFS (Linux)')),
+                    DropdownMenuItem(
+                        value: 'btrfs', child: Text('Btrfs (Linux)')),
+                    DropdownMenuItem(value: 'fat32', child: Text('FAT32 (通用)')),
+                    DropdownMenuItem(value: 'exfat', child: Text('exFAT (通用)')),
+                    DropdownMenuItem(
+                        value: 'ntfs', child: Text('NTFS (Windows)')),
                   ],
+                  onChanged: (value) => setState(() => selectedFs = value!),
                 ),
-              ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                initialValue: selectedFs,
-                decoration: const InputDecoration(
-                  labelText: 'File System',
-                  prefixIcon: Icon(Icons.folder_special),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: labelController,
+                  decoration: const InputDecoration(
+                    labelText: '卷标 (可选)',
+                    hintText: 'MyDisk',
+                    prefixIcon: Icon(Icons.label),
+                  ),
                 ),
-                items: const [
-                  DropdownMenuItem(value: 'ext4', child: Text('ext4 (Linux)')),
-                  DropdownMenuItem(value: 'ext3', child: Text('ext3 (Linux)')),
-                  DropdownMenuItem(value: 'xfs', child: Text('XFS (Linux)')),
-                  DropdownMenuItem(
-                    value: 'btrfs',
-                    child: Text('Btrfs (Linux)'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'fat32',
-                    child: Text('FAT32 (Universal)'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'exfat',
-                    child: Text('exFAT (Universal)'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'ntfs',
-                    child: Text('NTFS (Windows)'),
-                  ),
-                ],
-                onChanged: (value) => setState(() => selectedFs = value!),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: labelController,
-                decoration: const InputDecoration(
-                  labelText: 'Label (Optional)',
-                  hintText: 'My Disk',
-                  prefixIcon: Icon(Icons.label),
-                ),
-              ),
-              const SizedBox(height: 12),
-              SwitchListTile(
-                title: const Text('Quick Format'),
-                subtitle: const Text('Faster but less thorough'),
-                value: quickFormat,
-                onChanged: (value) => setState(() => quickFormat = value),
-              ),
-            ],
+              ],
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
+              child: const Text('取消'),
             ),
             FilledButton(
               onPressed: () async {
@@ -738,7 +1161,7 @@ class _DiskCard extends ConsumerWidget {
               style: FilledButton.styleFrom(
                 backgroundColor: Theme.of(context).colorScheme.error,
               ),
-              child: const Text('Format'),
+              child: const Text('格式化'),
             ),
           ],
         ),
@@ -753,7 +1176,7 @@ class _DiskCard extends ConsumerWidget {
     String label,
     bool quick,
   ) async {
-    // Show progress dialog
+    // 显示进度对话框
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -763,10 +1186,10 @@ class _DiskCard extends ConsumerWidget {
           children: [
             CircularProgressIndicator(),
             SizedBox(height: 16),
-            Text('Formatting disk...'),
+            Text('正在格式化磁盘...'),
             SizedBox(height: 8),
             Text(
-              'This may take a while',
+              '这可能需要几分钟时间',
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
           ],
@@ -776,24 +1199,40 @@ class _DiskCard extends ConsumerWidget {
 
     try {
       final api = ref.read(apiServiceProvider);
-      await api.formatDisk(
+
+      // 使用 initializeDisk 而不是 formatDisk，因为它会创建分区表和格式化
+      await api.initializeDisk(
         device: disk.devicePath,
         fileSystem: fileSystem,
         label: label.isNotEmpty ? label : null,
+        partitionTable: 'gpt',
       );
 
       if (!context.mounted) return;
-      Navigator.pop(context); // Close progress dialog
+      Navigator.pop(context); // 关闭进度对话框
+
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Disk formatted successfully')),
+        SnackBar(
+          content: Text('磁盘格式化成功 ($fileSystem)，正在刷新...'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
+        ),
       );
+
+      // 等待文件系统信息更新
+      await Future.delayed(const Duration(seconds: 3));
+
+      // 刷新磁盘列表以显示新的文件系统
       ref.invalidate(diskListProvider);
     } catch (e) {
       if (!context.mounted) return;
-      Navigator.pop(context); // Close progress dialog
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to format: $e')));
+      Navigator.pop(context); // 关闭进度对话框
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('格式化失败: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 

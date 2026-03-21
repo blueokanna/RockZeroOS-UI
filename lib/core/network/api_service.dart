@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/api_models.dart';
@@ -14,8 +15,8 @@ final apiServiceProvider = Provider<ApiService>((ref) {
 
 class ApiService {
   final Dio _dio;
-
   ApiService(this._dio);
+  String get baseUrl => _dio.options.baseUrl;
 
   // ============ Generic HTTP Methods ============
 
@@ -99,7 +100,7 @@ class ApiService {
   }) async {
     final response = await _dio.post(
       '/api/v1/auth/login',
-      data: {'email': email, 'password': password},
+      data: {'username': email, 'password': password}, // 修复：使用 username 字段
     );
     return AuthResponse.fromJson(response.data);
   }
@@ -113,13 +114,24 @@ class ApiService {
   }
 
   Future<InviteCodeResponse> generateInviteCode() async {
-    final response = await _dio.post('/api/v1/auth/invite');
+    final response = await _dio.post('/api/v1/invite/create');
     return InviteCodeResponse.fromJson(response.data);
   }
 
   /// 登出
   Future<void> logout() async {
     await _dio.post('/api/v1/auth/logout');
+  }
+
+  /// 获取当前用户信息
+  Future<User?> getCurrentUser() async {
+    try {
+      final response = await _dio.get('/api/v1/auth/me');
+      return User.fromJson(response.data);
+    } catch (e) {
+      debugPrint('[API] Failed to get current user: $e');
+      return null;
+    }
   }
 
   // ============ ZKP API (零知识证明) ============
@@ -400,8 +412,19 @@ class ApiService {
   }
 
   Future<HardwareInfo> getHardwareInfo() async {
-    final response = await _dio.get('/api/v1/system/hardware');
+    final response = await _dio.get('/api/v1/system/all');
     return HardwareInfo.fromJson(response.data);
+  }
+
+  /// 获取服务器公网 IP（后端通过 ip.sb 等服务检测）
+  Future<String?> getPublicIp() async {
+    try {
+      final response = await _dio.get('/api/v1/system/public-ip');
+      final data = response.data as Map<String, dynamic>;
+      return data['public_ip'] as String?;
+    } catch (_) {
+      return null;
+    }
   }
 
   // ============ Disk Manager API ============
@@ -422,7 +445,7 @@ class ApiService {
     String? fileSystem,
   }) async {
     await _dio.post(
-      '/api/v1/disk/mount',
+      '/api/v1/storage/mount',
       data: {
         'device': device,
         'mount_point': mountPoint,
@@ -432,7 +455,7 @@ class ApiService {
   }
 
   Future<void> unmountDisk(String device) async {
-    await _dio.post('/api/v1/disk/unmount', data: {'device': device});
+    await _dio.post('/api/v1/storage/unmount/$device');
   }
 
   Future<void> formatDisk({
@@ -441,7 +464,7 @@ class ApiService {
     String? label,
   }) async {
     await _dio.post(
-      '/api/v1/disk/format',
+      '/api/v1/storage/format',
       data: {
         'device': device,
         'file_system': fileSystem,
@@ -519,11 +542,106 @@ class ApiService {
 
   // ============ App Store API ============
 
+  // CasaOS App Store
+  Future<List<AppStoreItem>> listCasaosApps() async {
+    try {
+      final response = await _dio.get(
+        '/api/v1/appstore/casaos',
+        options: Options(
+          receiveTimeout: const Duration(seconds: 120), // 增加超时到120秒
+          sendTimeout: const Duration(seconds: 60),
+        ),
+      );
+      final data = response.data;
+      if (data is Map && data.containsKey('apps')) {
+        final apps = (data['apps'] as List)
+            .map((e) => AppStoreItem.fromJson(e))
+            .toList();
+        if (kDebugMode) {
+          print('✅ Fetched ${apps.length} CasaOS apps');
+        }
+        return apps;
+      }
+      return [];
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Failed to fetch CasaOS apps: $e');
+      }
+      // 返回空列表而不是抛出异常，这样 UI 可以显示空状态
+      return [];
+    }
+  }
+
+  // iStoreOS App Store
+  Future<List<AppStoreItem>> listIstoreosApps() async {
+    try {
+      final response = await _dio.get(
+        '/api/v1/appstore/istoreos',
+        options: Options(
+          receiveTimeout: const Duration(seconds: 120),
+          sendTimeout: const Duration(seconds: 60),
+        ),
+      );
+      final data = response.data;
+      if (data is Map && data.containsKey('apps')) {
+        final apps = (data['apps'] as List)
+            .map((e) => AppStoreItem.fromJson(e))
+            .toList();
+        if (kDebugMode) {
+          print('✅ Fetched ${apps.length} iStoreOS apps');
+        }
+        return apps;
+      }
+      return [];
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Failed to fetch iStoreOS apps: $e');
+      }
+      return [];
+    }
+  }
+
+  // Legacy method for backward compatibility
   Future<List<AppStoreItem>> listStoreApps() async {
-    final response = await _dio.get('/api/v1/appstore/apps');
-    return (response.data as List)
-        .map((e) => AppStoreItem.fromJson(e))
-        .toList();
+    // 并行获取两个应用商店的应用
+    try {
+      final results = await Future.wait([
+        listCasaosApps(),
+        listIstoreosApps(),
+      ], eagerError: false);
+
+      final allApps = <AppStoreItem>[];
+      for (final apps in results) {
+        allApps.addAll(apps);
+      }
+
+      if (allApps.isNotEmpty) {
+        if (kDebugMode) {
+          print('✅ Total apps fetched: ${allApps.length}');
+        }
+        return allApps;
+      }
+
+      // 如果并行获取失败，尝试单独获取
+      final casaosApps = await listCasaosApps();
+      if (casaosApps.isNotEmpty) {
+        return casaosApps;
+      }
+      return await listIstoreosApps();
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Failed to fetch store apps: $e');
+      }
+      // 最后尝试 iStoreOS
+      try {
+        return await listIstoreosApps();
+      } catch (e2) {
+        if (kDebugMode) {
+          print('❌ Failed to fetch iStoreOS apps: $e2');
+        }
+        return [];
+      }
+    }
   }
 
   Future<List<DockerApp>> listInstalledApps() async {
@@ -609,24 +727,53 @@ class ApiService {
     List<File> files, {
     void Function(int, int)? onProgress,
   }) async {
+    // 验证路径不为空
+    if (path.isEmpty) {
+      throw Exception(
+          'Upload path cannot be empty. Please select a directory first.');
+    }
+
     final formData = FormData();
+    int totalSize = 0;
+
     for (final file in files) {
+      final fileSize = file.lengthSync();
+      totalSize += fileSize;
+
+      // 使用 path 包来正确提取文件名（跨平台兼容）
+      final filename = file.path.split(RegExp(r'[/\\]')).last;
+
       formData.files.add(
         MapEntry(
           'file',
           await MultipartFile.fromFile(
             file.path,
-            filename: file.path.split('/').last,
+            filename: filename,
           ),
         ),
       );
     }
+
+    // 根据文件大小动态计算超时时间
+    // 假设最低速度 100KB/s，加上30秒的缓冲时间
+    final estimatedSeconds = (totalSize / (100 * 1024)).ceil() + 30;
+    final sendTimeout =
+        Duration(seconds: estimatedSeconds.clamp(60, 3600)); // 最少1分钟，最多1小时
+
+    debugPrint(
+        '[Upload] Path: $path, Total size: ${totalSize / (1024 * 1024)} MB, timeout: ${sendTimeout.inSeconds}s');
 
     await _dio.post(
       '/api/v1/filemanager/upload',
       data: formData,
       queryParameters: {'path': path},
       onSendProgress: onProgress,
+      options: Options(
+        sendTimeout: sendTimeout,
+        receiveTimeout: const Duration(minutes: 5),
+        // 完全不设置 headers，让 FormData 自动处理 Content-Type
+        contentType: Headers.multipartFormDataContentType,
+      ),
     );
   }
 
@@ -823,6 +970,12 @@ class ApiService {
     return (response.data as List)
         .map((e) => StorageDevice.fromJson(e))
         .toList();
+  }
+
+  /// 获取外部存储统计信息（排除eMMC）
+  Future<ExternalStorageStats> getExternalStorageStats() async {
+    final response = await _dio.get('/api/v1/storage/stats');
+    return ExternalStorageStats.fromJson(response.data);
   }
 
   Future<StorageDevice> getStorageDevice(String id) async {
@@ -1096,6 +1249,226 @@ class ApiService {
   Future<void> removeComposeApp(String name) async {
     await _dio.delete('/api/v1/docker/compose/$name');
   }
+
+  // ============ WASM Store API (Steam/Epic/Web3/WASM) ============
+
+  /// 获取商店概览
+  Future<Map<String, dynamic>> getWasmStoreOverview() async {
+    final response = await _dio.get('/api/v1/wasm-store/overview');
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 获取 Steam 精选游戏
+  Future<Map<String, dynamic>> getSteamFeatured() async {
+    final response = await _dio.get('/api/v1/wasm-store/steam/featured');
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 获取 Steam 游戏详情
+  Future<Map<String, dynamic>> getSteamAppDetails(String appId) async {
+    final response = await _dio.get('/api/v1/wasm-store/steam/app/$appId');
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 获取 Steam 用户游戏库（含游玩时间）
+  Future<Map<String, dynamic>> getSteamUserLibrary({
+    required String steamId,
+    String? apiKey,
+  }) async {
+    final response = await _dio.get(
+      '/api/v1/wasm-store/steam/library',
+      queryParameters: {
+        'steam_id': steamId,
+        if (apiKey != null) 'api_key': apiKey,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 获取 Steam 用户资料
+  Future<Map<String, dynamic>> getSteamPlayerSummary({
+    required String steamId,
+    String? apiKey,
+  }) async {
+    final response = await _dio.get(
+      '/api/v1/wasm-store/steam/player',
+      queryParameters: {
+        'steam_id': steamId,
+        if (apiKey != null) 'api_key': apiKey,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 获取 Epic 免费游戏
+  Future<Map<String, dynamic>> getEpicFreeGames() async {
+    final response = await _dio.get('/api/v1/wasm-store/epic/free');
+    return response.data as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> getPlatformGames({
+    required String platform,
+    int pageSize = 30,
+  }) async {
+    final response = await _dio.get(
+      '/api/v1/wasm-store/platform/games',
+      queryParameters: {
+        'platform': platform,
+        'page_size': pageSize,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 搜索游戏
+  Future<Map<String, dynamic>> searchGames({
+    String? query,
+    String? platform,
+    int page = 1,
+    int pageSize = 20,
+  }) async {
+    final response = await _dio.get(
+      '/api/v1/wasm-store/search',
+      queryParameters: {
+        if (query != null) 'q': query,
+        if (platform != null) 'platform': platform,
+        'page': page,
+        'page_size': pageSize,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 获取 WASM 应用列表
+  Future<List<dynamic>> getWasmApps() async {
+    final response = await _dio.get('/api/v1/wasm-store/wasm/apps');
+    return response.data as List<dynamic>;
+  }
+
+  /// 安装 WASM 应用
+  Future<Map<String, dynamic>> installWasmApp({
+    required String appId,
+    required String wasmUrl,
+    required String name,
+    String? expectedHash,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/wasm-store/wasm/install',
+      data: {
+        'app_id': appId,
+        'wasm_url': wasmUrl,
+        'name': name,
+        if (expectedHash != null) 'expected_hash': expectedHash,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 运行 WASM 应用
+  Future<Map<String, dynamic>> runWasmApp(
+    String appId, {
+    String? function,
+    List<String>? args,
+    Map<String, String>? env,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/wasm-store/wasm/$appId/run',
+      data: {
+        if (function != null) 'function': function,
+        if (args != null) 'args': args,
+        if (env != null) 'env': env,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 卸载 WASM 应用
+  Future<void> uninstallWasmApp(String appId) async {
+    await _dio.delete('/api/v1/wasm-store/wasm/$appId');
+  }
+
+  /// 获取插件列表
+  Future<List<dynamic>> getPlugins() async {
+    final response = await _dio.get('/api/v1/wasm-store/plugins');
+    return response.data as List<dynamic>;
+  }
+
+  /// 注册插件
+  Future<Map<String, dynamic>> registerPlugin({
+    required Map<String, dynamic> manifest,
+    required String wasmUrl,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/wasm-store/plugins/register',
+      data: {
+        'manifest': manifest,
+        'wasm_url': wasmUrl,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 注销插件
+  Future<void> unregisterPlugin(String pluginId) async {
+    await _dio.delete('/api/v1/wasm-store/plugins/$pluginId');
+  }
+
+  /// 每日 Top 30 推荐
+  Future<Map<String, dynamic>> getDailyRecommendations() async {
+    final response = await _dio.get('/api/v1/wasm-store/recommendations');
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// Steam 商店搜索
+  Future<Map<String, dynamic>> searchSteamStore(String query) async {
+    final response = await _dio.get(
+      '/api/v1/wasm-store/steam/search',
+      queryParameters: {'q': query},
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 从 GitHub 导入 WASM 模块
+  Future<Map<String, dynamic>> importFromGitHub({
+    required String repoUrl,
+    String? tag,
+    String? assetName,
+    String? name,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/wasm-store/github/import',
+      data: {
+        'repo_url': repoUrl,
+        if (tag != null) 'tag': tag,
+        if (assetName != null) 'asset_name': assetName,
+        if (name != null) 'name': name,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// 执行 WASM 脚本（带输出捕获）
+  Future<Map<String, dynamic>> runWasmScript({
+    required String source,
+    String? function,
+    List<String>? args,
+    Map<String, String>? env,
+    int? timeoutSecs,
+    String? stdinData,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/wasm-store/wasm/run-script',
+      data: {
+        'source': source,
+        if (function != null) 'function': function,
+        if (args != null) 'args': args,
+        if (env != null) 'env': env,
+        if (timeoutSecs != null) 'timeout_secs': timeoutSecs,
+        if (stdinData != null) 'stdin_data': stdinData,
+      },
+    );
+    return response.data as Map<String, dynamic>;
+  }
 }
 
 // WebDAV Entry Model
@@ -1352,5 +1725,88 @@ extension SecureStorageApiExtension on ApiService {
       data: {'master_password': masterPassword},
     );
     return DatabaseStatsResponse.fromJson(response.data);
+  }
+
+  // ============ App Storage Stats API ============
+
+  Future<AppStorageStats> getAppStorageStats() async {
+    final response = await _dio.get('/api/v1/storage-management/stats');
+    return AppStorageStats.fromJson(response.data);
+  }
+
+  Future<Map<String, dynamic>> triggerStorageCleanup() async {
+    final response = await _dio.post('/api/v1/storage-management/cleanup');
+    return response.data;
+  }
+
+  Future<Map<String, dynamic>> cleanupHlsCache() async {
+    final response = await _dio.post('/api/v1/storage-management/cleanup/hls');
+    return response.data;
+  }
+
+  Future<Map<String, dynamic>> cleanupTempFiles() async {
+    final response = await _dio.post('/api/v1/storage-management/cleanup/temp');
+    return response.data;
+  }
+
+  // ============ Assets API (Logo, README, About) ============
+
+  /// 获取Logo URL
+  String getLogoUrl() {
+    return '$baseUrl/api/v1/assets/logo';
+  }
+
+  /// 获取README内容
+  Future<String> getReadme() async {
+    final response = await _dio.get(
+      '/api/v1/assets/readme',
+      options: Options(responseType: ResponseType.plain),
+    );
+    return response.data.toString();
+  }
+
+  /// 获取关于信息
+  Future<AboutInfo> getAboutInfo() async {
+    final response = await _dio.get('/api/v1/assets/about');
+    return AboutInfo.fromJson(response.data);
+  }
+}
+
+/// 关于信息模型
+class AboutInfo {
+  final String name;
+  final String version;
+  final String description;
+  final String author;
+  final String email;
+  final String github;
+  final String license;
+  final String readmeUrl;
+  final String logoUrl;
+
+  AboutInfo({
+    required this.name,
+    required this.version,
+    required this.description,
+    required this.author,
+    required this.email,
+    required this.github,
+    required this.license,
+    required this.readmeUrl,
+    required this.logoUrl,
+  });
+
+  factory AboutInfo.fromJson(Map<String, dynamic> json) {
+    return AboutInfo(
+      name: json['name'] ?? '',
+      version: json['version'] ?? '',
+      description: json['description'] ?? '',
+      author: json['author'] ?? '',
+      email: json['email'] ?? '',
+      github: json['github'] ?? '',
+      license: json['license'] ?? '',
+      readmeUrl: json['readme_url'] ?? '',
+      logoUrl: json['logo_url'] ?? '',
+    );
   }
 }

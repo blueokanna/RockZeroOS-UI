@@ -12,3 +12,7 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# media_kit 解压的本地库文件
+app/src/main/jniLibs/
+app/libs/

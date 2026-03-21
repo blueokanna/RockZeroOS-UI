@@ -6,7 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
+import '../../../../core/services/wallpaper_service.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../storage/presentation/pages/disk_management_page.dart';
 
 // System info providers with auto-refresh
 final systemInfoProvider = FutureProvider.autoDispose<SystemInfo?>((ref) async {
@@ -58,6 +60,20 @@ final usbDevicesProvider = FutureProvider.autoDispose<List<UsbDevice>>((
   return await api.getUsbDevices();
 });
 
+final hardwareInfoAllProvider = StreamProvider.autoDispose<HardwareInfo?>(
+  (ref) async* {
+    final api = ref.read(apiServiceProvider);
+    while (true) {
+      try {
+        yield await api.getHardwareInfo();
+      } catch (_) {
+        yield null;
+      }
+      await Future.delayed(const Duration(seconds: 3));
+    }
+  },
+);
+
 class SystemPage extends ConsumerWidget {
   const SystemPage({super.key});
 
@@ -68,8 +84,13 @@ class SystemPage extends ConsumerWidget {
     final memoryInfo = ref.watch(memoryInfoProvider);
     final diskInfo = ref.watch(diskInfoProvider);
     final usbDevices = ref.watch(usbDevicesProvider);
+    final hardwareInfo = ref.watch(hardwareInfoAllProvider);
+    final hasWallpaper =
+        ref.watch(backgroundModeProvider) == BackgroundMode.customWallpaper &&
+            (ref.watch(customWallpaperPathProvider)?.isNotEmpty ?? false);
 
     return Scaffold(
+      backgroundColor: hasWallpaper ? Colors.transparent : null,
       body: CustomScrollView(
         slivers: [
           SliverAppBar.large(
@@ -98,32 +119,31 @@ class SystemPage extends ConsumerWidget {
                 // System Info Card
                 _SystemInfoCard(
                   systemInfo: systemInfo,
+                  hardwareInfo: hardwareInfo,
+                ),
+                const SizedBox(height: 20),
+
+                // CPU Card with per-core usage — no .animate() since
+                // StreamProvider rebuilds every 2s, re-triggering animations.
+                _CpuCard(cpuInfo: cpuInfo),
+                const SizedBox(height: 20),
+
+                // Memory Card — same: avoid re-animation on stream updates
+                _MemoryCard(memoryInfo: memoryInfo),
+                const SizedBox(height: 20),
+
+                // Disks Card — FutureProvider, only loads once
+                _DisksCard(
+                  diskInfo: diskInfo,
                 ).animate().fadeIn(
                     delay: 100.ms, curve: M3Curves.emphasizedDecelerate),
                 const SizedBox(height: 20),
 
-                // CPU Card with per-core usage
-                _CpuCard(cpuInfo: cpuInfo).animate().fadeIn(
-                    delay: 150.ms, curve: M3Curves.emphasizedDecelerate),
-                const SizedBox(height: 20),
-
-                // Memory Card
-                _MemoryCard(memoryInfo: memoryInfo).animate().fadeIn(
-                    delay: 200.ms, curve: M3Curves.emphasizedDecelerate),
-                const SizedBox(height: 20),
-
-                // Disks Card
-                _DisksCard(
-                  diskInfo: diskInfo,
-                ).animate().fadeIn(
-                    delay: 250.ms, curve: M3Curves.emphasizedDecelerate),
-                const SizedBox(height: 20),
-
-                // USB Devices Card
+                // USB Devices Card — FutureProvider, only loads once
                 _UsbDevicesCard(
                   usbDevices: usbDevices,
                 ).animate().fadeIn(
-                    delay: 300.ms, curve: M3Curves.emphasizedDecelerate),
+                    delay: 150.ms, curve: M3Curves.emphasizedDecelerate),
                 const SizedBox(height: 24),
               ]),
             ),
@@ -136,8 +156,9 @@ class SystemPage extends ConsumerWidget {
 
 class _SystemInfoCard extends StatelessWidget {
   final AsyncValue<SystemInfo?> systemInfo;
+  final AsyncValue<HardwareInfo?> hardwareInfo;
 
-  const _SystemInfoCard({required this.systemInfo});
+  const _SystemInfoCard({required this.systemInfo, required this.hardwareInfo});
 
   @override
   Widget build(BuildContext context) {
@@ -167,48 +188,241 @@ class _SystemInfoCard extends StatelessWidget {
                       const Icon(Icons.computer_rounded, color: Colors.white),
                 ),
                 const SizedBox(width: 12),
-                Text(
-                  'System Information',
-                  style: textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'System Information',
+                        style: textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      systemInfo.when(
+                        data: (info) => Text(
+                          info?.hostname ?? '',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        loading: () => const SizedBox.shrink(),
+                        error: (_, __) => const SizedBox.shrink(),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 20),
+            hardwareInfo.when(
+              data: (info) {
+                final active = info?.noDiskPlaybackModeActive ?? false;
+                final sessions = info?.noDiskPlaybackSessionCount ?? 0;
+                final statusColor =
+                    active ? colorScheme.error : colorScheme.primary;
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(12),
+                    border:
+                        Border.all(color: statusColor.withValues(alpha: 0.25)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        active
+                            ? Icons.warning_amber_rounded
+                            : Icons.verified_rounded,
+                        size: 18,
+                        color: statusColor,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          active
+                              ? 'No-disk playback mode ACTIVE ($sessions session${sessions == 1 ? '' : 's'})'
+                              : 'No-disk playback mode inactive',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: statusColor,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+              loading: () => const SizedBox.shrink(),
+              error: (_, __) => const SizedBox.shrink(),
+            ),
             systemInfo.when(
               data: (info) {
                 if (info == null) {
                   return const Text('Failed to load');
                 }
-                return Wrap(
-                  spacing: 16,
-                  runSpacing: 12,
+                return Column(
                   children: [
-                    _InfoChip(
-                      icon: Icons.dns_rounded,
-                      label: 'Hostname',
-                      value: info.hostname,
+                    // OS & Architecture row
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            colorScheme.primaryContainer.withValues(alpha: 0.3),
+                            colorScheme.tertiaryContainer
+                                .withValues(alpha: 0.3),
+                          ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color:
+                              colorScheme.outlineVariant.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _SystemInfoTile(
+                              icon: Icons.laptop_chromebook_rounded,
+                              label: 'Operating System',
+                              value: '${info.osName} ${info.osVersion}',
+                              color: colorScheme.primary,
+                            ),
+                          ),
+                          Container(
+                            width: 1,
+                            height: 48,
+                            color: colorScheme.outlineVariant
+                                .withValues(alpha: 0.3),
+                          ),
+                          Expanded(
+                            child: _SystemInfoTile(
+                              icon: Icons.developer_board_rounded,
+                              label: 'Architecture',
+                              value: info.architecture,
+                              color: colorScheme.tertiary,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    _InfoChip(
-                      icon: Icons.computer_rounded,
-                      label: 'OS',
-                      value: '${info.osName} ${info.osVersion}',
-                    ),
-                    _InfoChip(
-                      icon: Icons.memory_rounded,
-                      label: 'Arch',
-                      value: info.architecture,
-                    ),
-                    _InfoChip(
-                      icon: Icons.code_rounded,
-                      label: 'Kernel',
-                      value: info.kernelVersion,
-                    ),
-                    _InfoChip(
-                      icon: Icons.schedule_rounded,
-                      label: 'Uptime',
-                      value: _formatUptime(info.uptime),
+                    const SizedBox(height: 12),
+                    // Kernel & Uptime row — compact side-by-side layout
+                    Row(
+                      children: [
+                        // Kernel (takes remaining space)
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: colorScheme.surfaceContainerHighest
+                                  .withValues(alpha: 0.5),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 36,
+                                  height: 36,
+                                  decoration: BoxDecoration(
+                                    color: colorScheme.secondaryContainer,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Icon(
+                                    Icons.code_rounded,
+                                    size: 18,
+                                    color: colorScheme.onSecondaryContainer,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Kernel',
+                                        style: textTheme.labelSmall?.copyWith(
+                                          color: colorScheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        info.kernelVersion,
+                                        style: textTheme.bodySmall?.copyWith(
+                                          fontWeight: FontWeight.w600,
+                                          fontFamily: 'monospace',
+                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        // Uptime (compact pill)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 14),
+                          decoration: BoxDecoration(
+                            color: _getUptimeColor(info.uptime)
+                                .withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: _getUptimeColor(info.uptime)
+                                  .withValues(alpha: 0.3),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: _getUptimeColor(info.uptime)
+                                      .withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(
+                                  Icons.schedule_rounded,
+                                  size: 18,
+                                  color: _getUptimeColor(info.uptime),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Uptime',
+                                    style: textTheme.labelSmall?.copyWith(
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                  Text(
+                                    _formatUptime(info.uptime),
+                                    style: textTheme.bodySmall?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                      color: _getUptimeColor(info.uptime),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 );
@@ -222,6 +436,13 @@ class _SystemInfoCard extends StatelessWidget {
     );
   }
 
+  Color _getUptimeColor(int seconds) {
+    if (seconds >= 30 * 86400) return Colors.green; // 30+ days
+    if (seconds >= 7 * 86400) return Colors.blue; // 7+ days
+    if (seconds >= 86400) return Colors.orange; // 1+ day
+    return Colors.grey; // < 1 day
+  }
+
   String _formatUptime(int seconds) {
     final days = seconds ~/ 86400;
     final hours = (seconds % 86400) ~/ 3600;
@@ -233,6 +454,55 @@ class _SystemInfoCard extends StatelessWidget {
       return '${hours}h ${minutes}m';
     }
     return '${minutes}m';
+  }
+}
+
+/// Structured tile for system info display
+class _SystemInfoTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  const _SystemInfoTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(icon, size: 22, color: color),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            style: textTheme.labelSmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -392,13 +662,14 @@ class _CpuCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          _buildCoreGrid(context, info.perCoreUsage!),
+          _buildCoreGrid(context, info.perCoreUsage!, info.coreTypes),
         ],
       ],
     );
   }
 
-  Widget _buildCoreGrid(BuildContext context, List<CpuCoreInfo> cores) {
+  Widget _buildCoreGrid(BuildContext context, List<CpuCoreInfo> cores,
+      List<CpuCoreArchInfo>? coreTypes) {
     return LayoutBuilder(
       builder: (context, constraints) {
         // Calculate columns based on width
@@ -411,13 +682,29 @@ class _CpuCard extends StatelessWidget {
           physics: const NeverScrollableScrollPhysics(),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
-            childAspectRatio: 1.2,
+            childAspectRatio: 1.0,
             crossAxisSpacing: 10,
             mainAxisSpacing: 10,
           ),
           itemCount: cores.length,
           itemBuilder: (context, index) {
-            return _CoreUsageCard(core: cores[index]);
+            // Determine architecture for this core based on coreTypes
+            String? archName;
+            if (coreTypes != null && coreTypes.isNotEmpty) {
+              // Map core index to architecture type
+              // Typically big.LITTLE: first N cores are big (A73), rest are little (A53)
+              int cumulativeCount = 0;
+              for (final coreType in coreTypes) {
+                cumulativeCount += coreType.count;
+                if (index < cumulativeCount) {
+                  archName = coreType.coreName;
+                  break;
+                }
+              }
+            }
+            return RepaintBoundary(
+              child: _CoreUsageCard(core: cores[index], archName: archName),
+            );
           },
         );
       },
@@ -440,14 +727,26 @@ class _CpuCard extends StatelessWidget {
 
 class _CoreUsageCard extends StatelessWidget {
   final CpuCoreInfo core;
+  final String? archName;
 
-  const _CoreUsageCard({required this.core});
+  const _CoreUsageCard({required this.core, this.archName});
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final usageColor = _getUsageColor(core.usage);
+
+    // Extract short architecture name (e.g., "A73" from "Cortex-A73")
+    String? shortArch;
+    if (archName != null) {
+      final match = RegExp(r'[Aa](\d+)').firstMatch(archName!);
+      if (match != null) {
+        shortArch = 'A${match.group(1)}';
+      } else {
+        shortArch = archName;
+      }
+    }
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -462,12 +761,36 @@ class _CoreUsageCard extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(
-            'Core ${core.coreId}',
-            style: textTheme.labelSmall?.copyWith(
-              color: colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w500,
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                'Core ${core.coreId}',
+                style: textTheme.labelSmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              if (shortArch != null) ...[
+                const SizedBox(width: 4),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    shortArch,
+                    style: textTheme.labelSmall?.copyWith(
+                      color: colorScheme.onPrimaryContainer,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 10,
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
           const SizedBox(height: 6),
           TweenAnimationBuilder<double>(
@@ -852,7 +1175,25 @@ class _DisksCard extends StatelessWidget {
                   );
                 }
                 return Column(
-                  children: disks.map((disk) => _DiskItem(disk: disk)).toList(),
+                  children: [
+                    ...disks.map((disk) => _DiskItem(disk: disk)),
+                    const SizedBox(height: 16),
+                    // Storage Manager button
+                    FilledButton.tonalIcon(
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => const DiskManagementPage(),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.settings_rounded),
+                      label: const Text('Storage Manager'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 48),
+                      ),
+                    ),
+                  ],
                 );
               },
               loading: () => const LinearProgressIndicator(),
@@ -865,89 +1206,111 @@ class _DisksCard extends StatelessWidget {
   }
 }
 
-class _DiskItem extends StatelessWidget {
+class _DiskItem extends ConsumerWidget {
   final DiskInfo disk;
 
   const _DiskItem({required this.disk});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final usageColor = _getUsageColor(disk.usagePercentage);
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                disk.isRemovable ? Icons.usb_rounded : Icons.storage_rounded,
-                size: 20,
-                color: colorScheme.primary,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  disk.mountPoint,
-                  style: textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: usageColor.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  '${disk.usagePercentage.toStringAsFixed(1)}%',
-                  style: textTheme.labelMedium?.copyWith(
-                    color: usageColor,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
+    return InkWell(
+      onTap: () {
+        // Navigate to storage management page
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => const DiskManagementPage(),
           ),
-          const SizedBox(height: 10),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: disk.usagePercentage / 100,
-              minHeight: 6,
-              backgroundColor: colorScheme.surfaceContainerHighest,
-              valueColor: AlwaysStoppedAnimation(usageColor),
+        );
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+            width: 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  disk.isRemovable ? Icons.usb_rounded : Icons.storage_rounded,
+                  size: 20,
+                  color: colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    disk.mountPoint,
+                    style: textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: usageColor.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '${disk.usagePercentage.toStringAsFixed(1)}%',
+                    style: textTheme.labelMedium?.copyWith(
+                      color: usageColor,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 16,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ],
             ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                '${_formatBytes(disk.usedSpace)} / ${_formatBytes(disk.totalSpace)}',
-                style: textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: disk.usagePercentage / 100,
+                minHeight: 6,
+                backgroundColor: colorScheme.surfaceContainerHighest,
+                valueColor: AlwaysStoppedAnimation(usageColor),
               ),
-              Text(
-                disk.fileSystem,
-                style: textTheme.labelSmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '${_formatBytes(disk.usedSpace)} / ${_formatBytes(disk.totalSpace)}',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ],
+                Text(
+                  disk.fileSystem,
+                  style: textTheme.labelSmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1101,56 +1464,6 @@ class _UsbDevicesCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _InfoChip extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-
-  const _InfoChip({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 18, color: colorScheme.primary),
-          const SizedBox(width: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: textTheme.labelSmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-              Text(
-                value,
-                style: textTheme.bodySmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ],
       ),
     );
   }

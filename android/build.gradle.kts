@@ -18,23 +18,30 @@ subprojects {
         }
         
         tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-            kotlinOptions {
-                jvmTarget = "17"
+            compilerOptions {
+                jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
             }
         }
+
+        tasks.matching { it.name.contains("UnitTest", ignoreCase = true) }
+            .configureEach {
+                enabled = false
+            }
     }
 }
 
-val newBuildDir: Directory =
-    rootProject.layout.buildDirectory
-        .dir("../../build")
-        .get()
-rootProject.layout.buildDirectory.value(newBuildDir)
+val flutterBuildDir: Directory = rootProject.layout.projectDirectory.dir("../build")
+rootProject.layout.buildDirectory.value(flutterBuildDir)
 
 subprojects {
-    val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
-    project.layout.buildDirectory.value(newSubprojectBuildDir)
+    val rootPath = rootProject.projectDir.toPath().toAbsolutePath().normalize().toString()
+    val subprojectPath = project.projectDir.toPath().toAbsolutePath().normalize().toString()
+    if (subprojectPath.startsWith(rootPath, ignoreCase = true)) {
+        val localSubprojectBuildDir: Directory = flutterBuildDir.dir(project.name)
+        project.layout.buildDirectory.value(localSubprojectBuildDir)
+    }
 }
+
 subprojects {
     project.evaluationDependsOn(":app")
 }

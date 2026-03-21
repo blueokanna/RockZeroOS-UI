@@ -6,9 +6,12 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../services/audio_player_service.dart';
 import '../services/device_discovery_service.dart';
 import '../services/wallpaper_service.dart';
 import '../theme/app_theme.dart';
+import 'mini_audio_player.dart';
+import 'mini_video_player.dart';
 
 class BottomNavVisibleNotifier extends Notifier<bool> {
   @override
@@ -104,42 +107,50 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
     final wallpaperPath = ref.watch(customWallpaperPathProvider);
     final colorScheme = Theme.of(context).colorScheme;
 
+    final blurAmount = ref.watch(wallpaperBlurAmountProvider);
+
     final hasWallpaper = backgroundMode == BackgroundMode.customWallpaper &&
         wallpaperPath != null &&
         wallpaperPath.isNotEmpty;
 
-    Widget content = Row(
-      children: [
-        // Navigation Rail for medium/wide screens
-        if ((isMediumScreen || isWideScreen) && bottomNavVisible)
-          AnimatedSlide(
-            duration: M3Durations.medium2,
-            curve: M3Curves.emphasized,
-            offset: bottomNavVisible ? Offset.zero : const Offset(-1, 0),
-            child: _buildNavigationRail(
-              isWideScreen,
-              connectedDevice,
-              hasWallpaper,
-              colorScheme,
+    Widget content = SafeArea(
+      bottom: false,
+      child: Row(
+        children: [
+          // Navigation Rail for medium/wide screens
+          if ((isMediumScreen || isWideScreen) && bottomNavVisible)
+            AnimatedSlide(
+              duration: M3Durations.medium2,
+              curve: M3Curves.emphasized,
+              offset: bottomNavVisible ? Offset.zero : const Offset(-1, 0),
+              child: _buildNavigationRail(
+                isWideScreen,
+                connectedDevice,
+                hasWallpaper,
+                colorScheme,
+              ),
             ),
-          ),
 
-        // Vertical divider
-        if ((isMediumScreen || isWideScreen) && bottomNavVisible)
-          VerticalDivider(
-            width: 1,
-            thickness: 1,
-            color: colorScheme.outlineVariant
-                .withValues(alpha: hasWallpaper ? 0.3 : 1.0),
-          ),
+          // Vertical divider
+          if ((isMediumScreen || isWideScreen) && bottomNavVisible)
+            VerticalDivider(
+              width: 1,
+              thickness: 1,
+              color: colorScheme.outlineVariant
+                  .withValues(alpha: hasWallpaper ? 0.3 : 1.0),
+            ),
 
-        // Main content
-        Expanded(child: widget.child),
-      ],
+          // Main content
+          Expanded(child: widget.child),
+        ],
+      ),
     );
 
     Widget? bottomNav;
     if (!isMediumScreen && !isWideScreen) {
+      final audioState = ref.watch(audioPlayerServiceProvider);
+      final hasMiniPlayer = audioState.hasAudio;
+
       bottomNav = AnimatedSlide(
         duration: M3Durations.medium2,
         curve: M3Curves.emphasized,
@@ -149,7 +160,13 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
           curve: M3Curves.emphasized,
           opacity: bottomNavVisible ? 1.0 : 0.0,
           child: bottomNavVisible
-              ? _buildBottomNav(hasWallpaper, colorScheme)
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (hasMiniPlayer) const MiniAudioPlayer(),
+                    _buildBottomNav(hasWallpaper, colorScheme),
+                  ],
+                )
               : const SizedBox.shrink(),
         ),
       );
@@ -160,36 +177,79 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
       return Stack(
         fit: StackFit.expand,
         children: [
-          // Wallpaper image
-          Image.file(
-            File(wallpaperPath),
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) {
-              return Container(color: colorScheme.surface);
-            },
+          // Wallpaper image - 全屏显示，不加透明度
+          Positioned.fill(
+            child: Image.file(
+              File(wallpaperPath),
+              fit: BoxFit.cover,
+              width: double.infinity,
+              height: double.infinity,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(color: colorScheme.surface);
+              },
+            ),
           ),
-          // Glass overlay with blur
-          ClipRect(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
-              child: Container(
-                color: colorScheme.surface.withValues(alpha: 0.7),
+          // Glass overlay with blur - 极低遮罩让壁纸清晰可见
+          Positioned.fill(
+            child: ClipRect(
+              child: BackdropFilter(
+                filter:
+                    ImageFilter.blur(sigmaX: blurAmount, sigmaY: blurAmount),
+                child: Container(
+                  // blur=0 时几乎完全透明(0.02)，blur=50 时轻微遮罩(0.25)
+                  color: colorScheme.surface.withValues(
+                      alpha: (0.02 + (blurAmount / 50.0) * 0.23)
+                          .clamp(0.02, 0.25)),
+                ),
               ),
             ),
           ),
-          // Scaffold
-          Scaffold(
-            backgroundColor: Colors.transparent,
-            body: content,
-            bottomNavigationBar: bottomNav,
+          // Scaffold — 覆盖主题使 Card/AppBar 等组件自动适配壁纸
+          Theme(
+            data: Theme.of(context).copyWith(
+              cardTheme: CardThemeData(
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20)),
+                color: colorScheme.surfaceContainerLow.withValues(alpha: 0.55),
+              ),
+              appBarTheme: Theme.of(context).appBarTheme.copyWith(
+                    // 半透明背景让壁纸若隐若现，同时确保标题不与内容重叠
+                    backgroundColor:
+                        colorScheme.surface.withValues(alpha: 0.75),
+                    surfaceTintColor: Colors.transparent,
+                    scrolledUnderElevation: 0,
+                  ),
+              dialogTheme: Theme.of(context).dialogTheme.copyWith(
+                    backgroundColor:
+                        colorScheme.surface.withValues(alpha: 0.85),
+                  ),
+              bottomSheetTheme: Theme.of(context).bottomSheetTheme.copyWith(
+                    backgroundColor:
+                        colorScheme.surface.withValues(alpha: 0.85),
+                  ),
+            ),
+            child: Scaffold(
+              backgroundColor: Colors.transparent,
+              body: content,
+              bottomNavigationBar: bottomNav,
+            ),
           ),
+          // 浮动小窗视频播放器
+          const MiniVideoPlayer(),
         ],
       );
     }
 
-    return Scaffold(
-      body: content,
-      bottomNavigationBar: bottomNav,
+    return Stack(
+      children: [
+        Scaffold(
+          body: content,
+          bottomNavigationBar: bottomNav,
+        ),
+        // 浮动小窗视频播放器（非壁纸模式也需要）
+        const MiniVideoPlayer(),
+      ],
     );
   }
 
@@ -228,7 +288,8 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
     if (hasWallpaper) {
       return ClipRect(
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+          // Reduced sigma for better performance on mid-range SoCs
+          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
           child: Container(
             decoration: BoxDecoration(
               color: colorScheme.surface.withValues(alpha: 0.6),

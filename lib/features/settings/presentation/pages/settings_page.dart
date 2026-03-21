@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -34,6 +35,9 @@ class SettingsPage extends ConsumerWidget {
     final authState = ref.watch(authStateProvider);
     final device = ref.watch(connectedDeviceProvider);
     final biometricEnabled = ref.watch(biometricEnabledProvider);
+    final hasWallpaper =
+        ref.watch(backgroundModeProvider) == BackgroundMode.customWallpaper &&
+            (ref.watch(customWallpaperPathProvider)?.isNotEmpty ?? false);
 
     // Use system color if dynamic color is enabled
     final effectiveColor = dynamicColorEnabled && systemAccentColor != null
@@ -41,6 +45,7 @@ class SettingsPage extends ConsumerWidget {
         : seedColor;
 
     return Scaffold(
+      backgroundColor: hasWallpaper ? Colors.transparent : null,
       body: CustomScrollView(
         slivers: [
           const SliverAppBar.large(title: Text('Settings')),
@@ -443,19 +448,131 @@ class SettingsPage extends ConsumerWidget {
                       ],
                     ),
 
-                    // Wallpaper preview
+                    // Wallpaper preview with live blur
                     if (customWallpaperPath != null) ...[
                       const SizedBox(height: 16),
-                      Container(
-                        height: 150,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          image: DecorationImage(
-                            image: FileImage(File(customWallpaperPath)),
-                            fit: BoxFit.cover,
-                          ),
-                        ),
+                      Builder(
+                        builder: (context) {
+                          final blurAmount =
+                              ref.watch(wallpaperBlurAmountProvider);
+                          return ClipRRect(
+                            borderRadius: BorderRadius.circular(16),
+                            child: SizedBox(
+                              height: 150,
+                              width: double.infinity,
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  Image.file(
+                                    File(customWallpaperPath),
+                                    fit: BoxFit.cover,
+                                  ),
+                                  BackdropFilter(
+                                    filter: ImageFilter.blur(
+                                      sigmaX: blurAmount,
+                                      sigmaY: blurAmount,
+                                    ),
+                                    child: Container(
+                                      color: colorScheme.surface.withValues(
+                                        alpha: (0.3 + (blurAmount / 50.0) * 0.5)
+                                            .clamp(0.3, 0.8),
+                                      ),
+                                    ),
+                                  ),
+                                  Center(
+                                    child: Text(
+                                      'Preview',
+                                      style: textTheme.titleMedium?.copyWith(
+                                        color: colorScheme.onSurface,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
                       ),
+
+                      // Blur amount slider
+                      const SizedBox(height: 20),
+                      Builder(
+                        builder: (context) {
+                          final blurAmount =
+                              ref.watch(wallpaperBlurAmountProvider);
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.blur_on_rounded,
+                                    size: 20,
+                                    color: colorScheme.primary,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Blur Intensity',
+                                    style: textTheme.titleSmall?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: colorScheme.primaryContainer,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      blurAmount.round().toString(),
+                                      style: textTheme.labelMedium?.copyWith(
+                                        color: colorScheme.onPrimaryContainer,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.blur_off_rounded,
+                                    size: 16,
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                                  Expanded(
+                                    child: Slider(
+                                      value: blurAmount,
+                                      min: 0,
+                                      max: 50,
+                                      divisions: 50,
+                                      label: blurAmount.round().toString(),
+                                      onChanged: (value) {
+                                        ref
+                                            .read(wallpaperBlurAmountProvider
+                                                .notifier)
+                                            .setBlurAmount(value);
+                                      },
+                                    ),
+                                  ),
+                                  Icon(
+                                    Icons.blur_on_rounded,
+                                    size: 16,
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                                ],
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+
                       if (wallpaperColor != null) ...[
                         const SizedBox(height: 12),
                         Row(
@@ -1370,8 +1487,13 @@ class _InviteCodeDialog extends ConsumerStatefulWidget {
 
 class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
   Timer? _countdownTimer;
-  int _remainingSeconds = 0;
-  bool _isExpired = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Start countdown
+    _startCountdown();
+  }
 
   @override
   void dispose() {
@@ -1379,22 +1501,20 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
     super.dispose();
   }
 
-  void _startCountdown(int seconds) {
+  void _startCountdown() {
     _countdownTimer?.cancel();
-    _remainingSeconds = seconds;
-    _isExpired = false;
 
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
-        setState(() {
-          _remainingSeconds--;
-          if (_remainingSeconds <= 0) {
-            _isExpired = true;
-            timer.cancel();
-            // Auto-refresh when expired
-            ref.invalidate(inviteCodeProvider);
-          }
-        });
+        final inviteState = ref.read(inviteCodeProvider);
+
+        // If expired, auto refresh
+        if (inviteState.isExpired && !inviteState.isLoading) {
+          ref.read(inviteCodeProvider.notifier).refresh();
+        }
+
+        // Force rebuild UI to update countdown
+        setState(() {});
       } else {
         timer.cancel();
       }
@@ -1409,7 +1529,7 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final inviteCode = ref.watch(inviteCodeProvider);
+    final inviteState = ref.watch(inviteCodeProvider);
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
@@ -1439,8 +1559,54 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
             curve: M3Curves.emphasized,
           ),
       title: const Text('Invite Code'),
-      content: inviteCode.when(
-        data: (code) {
+      content: Builder(
+        builder: (context) {
+          if (inviteState.isLoading) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 56,
+                  height: 56,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 4,
+                    color: colorScheme.primary,
+                  ),
+                ).animate().scale(
+                    duration: M3Durations.medium2, curve: M3Curves.emphasized),
+                const SizedBox(height: 20),
+                Text(
+                  'Generating code...',
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                )
+                    .animate()
+                    .fadeIn(delay: 100.ms, duration: M3Durations.medium2),
+              ],
+            );
+          }
+
+          if (inviteState.error != null) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.error_outline_rounded,
+                    size: 48, color: colorScheme.error),
+                const SizedBox(height: 12),
+                Text('Error: ${inviteState.error}'),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: () =>
+                      ref.read(inviteCodeProvider.notifier).refresh(),
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Retry'),
+                ),
+              ],
+            );
+          }
+
+          final code = inviteState.code;
           if (code == null) {
             return Column(
               mainAxisSize: MainAxisSize.min,
@@ -1451,7 +1617,8 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
                 const Text('Failed to generate invite code'),
                 const SizedBox(height: 16),
                 FilledButton.icon(
-                  onPressed: () => ref.invalidate(inviteCodeProvider),
+                  onPressed: () =>
+                      ref.read(inviteCodeProvider.notifier).refresh(),
                   icon: const Icon(Icons.refresh_rounded),
                   label: const Text('Retry'),
                 ),
@@ -1459,14 +1626,7 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
             );
           }
 
-          // Start countdown if not already started or if code changed
-          if (_remainingSeconds == 0 || _isExpired) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) {
-                _startCountdown(code.expiresInSeconds);
-              }
-            });
-          }
+          final remainingSeconds = inviteState.remainingSeconds;
 
           return Column(
             mainAxisSize: MainAxisSize.min,
@@ -1533,11 +1693,11 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(
-                          _remainingSeconds <= 60
+                          remainingSeconds <= 60
                               ? Icons.timer_off_rounded
                               : Icons.timer_rounded,
                           size: 20,
-                          color: _remainingSeconds <= 60
+                          color: remainingSeconds <= 60
                               ? colorScheme.error
                               : colorScheme.primary,
                         ),
@@ -1549,52 +1709,33 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        TweenAnimationBuilder<double>(
-                          tween: Tween(begin: 0, end: 1),
-                          duration: M3Durations.medium2,
-                          builder: (context, value, child) {
-                            return Text(
-                              _formatCountdown(_remainingSeconds),
-                              style: textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                fontFamily: 'monospace',
-                                color: _remainingSeconds <= 60
-                                    ? colorScheme.error
-                                    : colorScheme.primary,
-                              ),
-                            );
-                          },
+                        Text(
+                          _formatCountdown(remainingSeconds),
+                          style: textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            fontFamily: 'monospace',
+                            color: remainingSeconds <= 60
+                                ? colorScheme.error
+                                : colorScheme.primary,
+                          ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 12),
-                    TweenAnimationBuilder<double>(
-                      tween: Tween(
-                        begin: 1.0,
-                        end: code.expiresInSeconds > 0
-                            ? _remainingSeconds / code.expiresInSeconds
-                            : 0.0,
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: remainingSeconds / 3600,
+                        minHeight: 6,
+                        backgroundColor: colorScheme.surfaceContainerHighest,
+                        valueColor: AlwaysStoppedAnimation(
+                          remainingSeconds <= 60
+                              ? colorScheme.error
+                              : colorScheme.primary,
+                        ),
                       ),
-                      duration: const Duration(seconds: 1),
-                      curve: Curves.linear,
-                      builder: (context, value, child) {
-                        return ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
-                          child: LinearProgressIndicator(
-                            value: value.clamp(0.0, 1.0),
-                            minHeight: 6,
-                            backgroundColor:
-                                colorScheme.surfaceContainerHighest,
-                            valueColor: AlwaysStoppedAnimation(
-                              _remainingSeconds <= 60
-                                  ? colorScheme.error
-                                  : colorScheme.primary,
-                            ),
-                          ),
-                        );
-                      },
                     ),
-                    if (_remainingSeconds <= 60 && _remainingSeconds > 0) ...[
+                    if (remainingSeconds <= 60 && remainingSeconds > 0) ...[
                       const SizedBox(height: 8),
                       Text(
                         'Code will refresh automatically',
@@ -1612,42 +1753,6 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
             ],
           );
         },
-        loading: () => Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 56,
-              height: 56,
-              child: CircularProgressIndicator(
-                strokeWidth: 4,
-                color: colorScheme.primary,
-              ),
-            ).animate().scale(
-                duration: M3Durations.medium2, curve: M3Curves.emphasized),
-            const SizedBox(height: 20),
-            Text(
-              'Generating code...',
-              style: textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ).animate().fadeIn(delay: 100.ms, duration: M3Durations.medium2),
-          ],
-        ),
-        error: (e, s) => Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.error_outline_rounded,
-                size: 48, color: colorScheme.error),
-            const SizedBox(height: 12),
-            const Text('Error generating invite code'),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: () => ref.invalidate(inviteCodeProvider),
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Retry'),
-            ),
-          ],
-        ),
       ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
       actions: [
@@ -1656,6 +1761,7 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
           child: const Text('Close'),
         ),
       ],
+      actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
     );
   }
 }

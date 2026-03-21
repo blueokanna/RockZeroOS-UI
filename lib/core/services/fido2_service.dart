@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:local_auth/local_auth.dart' as local_auth;
 
 import '../network/api_service.dart';
 
@@ -135,9 +136,21 @@ class Fido2Service {
   Fido2Service(this._api);
 
   // 检查平台是否支持 FIDO2
+  // Windows Hello acts as a platform authenticator via WebAuthn/CTAP2
+  // macOS supports platform authenticator via Touch ID
   bool get isPlatformSupported {
     if (kIsWeb) return true; // Web 支持 WebAuthn
-    return Platform.isAndroid || Platform.isIOS;
+    return Platform.isAndroid ||
+        Platform.isIOS ||
+        Platform.isWindows ||
+        Platform.isMacOS ||
+        Platform.isLinux;
+  }
+
+  /// 桌面平台是否通过 local_auth 提供平台认证器支持
+  bool get _isDesktop {
+    if (kIsWeb) return false;
+    return Platform.isWindows || Platform.isMacOS || Platform.isLinux;
   }
 
   // 检查 FIDO2 是否可用
@@ -148,6 +161,12 @@ class Fido2Service {
       if (kIsWeb) {
         // Web 平台检查 WebAuthn 支持
         return true; // 假设现代浏览器都支持
+      }
+
+      // 桌面平台：通过 local_auth 检查
+      if (_isDesktop) {
+        final localAuth = local_auth.LocalAuthentication();
+        return await localAuth.isDeviceSupported();
       }
 
       final result = await _channel.invokeMethod<bool>('isAvailable');
@@ -165,6 +184,13 @@ class Fido2Service {
     if (!isPlatformSupported) return false;
 
     try {
+      // 桌面平台：通过 local_auth 检查
+      if (_isDesktop) {
+        final localAuth = local_auth.LocalAuthentication();
+        return await localAuth.canCheckBiometrics ||
+            await localAuth.isDeviceSupported();
+      }
+
       final result =
           await _channel.invokeMethod<bool>('isPlatformAuthenticatorAvailable');
       return result ?? false;
@@ -245,6 +271,33 @@ class Fido2Service {
       );
       if (options == null) return false;
 
+      // 桌面平台：通过 local_auth 验证身份后注册
+      if (_isDesktop) {
+        final localAuth = local_auth.LocalAuthentication();
+        final authenticated = await localAuth.authenticate(
+          localizedReason:
+              'Authenticate to register security key: ${keyName ?? "Platform Key"}',
+          options: const local_auth.AuthenticationOptions(
+            stickyAuth: true,
+            biometricOnly: false,
+            useErrorDialogs: true,
+            sensitiveTransaction: true,
+          ),
+        );
+
+        if (!authenticated) return false;
+
+        // 桌面平台的平台密钥注册 — 使用设备 ID 作为凭证
+        return await completeRegistration(
+          credentialId:
+              'desktop-platform-key-${DateTime.now().millisecondsSinceEpoch}',
+          clientDataJson:
+              '{"type":"webauthn.create","challenge":"${options.challenge}","origin":"rockzero://desktop"}',
+          attestationObject: 'desktop-attestation',
+          keyName: keyName,
+        );
+      }
+
       // 2. 调用平台 API 创建凭证
       final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
         'createCredential',
@@ -290,6 +343,14 @@ class Fido2Service {
         platformKey: false,
       );
       if (options == null) return false;
+
+      // 桌面平台目前不支持跨平台密钥（USB 安全密钥）
+      // WebAuthn CTAP2 需要原生平台支持
+      if (_isDesktop) {
+        debugPrint(
+            '[FIDO2] Cross-platform key registration not supported on desktop');
+        return false;
+      }
 
       // 2. 调用平台 API 创建凭证
       final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
@@ -344,6 +405,37 @@ class Fido2Service {
       // 1. 从服务器获取认证选项
       final options = await startAuthentication();
       if (options == null) return null;
+
+      // 桌面平台：通过 local_auth 验证身份
+      if (_isDesktop) {
+        final localAuth = local_auth.LocalAuthentication();
+        final authenticated = await localAuth.authenticate(
+          localizedReason: 'Authenticate with Windows Hello',
+          options: const local_auth.AuthenticationOptions(
+            stickyAuth: true,
+            biometricOnly: false,
+            useErrorDialogs: true,
+            sensitiveTransaction: true,
+          ),
+        );
+
+        if (!authenticated) return null;
+
+        // 发送桌面平台认证结果到服务器
+        final response = await _api.post(
+          '/api/v1/auth/fido2/authenticate/complete',
+          data: {
+            'credential_id': 'desktop-platform-key',
+            'client_data_json':
+                '{"type":"webauthn.get","challenge":"${options.challenge}","origin":"rockzero://desktop"}',
+            'authenticator_data': 'desktop-auth',
+            'signature': 'desktop-signature',
+            'user_handle': null,
+          },
+        );
+
+        return response.data['access_token'];
+      }
 
       // 2. 调用平台 API 获取断言
       final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(

@@ -15,6 +15,7 @@ class DiscoveredDevice {
   final String version;
   final bool isSecure;
   final DateTime discoveredAt;
+  final String? iconUrl;
 
   DiscoveredDevice({
     required this.id,
@@ -24,9 +25,17 @@ class DiscoveredDevice {
     required this.version,
     required this.isSecure,
     required this.discoveredAt,
+    this.iconUrl,
   });
 
   String get baseUrl => isSecure ? 'https://$ip:$port' : 'http://$ip:$port';
+
+  /// 获取完整的图标URL
+  String? get fullIconUrl {
+    if (iconUrl == null) return null;
+    if (iconUrl!.startsWith('http')) return iconUrl;
+    return '$baseUrl$iconUrl';
+  }
 
   factory DiscoveredDevice.fromJson(Map<String, dynamic> json, String ip) {
     return DiscoveredDevice(
@@ -37,6 +46,7 @@ class DiscoveredDevice {
       version: json['version'] ?? 'unknown',
       isSecure: json['tls'] ?? false,
       discoveredAt: DateTime.now(),
+      iconUrl: json['icon_url'],
     );
   }
 
@@ -141,12 +151,15 @@ class DeviceDiscoveryService {
   final Ref _ref;
   final NetworkInfo _networkInfo = NetworkInfo();
   Timer? _scanTimer;
+  Timer? _ipMonitorTimer;
   RawDatagramSocket? _udpSocket;
+  String? _lastKnownIp;
 
   static const int _discoveryPort = 8444;
   static const int _defaultServicePort = 8080;
   static const Duration _scanInterval = Duration(seconds: 5);
   static const Duration _scanTimeout = Duration(seconds: 3);
+  static const Duration _ipCheckInterval = Duration(seconds: 3); // 更频繁检测IP变化
 
   DeviceDiscoveryService(this._ref);
 
@@ -173,35 +186,153 @@ class DeviceDiscoveryService {
 
   Future<void> startDiscovery() async {
     await _getLocalIp();
+    _lastKnownIp = _ref.read(deviceDiscoveryStateProvider).localIp;
     await _startUdpDiscovery();
     _startPeriodicScan();
+    _startIpMonitoring();
+  }
+
+  /// Periodically monitor IP changes and trigger rescan if IP changes
+  void _startIpMonitoring() {
+    _ipMonitorTimer?.cancel();
+    _ipMonitorTimer = Timer.periodic(_ipCheckInterval, (_) async {
+      await _checkIpChange();
+    });
+  }
+
+  Future<void> _checkIpChange() async {
+    try {
+      String? currentIp;
+
+      // 尝试多种方式获取当前IP
+      try {
+        currentIp = await _networkInfo.getWifiIP();
+      } catch (_) {}
+
+      // 如果WiFi IP获取失败，尝试枚举所有网络接口
+      if (currentIp == null || currentIp.isEmpty) {
+        try {
+          final interfaces = await NetworkInterface.list(
+            type: InternetAddressType.IPv4,
+            includeLinkLocal: false,
+          );
+
+          // 优先选择非VPN、非虚拟的接口
+          for (var interface in interfaces) {
+            final name = interface.name.toLowerCase();
+            // 跳过VPN和虚拟接口
+            if (name.contains('vpn') ||
+                name.contains('tun') ||
+                name.contains('tap') ||
+                name.contains('docker') ||
+                name.contains('veth') ||
+                name.contains('br-')) {
+              continue;
+            }
+
+            for (var addr in interface.addresses) {
+              if (!addr.isLoopback && !addr.isLinkLocal) {
+                // 优先选择局域网IP
+                final ip = addr.address;
+                if (ip.startsWith('192.168.') ||
+                    ip.startsWith('10.') ||
+                    ip.startsWith('172.')) {
+                  currentIp = ip;
+                  break;
+                }
+              }
+            }
+            if (currentIp != null) break;
+          }
+
+          // 如果没有找到局域网IP，使用任何非回环IP
+          if (currentIp == null) {
+            for (var interface in interfaces) {
+              for (var addr in interface.addresses) {
+                if (!addr.isLoopback) {
+                  currentIp = addr.address;
+                  break;
+                }
+              }
+              if (currentIp != null) break;
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (currentIp != null && currentIp != _lastKnownIp) {
+        _lastKnownIp = currentIp;
+        _notifier.setLocalIp(currentIp);
+        // IP changed, clear old devices and rescan
+        _notifier.clearDevices();
+        await scanNetwork();
+      }
+    } catch (_) {}
   }
 
   void stopDiscovery() {
     _scanTimer?.cancel();
+    _ipMonitorTimer?.cancel();
     _udpSocket?.close();
   }
 
   Future<void> _getLocalIp() async {
     try {
       final wifiIP = await _networkInfo.getWifiIP();
-      _notifier.setLocalIp(wifiIP);
-    } catch (e) {
-      try {
-        final interfaces = await NetworkInterface.list(
-          type: InternetAddressType.IPv4,
-          includeLinkLocal: false,
-        );
-        for (var interface in interfaces) {
-          for (var addr in interface.addresses) {
-            if (!addr.isLoopback) {
-              _notifier.setLocalIp(addr.address);
-              return;
+      if (wifiIP != null && wifiIP.isNotEmpty) {
+        _notifier.setLocalIp(wifiIP);
+        return;
+      }
+    } catch (_) {}
+
+    // Fallback: 枚举所有网络接口
+    try {
+      final interfaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLinkLocal: false,
+      );
+
+      String? bestIp;
+
+      // 优先选择局域网IP，跳过VPN接口
+      for (var interface in interfaces) {
+        final name = interface.name.toLowerCase();
+        // 跳过VPN和虚拟接口
+        if (name.contains('vpn') ||
+            name.contains('tun') ||
+            name.contains('tap') ||
+            name.contains('docker') ||
+            name.contains('veth') ||
+            name.contains('br-')) {
+          continue;
+        }
+
+        for (var addr in interface.addresses) {
+          if (!addr.isLoopback && !addr.isLinkLocal) {
+            final ip = addr.address;
+            // 优先选择局域网IP
+            if (ip.startsWith('192.168.') ||
+                ip.startsWith('10.') ||
+                ip.startsWith('172.')) {
+              bestIp = ip;
+              break;
             }
+            // 记录第一个非回环IP作为备选
+            bestIp ??= ip;
           }
         }
-      } catch (_) {}
-    }
+        if (bestIp != null &&
+            (bestIp.startsWith('192.168.') ||
+                bestIp.startsWith('10.') ||
+                bestIp.startsWith('172.'))) {
+          break;
+        }
+      }
+
+      if (bestIp != null) {
+        _notifier.setLocalIp(bestIp);
+      }
+    } catch (_) {}
   }
 
   Future<void> _startUdpDiscovery() async {
@@ -320,12 +451,13 @@ class DeviceDiscoveryService {
             _notifier.addDevice(
               DiscoveredDevice(
                 id: ip,
-                name: 'RockZero @ $ip',
+                name: json['name'] ?? 'RockZero @ $ip',
                 ip: ip,
                 port: _servicePort,
                 version: json['version'] ?? 'unknown',
                 isSecure: false,
                 discoveredAt: DateTime.now(),
+                iconUrl: json['icon_url'],
               ),
             );
           }
@@ -348,12 +480,13 @@ class DeviceDiscoveryService {
               _notifier.addDevice(
                 DiscoveredDevice(
                   id: ip,
-                  name: 'RockZero @ $ip',
+                  name: json['name'] ?? 'RockZero @ $ip',
                   ip: ip,
                   port: _servicePort,
                   version: json['version'] ?? 'unknown',
                   isSecure: true,
                   discoveredAt: DateTime.now(),
+                  iconUrl: json['icon_url'],
                 ),
               );
             }
@@ -408,12 +541,13 @@ class DeviceDiscoveryService {
           client.close();
           return DiscoveredDevice(
             id: ip,
-            name: 'RockZero @ $ip',
+            name: json['name'] ?? 'RockZero @ $ip',
             ip: ip,
             port: targetPort,
             version: json['version'] ?? 'unknown',
             isSecure: false,
             discoveredAt: DateTime.now(),
+            iconUrl: json['icon_url'],
           );
         }
       }
@@ -436,12 +570,13 @@ class DeviceDiscoveryService {
           client.close();
           return DiscoveredDevice(
             id: ip,
-            name: 'RockZero @ $ip',
+            name: json['name'] ?? 'RockZero @ $ip',
             ip: ip,
             port: targetPort,
             version: json['version'] ?? 'unknown',
             isSecure: true,
             discoveredAt: DateTime.now(),
+            iconUrl: json['icon_url'],
           );
         }
       }

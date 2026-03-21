@@ -11,7 +11,6 @@ import '../services/device_discovery_service.dart';
 
 final _logger = Logger(printer: PrettyPrinter(methodCount: 0));
 
-// Secure storage provider
 final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
   return const FlutterSecureStorage(
     aOptions: AndroidOptions(),
@@ -19,20 +18,17 @@ final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
   );
 });
 
-// API client provider
 final apiClientProvider = Provider<ApiClient>((ref) {
   final device = ref.watch(connectedDeviceProvider);
   final storage = ref.watch(secureStorageProvider);
   return ApiClient(device: device, storage: storage, ref: ref);
 });
 
-// Dio instance provider
 final dioProvider = Provider<Dio>((ref) {
   final apiClient = ref.watch(apiClientProvider);
   return apiClient.dio;
 });
 
-// Base URL provider for accessing the server URL
 final baseUrlProvider = Provider<String>((ref) {
   final device = ref.watch(connectedDeviceProvider);
   return device?.baseUrl ?? '';
@@ -53,18 +49,16 @@ class ApiClient {
       BaseOptions(
         baseUrl: device?.baseUrl ?? '',
         connectTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(seconds: 30),
-        sendTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(minutes: 5),
+        sendTimeout: const Duration(minutes: 30),
         headers: {
           'Content-Type': 'application/json; charset=utf-8',
           'Accept': 'application/json',
         },
-        // Ensure proper UTF-8 encoding for query parameters
         listFormat: ListFormat.multiCompatible,
       ),
     );
 
-    // Allow self-signed certificates (non-web platforms only)
     if (!kIsWeb && device?.isSecure == true) {
       (dio.httpClientAdapter as IOHttpClientAdapter).createHttpClient = () {
         final client = HttpClient()
@@ -73,7 +67,6 @@ class ApiClient {
       };
     }
 
-    // Add interceptors
     dio.interceptors.addAll([
       _AuthInterceptor(storage, ref),
       if (kDebugMode) _LoggingInterceptor(),
@@ -107,15 +100,19 @@ class _AuthInterceptor extends Interceptor {
     RequestOptions options,
     RequestInterceptorHandler handler,
   ) async {
-    // Skip auth for public endpoints
+    debugPrint('[Auth] Request: ${options.method} ${options.path}');
+
     if (_publicPaths.any((path) => options.path.contains(path))) {
+      debugPrint('[Auth] Public endpoint, skipping auth');
       return handler.next(options);
     }
 
-    // Add access token
     final accessToken = await storage.read(key: 'access_token');
     if (accessToken != null) {
+      debugPrint('[Auth] Adding access token');
       options.headers['Authorization'] = 'Bearer $accessToken';
+    } else {
+      debugPrint('[Auth] Warning: No access token');
     }
 
     handler.next(options);
@@ -124,10 +121,8 @@ class _AuthInterceptor extends Interceptor {
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) async {
     if (err.response?.statusCode == 401) {
-      // Try to refresh token
       final refreshed = await _refreshToken();
       if (refreshed) {
-        // Retry the request
         try {
           final accessToken = await storage.read(key: 'access_token');
           err.requestOptions.headers['Authorization'] = 'Bearer $accessToken';
@@ -176,20 +171,20 @@ class _AuthInterceptor extends Interceptor {
 class _LoggingInterceptor extends Interceptor {
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
-    _logger.d('🌐 ${options.method} ${options.uri}');
+    _logger.d('${options.method} ${options.uri}');
     handler.next(options);
   }
 
   @override
   void onResponse(Response response, ResponseInterceptorHandler handler) {
-    _logger.d('✅ ${response.statusCode} ${response.requestOptions.uri}');
+    _logger.d('${response.statusCode} ${response.requestOptions.uri}');
     handler.next(response);
   }
 
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) {
     _logger.e(
-      '❌ ${err.response?.statusCode} ${err.requestOptions.uri}\n   ${err.message}',
+      '${err.response?.statusCode} ${err.requestOptions.uri}\n${err.message}',
     );
     handler.next(err);
   }
@@ -210,7 +205,6 @@ class _ErrorInterceptor extends Interceptor {
   }
 }
 
-// API Exception
 class ApiException implements Exception {
   final String message;
   final String? errorCode;
@@ -233,6 +227,8 @@ class ApiException implements Exception {
       final data = err.response!.data as Map;
       message = data['message'] ?? message;
       errorCode = data['error'];
+    } else if (err.response?.data is String) {
+      message = err.response!.data as String;
     } else {
       switch (err.type) {
         case DioExceptionType.connectionTimeout:

@@ -11,16 +11,11 @@ import 'package:path_provider/path_provider.dart';
 
 import '../theme/app_theme.dart';
 
-/// 背景设置模式
 enum BackgroundMode {
-  /// 默认 - 从系统取色
   defaultMode,
-
-  /// 自定义壁纸
   customWallpaper,
 }
 
-/// 壁纸服务 - 处理背景图片和取色
 class WallpaperService {
   static const _channel = MethodChannel('rockzero/wallpaper');
 
@@ -258,16 +253,13 @@ final wallpaperColorProvider = NotifierProvider<WallpaperColorNotifier, Color?>(
 class WallpaperColorNotifier extends Notifier<Color?> {
   @override
   Color? build() {
-    _loadColor();
-    return null;
-  }
-
-  Future<void> _loadColor() async {
+    // 同步加载颜色 - Hive 支持同步读取
     final box = Hive.box('settings');
     final colorValue = box.get('wallpaperColor');
     if (colorValue != null) {
-      state = Color(colorValue);
+      return Color(colorValue);
     }
+    return null;
   }
 
   Future<void> setColor(Color? color) async {
@@ -280,41 +272,59 @@ class WallpaperColorNotifier extends Notifier<Color?> {
     }
   }
 
-  /// 从壁纸文件提取颜色
+  /// 从壁纸文件提取颜色并应用
   Future<void> extractFromWallpaper(String filePath) async {
     final color = await WallpaperService.extractColorFromFile(filePath);
     if (color != null) {
       await setColor(color);
+      // 立即刷新主题
+      ref.invalidate(blendedThemeColorProvider);
     }
   }
 }
 
+/// 壁纸模糊程度 Provider (0.0 ~ 50.0)
+final wallpaperBlurAmountProvider =
+    NotifierProvider<WallpaperBlurAmountNotifier, double>(
+  WallpaperBlurAmountNotifier.new,
+);
+
+class WallpaperBlurAmountNotifier extends Notifier<double> {
+  @override
+  double build() {
+    final box = Hive.box('settings');
+    return box.get('wallpaperBlurAmount', defaultValue: 25.0) as double;
+  }
+
+  Future<void> setBlurAmount(double amount) async {
+    state = amount;
+    final box = Hive.box('settings');
+    await box.put('wallpaperBlurAmount', amount);
+  }
+}
+
 /// 混合后的主题色 Provider
-/// 默认模式: 70% 系统色 + 30% 壁纸色
-/// 自定义壁纸模式: 100% 壁纸色
+/// 自定义壁纸模式: 80% 自定义壁纸色 + 20% 系统色
+/// 默认模式: 不混合，返回null让系统使用种子颜色
 final blendedThemeColorProvider = Provider<Color?>((ref) {
   final backgroundMode = ref.watch(backgroundModeProvider);
-  final wallpaperColor = ref.watch(wallpaperColorProvider);
-  final systemColor = ref.watch(systemAccentColorProvider);
-  final seedColor = ref.watch(seedColorProvider);
+  final wallpaperColor = ref.watch(wallpaperColorProvider); // 自定义上传壁纸的颜色
+  final systemColor = ref.watch(systemAccentColorProvider); // 手机壁纸颜色
 
-  if (backgroundMode == BackgroundMode.customWallpaper &&
-      wallpaperColor != null) {
-    // 自定义壁纸模式 - 使用壁纸颜色
-    return wallpaperColor;
-  }
-
-  if (backgroundMode == BackgroundMode.defaultMode) {
-    // 默认模式 - 混合系统色和壁纸色
-    final baseColor = systemColor ?? seedColor;
-
-    if (wallpaperColor != null) {
-      // 70% 系统色 + 30% 壁纸色
-      return WallpaperService.blendColors(baseColor, wallpaperColor, 0.7);
+  // 只有在自定义壁纸模式下才混合颜色
+  if (backgroundMode == BackgroundMode.customWallpaper) {
+    if (wallpaperColor != null && systemColor != null) {
+      // 80% 自定义壁纸色 + 20% 系统色
+      return WallpaperService.blendColors(wallpaperColor, systemColor, 0.8);
+    } else if (wallpaperColor != null) {
+      // 没有系统颜色，使用100%自定义壁纸颜色
+      return wallpaperColor;
+    } else if (systemColor != null) {
+      // 没有自定义壁纸颜色，使用系统颜色
+      return systemColor;
     }
-
-    return baseColor;
   }
 
-  return systemColor ?? seedColor;
+  // 默认模式 - 返回null，让main.dart使用种子颜色或动态颜色
+  return null;
 });

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/network/api_service.dart';
+import '../../../../core/services/wallpaper_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../widgets/app_install_dialog.dart' as install_dialog;
 import 'app_webview_page.dart';
@@ -13,8 +14,28 @@ final storeAppsProvider = FutureProvider.autoDispose<List<AppStoreItem>>((
   ref,
 ) async {
   final api = ref.read(apiServiceProvider);
-  return await api.listStoreApps();
+  try {
+    // Add timeout to prevent infinite loading
+    final apps = await api.listStoreApps().timeout(
+      const Duration(seconds: 180), // 增加超时到180秒
+      onTimeout: () {
+        throw TimeoutException('App store request timed out');
+      },
+    );
+    return apps;
+  } catch (e) {
+    // Log the error and rethrow for the UI to handle
+    debugPrint('Store apps fetch error: $e');
+    rethrow;
+  }
 });
+
+class TimeoutException implements Exception {
+  final String message;
+  TimeoutException(this.message);
+  @override
+  String toString() => message;
+}
 
 final installedAppsProvider = FutureProvider.autoDispose<List<DockerApp>>((
   ref,
@@ -32,6 +53,7 @@ class AppStorePage extends ConsumerStatefulWidget {
 class _AppStorePageState extends ConsumerState<AppStorePage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  bool _isRefreshing = false;
 
   @override
   void initState() {
@@ -45,27 +67,58 @@ class _AppStorePageState extends ConsumerState<AppStorePage>
     super.dispose();
   }
 
+  Future<void> _refresh() async {
+    if (_isRefreshing) return;
+
+    setState(() => _isRefreshing = true);
+
+    ref.invalidate(storeAppsProvider);
+    ref.invalidate(installedAppsProvider);
+
+    // 等待动画完成
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    if (mounted) {
+      setState(() => _isRefreshing = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final hasWallpaper =
+        ref.watch(backgroundModeProvider) == BackgroundMode.customWallpaper &&
+            (ref.watch(customWallpaperPathProvider)?.isNotEmpty ?? false);
+
     return Scaffold(
+      backgroundColor: hasWallpaper ? Colors.transparent : null,
       body: NestedScrollView(
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           SliverAppBar.large(
             title: Row(
               children: [
-                Icon(Icons.store_rounded, size: 28),
+                Icon(Icons.store_rounded, size: 28)
+                    .animate(onPlay: (controller) => controller.repeat())
+                    .shimmer(
+                      duration: 2000.ms,
+                      delay: 3000.ms,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withValues(alpha: 0.3),
+                    ),
                 const SizedBox(width: 12),
                 const Text('App Store'),
               ],
             ),
             actions: [
               IconButton(
-                icon: const Icon(Icons.refresh_rounded),
-                onPressed: () {
-                  ref.invalidate(storeAppsProvider);
-                  ref.invalidate(installedAppsProvider);
-                },
-              ),
+                icon: Icon(_isRefreshing
+                    ? Icons.hourglass_empty_rounded
+                    : Icons.refresh_rounded),
+                onPressed: _isRefreshing ? null : _refresh,
+              )
+                  .animate(target: _isRefreshing ? 1 : 0)
+                  .rotate(duration: 1000.ms, curve: Curves.easeInOut),
             ],
             bottom: TabBar(
               controller: _tabController,
@@ -130,10 +183,10 @@ class _StoreTab extends ConsumerWidget {
             final categoryApps = categories[category]!;
 
             return _CategorySection(
-                  category: category,
-                  apps: categoryApps,
-                  onInstall: (app) => _installApp(context, ref, app),
-                )
+              category: category,
+              apps: categoryApps,
+              onInstall: (app) => _installApp(context, ref, app),
+            )
                 .animate(delay: (80 * index).ms)
                 .fadeIn(curve: M3Curves.emphasizedDecelerate)
                 .slideY(begin: 0.05, curve: M3Curves.emphasized);
@@ -201,32 +254,51 @@ class _StoreTab extends ConsumerWidget {
 
   Widget _buildErrorState(BuildContext context, WidgetRef ref) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              color: colorScheme.errorContainer,
-              shape: BoxShape.circle,
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: colorScheme.errorContainer,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.cloud_off_rounded,
+                size: 40,
+                color: colorScheme.onErrorContainer,
+              ),
             ),
-            child: Icon(
-              Icons.error_outline_rounded,
-              size: 40,
-              color: colorScheme.onErrorContainer,
+            const SizedBox(height: 24),
+            Text(
+              'Unable to connect to App Store',
+              style: textTheme.titleMedium?.copyWith(
+                color: colorScheme.onSurface,
+              ),
+              textAlign: TextAlign.center,
             ),
-          ),
-          const SizedBox(height: 24),
-          const Text('Failed to load apps'),
-          const SizedBox(height: 16),
-          FilledButton.icon(
-            onPressed: () => ref.invalidate(storeAppsProvider),
-            icon: const Icon(Icons.refresh_rounded),
-            label: const Text('Retry'),
-          ),
-        ],
+            const SizedBox(height: 8),
+            Text(
+              'Please check your internet connection and try again',
+              style: textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: () => ref.invalidate(storeAppsProvider),
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -245,17 +317,16 @@ class _InstalledTab extends ConsumerWidget {
           itemCount: apps.length,
           itemBuilder: (context, index) {
             return _InstalledAppCard(
-                  app: apps[index],
-                  onStart: () => _startApp(context, ref, apps[index]),
-                  onStop: () => _stopApp(context, ref, apps[index]),
-                  onRestart: () => _restartApp(context, ref, apps[index]),
-                  onUninstall: () => _uninstallApp(context, ref, apps[index]),
-                  onOpen:
-                      apps[index].status == 'running' &&
-                          apps[index].ports.isNotEmpty
-                      ? () => _openApp(context, ref, apps[index])
-                      : null,
-                )
+              app: apps[index],
+              onStart: () => _startApp(context, ref, apps[index]),
+              onStop: () => _stopApp(context, ref, apps[index]),
+              onRestart: () => _restartApp(context, ref, apps[index]),
+              onUninstall: () => _uninstallApp(context, ref, apps[index]),
+              onOpen: apps[index].status == 'running' &&
+                      apps[index].ports.isNotEmpty
+                  ? () => _openApp(context, ref, apps[index])
+                  : null,
+            )
                 .animate(delay: (60 * index).ms)
                 .fadeIn(curve: M3Curves.emphasizedDecelerate)
                 .slideY(begin: 0.05, curve: M3Curves.emphasized);
@@ -532,9 +603,9 @@ class _CategorySection extends StatelessWidget {
             itemCount: apps.length,
             itemBuilder: (context, index) {
               return _StoreAppCard(
-                    app: apps[index],
-                    onInstall: () => onInstall(apps[index]),
-                  )
+                app: apps[index],
+                onInstall: () => onInstall(apps[index]),
+              )
                   .animate(delay: (40 * index).ms)
                   .fadeIn(curve: M3Curves.emphasizedDecelerate)
                   .slideX(begin: 0.1, curve: M3Curves.emphasized);
@@ -584,18 +655,38 @@ class _StoreAppCard extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.only(right: 12, bottom: 8),
       clipBehavior: Clip.antiAlias,
+      elevation: 2,
       child: InkWell(
         onTap: onInstall,
         child: Container(
-          width: 180, // Increased width for better readability
+          width: 180,
           padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                colorScheme.surface,
+                colorScheme.surfaceContainerLow,
+              ],
+            ),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Icon and category row
               Row(
                 children: [
-                  _AppIcon(iconUrl: app.icon, size: 52),
+                  _AppIcon(iconUrl: app.icon, size: 52)
+                      .animate(
+                          onPlay: (controller) =>
+                              controller.repeat(reverse: true))
+                      .scale(
+                        duration: 2000.ms,
+                        begin: const Offset(1.0, 1.0),
+                        end: const Offset(1.05, 1.05),
+                        curve: Curves.easeInOut,
+                      ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
@@ -648,7 +739,15 @@ class _StoreAppCard extends StatelessWidget {
           ),
         ),
       ),
-    );
+    )
+        .animate(
+          onPlay: (controller) => controller.repeat(reverse: true),
+        )
+        .shimmer(
+          duration: 3000.ms,
+          delay: 2000.ms,
+          color: colorScheme.primary.withValues(alpha: 0.05),
+        );
   }
 }
 
@@ -700,7 +799,7 @@ class _AppIcon extends StatelessWidget {
                       color: colorScheme.primary,
                       value: loadingProgress.expectedTotalBytes != null
                           ? loadingProgress.cumulativeBytesLoaded /
-                                loadingProgress.expectedTotalBytes!
+                              loadingProgress.expectedTotalBytes!
                           : null,
                     ),
                   ),
@@ -943,6 +1042,12 @@ class _StatusBadge extends StatelessWidget {
             ? Colors.green.withValues(alpha: 0.15)
             : Colors.grey.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isRunning
+              ? Colors.green.withValues(alpha: 0.3)
+              : Colors.grey.withValues(alpha: 0.3),
+          width: 1,
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -953,14 +1058,39 @@ class _StatusBadge extends StatelessWidget {
             decoration: BoxDecoration(
               color: isRunning ? Colors.green : Colors.grey,
               shape: BoxShape.circle,
+              boxShadow: isRunning
+                  ? [
+                      BoxShadow(
+                        color: Colors.green.withValues(alpha: 0.5),
+                        blurRadius: 4,
+                        spreadRadius: 1,
+                      ),
+                    ]
+                  : null,
             ),
-          ),
+          )
+              .animate(
+                onPlay: (controller) => isRunning ? controller.repeat() : null,
+              )
+              .scale(
+                duration: 1000.ms,
+                begin: const Offset(1.0, 1.0),
+                end: const Offset(1.3, 1.3),
+                curve: Curves.easeInOut,
+              )
+              .then()
+              .scale(
+                duration: 1000.ms,
+                begin: const Offset(1.3, 1.3),
+                end: const Offset(1.0, 1.0),
+                curve: Curves.easeInOut,
+              ),
           const SizedBox(width: 6),
           Text(
             isRunning ? 'Running' : 'Stopped',
             style: TextStyle(
               fontSize: 12,
-              fontWeight: FontWeight.w500,
+              fontWeight: FontWeight.w600,
               color: isRunning ? Colors.green : Colors.grey,
             ),
           ),

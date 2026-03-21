@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
+import '../../../../core/services/wallpaper_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../widgets/system_status_card.dart';
 import '../widgets/storage_card.dart';
@@ -17,8 +18,12 @@ final hardwareInfoProvider = FutureProvider.autoDispose<HardwareInfo?>((
 ) async {
   try {
     final api = ref.read(apiServiceProvider);
-    return await api.getHardwareInfo();
-  } catch (_) {
+    final result = await api.getHardwareInfo();
+    return result;
+  } catch (e, stackTrace) {
+    debugPrint('❌ [Dashboard] Hardware info error: $e');
+    debugPrint('📚 [Dashboard] Stack trace: $stackTrace');
+    // 返回 null 而不是抛出异常，让 UI 显示错误状态
     return null;
   }
 });
@@ -52,7 +57,9 @@ final totalStorageInfoProvider = FutureProvider.autoDispose<TotalStorageInfo?>((
       diskCount: disks.length,
       disks: disks,
     );
-  } catch (_) {
+  } catch (e, stackTrace) {
+    debugPrint('❌ [Dashboard] Storage info error: $e');
+    debugPrint('📚 [Dashboard] Stack trace: $stackTrace');
     return null;
   }
 });
@@ -63,13 +70,41 @@ final networkInfoProvider = FutureProvider.autoDispose<NetworkInfo?>((
   try {
     final api = ref.read(apiServiceProvider);
     final hardware = await api.getHardwareInfo();
-    final interfaces = hardware.networkInterfaces ?? [];
+
+    if (hardware.networkInterfaces == null ||
+        hardware.networkInterfaces!.isEmpty) {
+      debugPrint('⚠️ [Dashboard] No network interfaces found');
+      return NetworkInfo(
+        interfaces: [],
+        totalRxBytes: 0,
+        totalTxBytes: 0,
+      );
+    }
+
+    final interfaces = hardware.networkInterfaces!;
 
     return NetworkInfo(
       interfaces: interfaces,
       totalRxBytes: interfaces.fold<int>(0, (sum, i) => sum + i.rxBytes),
       totalTxBytes: interfaces.fold<int>(0, (sum, i) => sum + i.txBytes),
     );
+  } catch (e, stackTrace) {
+    debugPrint('❌ [Dashboard] Network info error: $e');
+    debugPrint('📚 [Dashboard] Stack trace: $stackTrace');
+    // 返回空的网络信息而不是 null
+    return NetworkInfo(
+      interfaces: [],
+      totalRxBytes: 0,
+      totalTxBytes: 0,
+    );
+  }
+});
+
+/// 服务器公网 IP（缓存 5 分钟）
+final publicIpProvider = FutureProvider.autoDispose<String?>((ref) async {
+  try {
+    final api = ref.read(apiServiceProvider);
+    return await api.getPublicIp();
   } catch (_) {
     return null;
   }
@@ -234,7 +269,12 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         ? AsyncValue.data(networkInfo)
         : const AsyncValue<NetworkInfo?>.loading();
 
+    final hasWallpaper =
+        ref.watch(backgroundModeProvider) == BackgroundMode.customWallpaper &&
+            (ref.watch(customWallpaperPathProvider)?.isNotEmpty ?? false);
+
     return Scaffold(
+      backgroundColor: hasWallpaper ? Colors.transparent : null,
       body: RefreshIndicator(
         onRefresh: () async {
           ref.invalidate(hardwareInfoProvider);
@@ -260,16 +300,31 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         },
         child: CustomScrollView(
           slivers: [
-            // App Bar
-            SliverAppBar.large(
-              title: Row(
-                children: [
-                  Icon(Icons.dashboard_rounded, size: 28),
-                  const SizedBox(width: 12),
-                  const Text('Dashboard'),
-                ],
+            // App Bar - use medium on narrow screens to save space
+            SliverAppBar(
+              expandedHeight:
+                  MediaQuery.of(context).size.width <= 600 ? 80 : 120,
+              floating: true,
+              pinned: true,
+              flexibleSpace: FlexibleSpaceBar(
+                titlePadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                title: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.dashboard_rounded,
+                        size: 22,
+                        color: Theme.of(context).colorScheme.onSurface),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Dashboard',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                    ),
+                  ],
+                ),
               ),
-              // Removed refresh and notification buttons - auto-refresh is enabled
             ),
 
             // Content

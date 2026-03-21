@@ -79,8 +79,8 @@ class DynamicColorNotifier extends Notifier<bool> {
 
 final systemAccentColorProvider =
     NotifierProvider<SystemAccentColorNotifier, Color?>(
-      SystemAccentColorNotifier.new,
-    );
+  SystemAccentColorNotifier.new,
+);
 
 class SystemAccentColorNotifier extends Notifier<Color?> {
   @override
@@ -221,6 +221,7 @@ class AppTheme {
         elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         color: colorScheme.surfaceContainerLow,
+        clipBehavior: Clip.antiAlias,
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(

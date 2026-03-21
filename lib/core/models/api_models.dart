@@ -6,34 +6,52 @@ part 'api_models.g.dart';
 
 @JsonSerializable()
 class User {
+  @JsonKey(defaultValue: '')
   final String id;
+  @JsonKey(defaultValue: '')
   final String username;
+  @JsonKey(defaultValue: '')
   final String email;
+  @JsonKey(defaultValue: 'user')
   final String role;
   @JsonKey(name: 'created_at')
-  final DateTime createdAt;
+  final DateTime? createdAt;
 
   User({
     required this.id,
     required this.username,
     required this.email,
     required this.role,
-    required this.createdAt,
+    this.createdAt,
   });
 
-  factory User.fromJson(Map<String, dynamic> json) => _$UserFromJson(json);
+  factory User.fromJson(Map<String, dynamic> json) {
+    try {
+      return _$UserFromJson(json);
+    } catch (e) {
+      // 如果解析失败，返回一个默认用户
+      return User(
+        id: json['id']?.toString() ?? '',
+        username: json['username']?.toString() ?? '',
+        email: json['email']?.toString() ?? '',
+        role: json['role']?.toString() ?? 'user',
+        createdAt: null,
+      );
+    }
+  }
+
   Map<String, dynamic> toJson() => _$UserToJson(this);
 }
 
 @JsonSerializable()
 class TokenResponse {
-  @JsonKey(name: 'access_token')
+  @JsonKey(name: 'access_token', defaultValue: '')
   final String accessToken;
-  @JsonKey(name: 'refresh_token')
+  @JsonKey(name: 'refresh_token', defaultValue: '')
   final String refreshToken;
-  @JsonKey(name: 'token_type')
+  @JsonKey(name: 'token_type', defaultValue: 'Bearer')
   final String tokenType;
-  @JsonKey(name: 'expires_in')
+  @JsonKey(name: 'expires_in', defaultValue: 0)
   final int expiresIn;
 
   TokenResponse({
@@ -43,20 +61,53 @@ class TokenResponse {
     required this.expiresIn,
   });
 
-  factory TokenResponse.fromJson(Map<String, dynamic> json) =>
-      _$TokenResponseFromJson(json);
+  factory TokenResponse.fromJson(Map<String, dynamic> json) {
+    try {
+      return _$TokenResponseFromJson(json);
+    } catch (e) {
+      // 如果解析失败，返回一个空的 token 响应
+      return TokenResponse(
+        accessToken: json['access_token']?.toString() ?? '',
+        refreshToken: json['refresh_token']?.toString() ?? '',
+        tokenType: json['token_type']?.toString() ?? 'Bearer',
+        expiresIn: json['expires_in'] as int? ?? 0,
+      );
+    }
+  }
+
   Map<String, dynamic> toJson() => _$TokenResponseToJson(this);
 }
 
 @JsonSerializable()
 class AuthResponse {
-  final User user;
-  final TokenResponse tokens;
+  @JsonKey(defaultValue: false)
+  final bool success;
+  @JsonKey(defaultValue: '')
+  final String message;
+  final User? user;
+  final TokenResponse? tokens;
 
-  AuthResponse({required this.user, required this.tokens});
+  AuthResponse({
+    required this.success,
+    required this.message,
+    this.user,
+    this.tokens,
+  });
 
-  factory AuthResponse.fromJson(Map<String, dynamic> json) =>
-      _$AuthResponseFromJson(json);
+  factory AuthResponse.fromJson(Map<String, dynamic> json) {
+    try {
+      return _$AuthResponseFromJson(json);
+    } catch (e) {
+      // 如果解析失败，返回一个错误响应
+      return AuthResponse(
+        success: false,
+        message: 'Failed to parse response: $e',
+        user: null,
+        tokens: null,
+      );
+    }
+  }
+
   Map<String, dynamic> toJson() => _$AuthResponseToJson(this);
 }
 
@@ -550,6 +601,10 @@ class HardwareInfo {
   final List<UsbDevice> usbDevices;
   @JsonKey(name: 'network_interfaces')
   final List<NetworkInterfaceInfo>? networkInterfaces;
+  @JsonKey(name: 'no_disk_playback_mode_active', defaultValue: false)
+  final bool noDiskPlaybackModeActive;
+  @JsonKey(name: 'no_disk_playback_session_count', defaultValue: 0)
+  final int noDiskPlaybackSessionCount;
 
   HardwareInfo({
     required this.system,
@@ -558,6 +613,8 @@ class HardwareInfo {
     required this.disks,
     required this.usbDevices,
     this.networkInterfaces,
+    this.noDiskPlaybackModeActive = false,
+    this.noDiskPlaybackSessionCount = 0,
   });
 
   factory HardwareInfo.fromJson(Map<String, dynamic> json) =>
@@ -629,21 +686,35 @@ class UsbDevice {
 class AppStoreItem {
   final String id;
   final String name;
-  @JsonKey(name: 'display_name')
+  @JsonKey(name: 'display_name', defaultValue: '')
   final String displayName;
+  @JsonKey(defaultValue: '')
   final String description;
+  @JsonKey(defaultValue: '')
   final String icon;
+  @JsonKey(defaultValue: 'Other')
   final String category;
-  @JsonKey(name: 'docker_image')
+  @JsonKey(name: 'docker_image', defaultValue: '')
   final String dockerImage;
-  @JsonKey(name: 'recommended_tag')
+  @JsonKey(name: 'recommended_tag', defaultValue: 'latest')
   final String recommendedTag;
-  @JsonKey(name: 'default_ports')
+  @JsonKey(name: 'default_ports', defaultValue: [])
   final List<PortMapping> defaultPorts;
-  @JsonKey(name: 'default_volumes')
+  @JsonKey(name: 'default_volumes', defaultValue: [])
   final List<VolumeMapping> defaultVolumes;
-  @JsonKey(name: 'required_env')
+  @JsonKey(name: 'required_env', defaultValue: [])
   final List<String> requiredEnv;
+  // 额外的元数据字段
+  @JsonKey(defaultValue: null)
+  final String? source;
+  @JsonKey(defaultValue: null)
+  final String? version;
+  @JsonKey(defaultValue: null)
+  final String? author;
+  @JsonKey(defaultValue: null)
+  final List<String>? architectures;
+  @JsonKey(defaultValue: null)
+  final bool? installed;
 
   AppStoreItem({
     required this.id,
@@ -657,6 +728,11 @@ class AppStoreItem {
     required this.defaultPorts,
     required this.defaultVolumes,
     required this.requiredEnv,
+    this.source,
+    this.version,
+    this.author,
+    this.architectures,
+    this.installed,
   });
 
   factory AppStoreItem.fromJson(Map<String, dynamic> json) =>
@@ -1043,6 +1119,57 @@ class StorageDevice {
       totalSize > 0 ? (usedSize / totalSize) * 100 : 0;
 }
 
+/// 外部存储统计信息（排除eMMC）
+@JsonSerializable()
+class ExternalStorageStats {
+  @JsonKey(name: 'total_size')
+  final int totalSize;
+  @JsonKey(name: 'used_size')
+  final int usedSize;
+  @JsonKey(name: 'available_size')
+  final int availableSize;
+  @JsonKey(name: 'device_count')
+  final int deviceCount;
+  final List<StorageDevice> devices;
+  final StorageStatsFormatted formatted;
+
+  ExternalStorageStats({
+    required this.totalSize,
+    required this.usedSize,
+    required this.availableSize,
+    required this.deviceCount,
+    required this.devices,
+    required this.formatted,
+  });
+
+  factory ExternalStorageStats.fromJson(Map<String, dynamic> json) =>
+      _$ExternalStorageStatsFromJson(json);
+  Map<String, dynamic> toJson() => _$ExternalStorageStatsToJson(this);
+
+  double get usagePercentage =>
+      totalSize > 0 ? (usedSize / totalSize) * 100 : 0;
+}
+
+@JsonSerializable()
+class StorageStatsFormatted {
+  final String total;
+  final String used;
+  final String available;
+  @JsonKey(name: 'usage_percent')
+  final int usagePercent;
+
+  StorageStatsFormatted({
+    required this.total,
+    required this.used,
+    required this.available,
+    required this.usagePercent,
+  });
+
+  factory StorageStatsFormatted.fromJson(Map<String, dynamic> json) =>
+      _$StorageStatsFormattedFromJson(json);
+  Map<String, dynamic> toJson() => _$StorageStatsFormattedToJson(this);
+}
+
 // ============ Docker Models ============
 
 @JsonSerializable()
@@ -1259,4 +1386,163 @@ class ComposeApp {
   Map<String, dynamic> toJson() => _$ComposeAppToJson(this);
 
   bool get isRunning => status == 'running';
+}
+
+// ============ App Storage Stats ============
+
+/// RockZeroOS 应用专用存储统计
+///
+/// 显示 HLS 缓存、临时文件、日志、视频、数据库等的实际占用空间，
+/// 而不是整个分区的使用量。
+class AppStorageStats {
+  /// HLS 缓存大小（字节）
+  final int hlsCacheSize;
+
+  /// 临时文件大小（字节）
+  final int tempStorageSize;
+
+  /// 日志文件大小（字节）
+  final int logSize;
+
+  /// 视频存储大小（字节）
+  final int videoStorageSize;
+
+  /// 数据库文件大小（字节）
+  final int databaseSize;
+
+  /// RockZeroOS 应用总占用（字节）
+  final int totalAppUsage;
+
+  /// 可用空间（字节）
+  final int availableSpace;
+
+  // 格式化值（MB/GB）
+  final double hlsCacheSizeMb;
+  final double tempStorageSizeMb;
+  final double logSizeMb;
+  final double videoStorageSizeMb;
+  final double databaseSizeMb;
+  final double totalAppUsageMb;
+  final double availableSpaceGb;
+  final double totalUsedMb;
+
+  AppStorageStats({
+    required this.hlsCacheSize,
+    required this.tempStorageSize,
+    required this.logSize,
+    required this.videoStorageSize,
+    required this.databaseSize,
+    required this.totalAppUsage,
+    required this.availableSpace,
+    required this.hlsCacheSizeMb,
+    required this.tempStorageSizeMb,
+    required this.logSizeMb,
+    required this.videoStorageSizeMb,
+    required this.databaseSizeMb,
+    required this.totalAppUsageMb,
+    required this.availableSpaceGb,
+    required this.totalUsedMb,
+  });
+
+  factory AppStorageStats.fromJson(Map<String, dynamic> json) {
+    return AppStorageStats(
+      hlsCacheSize: (json['hls_cache_size'] as num?)?.toInt() ?? 0,
+      tempStorageSize: (json['temp_storage_size'] as num?)?.toInt() ?? 0,
+      logSize: (json['log_size'] as num?)?.toInt() ?? 0,
+      videoStorageSize: (json['video_storage_size'] as num?)?.toInt() ?? 0,
+      databaseSize: (json['database_size'] as num?)?.toInt() ?? 0,
+      totalAppUsage: (json['total_app_usage'] as num?)?.toInt() ?? 0,
+      availableSpace: (json['available_space'] as num?)?.toInt() ?? 0,
+      hlsCacheSizeMb: (json['hls_cache_size_mb'] as num?)?.toDouble() ?? 0.0,
+      tempStorageSizeMb:
+          (json['temp_storage_size_mb'] as num?)?.toDouble() ?? 0.0,
+      logSizeMb: (json['log_size_mb'] as num?)?.toDouble() ?? 0.0,
+      videoStorageSizeMb:
+          (json['video_storage_size_mb'] as num?)?.toDouble() ?? 0.0,
+      databaseSizeMb: (json['database_size_mb'] as num?)?.toDouble() ?? 0.0,
+      totalAppUsageMb: (json['total_app_usage_mb'] as num?)?.toDouble() ?? 0.0,
+      availableSpaceGb: (json['available_space_gb'] as num?)?.toDouble() ?? 0.0,
+      totalUsedMb: (json['total_used_mb'] as num?)?.toDouble() ?? 0.0,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'hls_cache_size': hlsCacheSize,
+        'temp_storage_size': tempStorageSize,
+        'log_size': logSize,
+        'video_storage_size': videoStorageSize,
+        'database_size': databaseSize,
+        'total_app_usage': totalAppUsage,
+        'available_space': availableSpace,
+        'hls_cache_size_mb': hlsCacheSizeMb,
+        'temp_storage_size_mb': tempStorageSizeMb,
+        'log_size_mb': logSizeMb,
+        'video_storage_size_mb': videoStorageSizeMb,
+        'database_size_mb': databaseSizeMb,
+        'total_app_usage_mb': totalAppUsageMb,
+        'available_space_gb': availableSpaceGb,
+        'total_used_mb': totalUsedMb,
+      };
+
+  /// 获取各项存储的详细信息列表
+  List<StorageBreakdownItem> get breakdown => [
+        StorageBreakdownItem(
+          name: 'Video Files',
+          icon: 'video_library',
+          size: videoStorageSize,
+          color: 0xFF2196F3, // Blue
+        ),
+        StorageBreakdownItem(
+          name: 'HLS Cache',
+          icon: 'cached',
+          size: hlsCacheSize,
+          color: 0xFFFF9800, // Orange
+        ),
+        StorageBreakdownItem(
+          name: 'Database',
+          icon: 'storage',
+          size: databaseSize,
+          color: 0xFF4CAF50, // Green
+        ),
+        StorageBreakdownItem(
+          name: 'Logs',
+          icon: 'description',
+          size: logSize,
+          color: 0xFF9C27B0, // Purple
+        ),
+        StorageBreakdownItem(
+          name: 'Temp Files',
+          icon: 'folder_open',
+          size: tempStorageSize,
+          color: 0xFF607D8B, // Blue Grey
+        ),
+      ];
+}
+
+/// 存储明细项
+class StorageBreakdownItem {
+  final String name;
+  final String icon;
+  final int size;
+  final int color;
+
+  StorageBreakdownItem({
+    required this.name,
+    required this.icon,
+    required this.size,
+    required this.color,
+  });
+
+  /// 格式化大小显示
+  String get formattedSize {
+    if (size >= 1024 * 1024 * 1024) {
+      return '${(size / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+    } else if (size >= 1024 * 1024) {
+      return '${(size / (1024 * 1024)).toStringAsFixed(2)} MB';
+    } else if (size >= 1024) {
+      return '${(size / 1024).toStringAsFixed(2)} KB';
+    } else {
+      return '$size B';
+    }
+  }
 }

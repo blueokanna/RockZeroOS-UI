@@ -1,0 +1,24 @@
+# 将以下内容添加到 ios/Podfile 文件中
+
+platform :ios, '12.0'  # 确保 iOS 版本支持 Face ID/Touch ID
+
+# 在 target 'Runner' do 块中添加
+target 'Runner' do
+  use_frameworks!
+  use_modular_headers!
+
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+  
+  # 如果需要，可以添加其他 pods
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    flutter_additional_ios_build_settings(target)
+    
+    # 确保所有 pods 使用正确的 iOS 版本
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '12.0'
+    end
+  end
+end
