@@ -34,8 +34,10 @@ class SecureHlsVideoPlayer extends ConsumerStatefulWidget {
     this.fileId,
     required this.fileName,
     required this.baseUrl,
-  }) : assert(filePath != null || fileId != null,
-            'Either filePath or fileId is required');
+  }) : assert(
+         filePath != null || fileId != null,
+         'Either filePath or fileId is required',
+       );
 
   @override
   ConsumerState<SecureHlsVideoPlayer> createState() =>
@@ -83,7 +85,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     1.25,
     1.5,
     2.0,
-    3.0
+    3.0,
   ];
 
   final List<StreamSubscription> _subscriptions = [];
@@ -181,7 +183,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         }
       } else {
         _setError(
-            'SAE 瀹夊叏鎻℃墜澶辫触(${e.stage.name}/${e.statusCode}): ${_formatError(e.message)}');
+          'SAE 瀹夊叏鎻℃墜澶辫触(${e.stage.name}/${e.statusCode}): ${_formatError(e.message)}',
+        );
       }
       return;
     } catch (e) {
@@ -256,16 +259,19 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           final content = checkResponse.body;
           if (_isPlaylistReadyForPlayback(content)) {
             debugPrint(
-                '[VideoPlayer] HLS playlist ready after ${i + 1} attempts');
+              '[VideoPlayer] HLS playlist ready after ${i + 1} attempts',
+            );
             playlistReady = true;
             break;
           }
         }
         debugPrint(
-            '[VideoPlayer] HLS playlist not ready (status=${checkResponse.statusCode}), waiting... (${i + 1}s)');
+          '[VideoPlayer] HLS playlist not ready (status=${checkResponse.statusCode}), waiting... (${i + 1}s)',
+        );
       } catch (e) {
         debugPrint(
-            '[VideoPlayer] HLS playlist check failed: $e, waiting... (${i + 1}s)');
+          '[VideoPlayer] HLS playlist check failed: $e, waiting... (${i + 1}s)',
+        );
       }
 
       if (i < 5) {
@@ -326,10 +332,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       // 寮哄埗灏嗘祦璧峰鏃堕棿閲嶅畾鍚戜负 0锛屼慨澶?PTS 鍋忕Щ瀵艰嚧鐨勬椂闂存樉绀洪敊璇?
       await mpv.setProperty('rebase-start-time', 'yes');
       // 鐢熸垚缂哄け PTS 骞朵涪寮冩崯鍧忓抚锛屽噺灏戦煶鐢绘紓绉讳笌鍗￠】銆?
-      await mpv.setProperty(
-        'demuxer-lavf-o',
-        'fflags=+genpts+discardcorrupt',
-      );
+      await mpv.setProperty('demuxer-lavf-o', 'fflags=+genpts+discardcorrupt');
       // 鈽?寮哄埗鍏佽鍦ㄢ€滅洿鎾€滺LS 娴佷腑杩涜 seek 鎿嶄綔
       await mpv.setProperty('force-seekable', 'yes');
 
@@ -386,10 +389,7 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     //   - Session ID 涓嶅彲鐚滄祴锛?28 浣嶉殢鏈猴級
     //   - 鏄庢枃鏁版嵁浠呭瓨鍦ㄤ簬璁惧鍐呭瓨涓?
     //   - 纾佺洏缂撳瓨娈典娇鐢?ChaCha20-Poly1305 闈欐€佸姞瀵?
-    await _player!.open(
-      Media(proxyPlaylistUrl),
-      play: true,
-    );
+    await _player!.open(Media(proxyPlaylistUrl), play: true);
 
     // 涓嶅啀鍦?open 鍚庣珛鍗?seek 鈥?绛夊緟鎾斁纭鍚庡啀澶勭悊
 
@@ -417,7 +417,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     if (result == 'timeout') {
       // 瓒呮椂浣嗘棤閿欒 鈥?浠嶇劧鏄剧ず鎾斁鍣紙鍙兘鍦ㄧ紦鍐插ぇ鏂囦欢锛?
       debugPrint(
-          '[VideoPlayer] HLS playback timeout but no error 鈥?showing player');
+        '[VideoPlayer] HLS playback timeout but no error 鈥?showing player',
+      );
       if (mounted) {
         setState(() => _isLoading = false);
       }
@@ -433,45 +434,59 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   void _setupPlayerListeners() {
     _cancelSubscriptions();
 
-    _subscriptions.add(_player!.stream.playing.listen((playing) {
-      if (mounted) setState(() => _isPlaying = playing);
-    }));
+    _subscriptions.add(
+      _player!.stream.playing.listen((playing) {
+        if (mounted) setState(() => _isPlaying = playing);
+      }),
+    );
 
-    _subscriptions.add(_player!.stream.position.listen((position) {
-      if (mounted) {
-        setState(() => _position = position);
-      }
-      _saveResumeProgressIfNeeded(position);
-    }));
+    _subscriptions.add(
+      _player!.stream.position.listen((position) {
+        if (mounted) {
+          setState(() => _position = position);
+        }
+        _saveResumeProgressIfNeeded(position);
+      }),
+    );
 
-    _subscriptions.add(_player!.stream.duration.listen((duration) {
-      if (mounted) {
-        setState(() {
-          _duration = duration;
-        });
-      }
-    }));
+    _subscriptions.add(
+      _player!.stream.duration.listen((duration) {
+        if (mounted) {
+          setState(() {
+            _duration = duration;
+          });
+        }
+      }),
+    );
 
-    _subscriptions.add(_player!.stream.buffering.listen((buffering) {
-      if (mounted) setState(() => _isBuffering = buffering);
-    }));
+    _subscriptions.add(
+      _player!.stream.buffering.listen((buffering) {
+        if (mounted) setState(() => _isBuffering = buffering);
+      }),
+    );
 
-    _subscriptions.add(_player!.stream.buffer.listen((buffer) {
-      if (mounted) setState(() => _bufferedPosition = buffer);
-    }));
+    _subscriptions.add(
+      _player!.stream.buffer.listen((buffer) {
+        if (mounted) setState(() => _bufferedPosition = buffer);
+      }),
+    );
 
-    _subscriptions.add(_player!.stream.error.listen((error) {
-      if (error.isNotEmpty && mounted) {
-        debugPrint('[SecureHLS] Player error: $error');
-      }
-    }));
+    _subscriptions.add(
+      _player!.stream.error.listen((error) {
+        if (error.isNotEmpty && mounted) {
+          debugPrint('[SecureHLS] Player error: $error');
+        }
+      }),
+    );
 
-    _subscriptions.add(_player!.stream.completed.listen((completed) {
-      if (completed && mounted) {
-        debugPrint('[SecureHLS] Playback completed');
-        _clearResumeProgress();
-      }
-    }));
+    _subscriptions.add(
+      _player!.stream.completed.listen((completed) {
+        if (completed && mounted) {
+          debugPrint('[SecureHLS] Playback completed');
+          _clearResumeProgress();
+        }
+      }),
+    );
   }
 
   String _resumeProgressKey() {
@@ -533,16 +548,17 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       final uri = Uri.parse(
         '${widget.baseUrl}/api/v1/filemanager/media/info?path=${Uri.encodeQueryComponent(mediaPath)}',
       );
-      final response = await http.get(uri, headers: {
-        'Authorization': 'Bearer $_authToken',
-      }).timeout(const Duration(seconds: 8));
+      final response = await http
+          .get(uri, headers: {'Authorization': 'Bearer $_authToken'})
+          .timeout(const Duration(seconds: 8));
 
       if (response.statusCode != 200) return;
       final data = jsonDecode(response.body) as Map<String, dynamic>;
 
       final dynamic rawDuration = data['duration'];
-      final double? durationSeconds =
-          rawDuration is num ? rawDuration.toDouble() : null;
+      final double? durationSeconds = rawDuration is num
+          ? rawDuration.toDouble()
+          : null;
       final dynamic rawBitrate = data['bitrate'] ?? data['bit_rate'];
       final int? bitrate = rawBitrate is num
           ? rawBitrate.toInt()
@@ -577,10 +593,10 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     final targetSeconds = bitrate >= 18 * 1000000
         ? 18
         : bitrate >= 10 * 1000000
-            ? 22
-            : bitrate >= 6 * 1000000
-                ? 28
-                : 34;
+        ? 22
+        : bitrate >= 6 * 1000000
+        ? 28
+        : 34;
     final estimated = (bitrateBytesPerSec * targetSeconds * 1.8).round();
 
     final minBuffer = 48 * 1024 * 1024;
@@ -608,17 +624,17 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     final readahead = ultraBitrate
         ? 80
         : highBitrate
-            ? 56
-            : lowEnd
-                ? 28
-                : 40;
+        ? 56
+        : lowEnd
+        ? 28
+        : 40;
     final cacheSecs = ultraBitrate
         ? 120
         : highBitrate
-            ? 95
-            : lowEnd
-                ? 40
-                : 70;
+        ? 95
+        : lowEnd
+        ? 40
+        : 70;
     final maxBackBytes = lowEnd ? '48MiB' : (highBitrate ? '96MiB' : '72MiB');
 
     await mpv.setProperty('demuxer-readahead-secs', '$readahead');
@@ -762,15 +778,17 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   void _enterFullscreen() {
     // 浣跨敤 immersiveSticky 瀹屽叏闅愯棌鐘舵€佹爮鍜屽鑸爮锛屽疄鐜扮湡姝ｅ叏灞?
     // 鐢ㄦ埛浠庤竟缂樻粦鍔ㄥ彲涓存椂鏄剧ず绯荤粺 UI锛屾澗鎵嬪悗鑷姩闅愯棌
-    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-      statusBarColor: Colors.black,
-      systemNavigationBarColor: Colors.black,
-      systemNavigationBarDividerColor: Colors.black,
-      statusBarIconBrightness: Brightness.light,
-      systemNavigationBarIconBrightness: Brightness.light,
-      systemStatusBarContrastEnforced: false,
-      systemNavigationBarContrastEnforced: false,
-    ));
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.black,
+        systemNavigationBarColor: Colors.black,
+        systemNavigationBarDividerColor: Colors.black,
+        statusBarIconBrightness: Brightness.light,
+        systemNavigationBarIconBrightness: Brightness.light,
+        systemStatusBarContrastEnforced: false,
+        systemNavigationBarContrastEnforced: false,
+      ),
+    );
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
@@ -802,15 +820,17 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
   }
 
   void _exitFullscreen() {
-    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      systemNavigationBarColor: Colors.transparent,
-      systemNavigationBarDividerColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.dark,
-      systemNavigationBarIconBrightness: Brightness.dark,
-      systemStatusBarContrastEnforced: false,
-      systemNavigationBarContrastEnforced: false,
-    ));
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarDividerColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        systemNavigationBarIconBrightness: Brightness.dark,
+        systemStatusBarContrastEnforced: false,
+        systemNavigationBarContrastEnforced: false,
+      ),
+    );
     SystemChrome.setEnabledSystemUIMode(
       SystemUiMode.edgeToEdge,
       overlays: SystemUiOverlay.values,
@@ -845,8 +865,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     final int maxMs = _duration > Duration.zero
         ? _duration.inMilliseconds
         : (_durationHint > Duration.zero
-            ? _durationHint.inMilliseconds
-            : targetMs);
+              ? _durationHint.inMilliseconds
+              : targetMs);
     final clampedMs = targetMs.clamp(minMs, maxMs);
 
     // 鈽?棰勮姹傜洰鏍囧垎鐗囧強鐩搁偦鍒嗙墖锛氳Е鍙戞湇鍔＄鎸夐渶鐢熸垚
@@ -897,8 +917,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         final ms = await Permission.manageExternalStorage.request();
         if (!ms.isGranted) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                content: Text('Storage permission is required')));
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Storage permission is required')),
+            );
           }
           return;
         }
@@ -913,8 +934,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
     try {
       Directory? downloadDir;
       if (Platform.isAndroid) {
-        downloadDir =
-            Directory('/storage/emulated/0/Download/RockZeroDownload');
+        downloadDir = Directory(
+          '/storage/emulated/0/Download/RockZeroDownload',
+        );
       } else if (Platform.isIOS) {
         final docDir = await getApplicationDocumentsDirectory();
         downloadDir = Directory('${docDir.path}/RockZeroDownload');
@@ -967,8 +989,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('宸蹭笅杞藉埌 ${downloadDir.path}'),
-              backgroundColor: Colors.green),
+            content: Text('宸蹭笅杞藉埌 ${downloadDir.path}'),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } catch (e) {
@@ -1143,8 +1166,10 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
             GestureDetector(
               onTap: () => _showEncryptionDetails(),
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.green.withValues(alpha: 0.25),
                   borderRadius: BorderRadius.circular(8),
@@ -1192,8 +1217,11 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       children: [
         // 蹇€€ 10 绉?
         IconButton(
-          icon: const Icon(Icons.replay_10_rounded,
-              color: Colors.white, size: 36),
+          icon: const Icon(
+            Icons.replay_10_rounded,
+            color: Colors.white,
+            size: 36,
+          ),
           onPressed: () => _seekRelative(-10),
           splashRadius: 28,
         ),
@@ -1228,8 +1256,11 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
         const SizedBox(width: 32),
         // 蹇繘 10 绉?
         IconButton(
-          icon: const Icon(Icons.forward_10_rounded,
-              color: Colors.white, size: 36),
+          icon: const Icon(
+            Icons.forward_10_rounded,
+            color: Colors.white,
+            size: 36,
+          ),
           onPressed: () => _seekRelative(10),
           splashRadius: 28,
         ),
@@ -1326,7 +1357,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
                   });
                 },
                 onChangeEnd: (value) {
-                  final target = _dragPreviewPosition ??
+                  final target =
+                      _dragPreviewPosition ??
                       Duration(milliseconds: (value * safeTotalMs).round());
                   setState(() {
                     _isDraggingProgress = false;
@@ -1352,7 +1384,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
                       onTap: _showSpeedPicker,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 5),
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.white.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(8),
@@ -1388,10 +1422,8 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (context) => _EncryptionPipelineSheet(
-        sessionId: _hlsSessionId,
-        runtime: runtime,
-      ),
+      builder: (context) =>
+          _EncryptionPipelineSheet(sessionId: _hlsSessionId, runtime: runtime),
     );
   }
 
@@ -1417,27 +1449,31 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
                 ),
               ),
             ),
-            ..._speedOptions.map((speed) => ListTile(
-                  title: Text(
-                    '${speed}x',
-                    style: TextStyle(
-                      color: _playbackSpeed == speed
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.white,
-                      fontWeight: _playbackSpeed == speed
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                    ),
+            ..._speedOptions.map(
+              (speed) => ListTile(
+                title: Text(
+                  '${speed}x',
+                  style: TextStyle(
+                    color: _playbackSpeed == speed
+                        ? Theme.of(context).colorScheme.primary
+                        : Colors.white,
+                    fontWeight: _playbackSpeed == speed
+                        ? FontWeight.bold
+                        : FontWeight.normal,
                   ),
-                  trailing: _playbackSpeed == speed
-                      ? Icon(Icons.check,
-                          color: Theme.of(context).colorScheme.primary)
-                      : null,
-                  onTap: () {
-                    _setPlaybackSpeed(speed);
-                    Navigator.pop(context);
-                  },
-                )),
+                ),
+                trailing: _playbackSpeed == speed
+                    ? Icon(
+                        Icons.check,
+                        color: Theme.of(context).colorScheme.primary,
+                      )
+                    : null,
+                onTap: () {
+                  _setPlaybackSpeed(speed);
+                  Navigator.pop(context);
+                },
+              ),
+            ),
             const SizedBox(height: 8),
           ],
         ),
@@ -1461,9 +1497,11 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
           children: [
             const Icon(Icons.error_outline, color: Colors.white54, size: 64),
             const SizedBox(height: 16),
-            Text(_error!,
-                style: const TextStyle(color: Colors.white54),
-                textAlign: TextAlign.center),
+            Text(
+              _error!,
+              style: const TextStyle(color: Colors.white54),
+              textAlign: TextAlign.center,
+            ),
             const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: _retry,
@@ -1492,7 +1530,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-            color: Colors.black87, borderRadius: BorderRadius.circular(12)),
+          color: Colors.black87,
+          borderRadius: BorderRadius.circular(12),
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1501,15 +1541,19 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer> {
                 const Icon(Icons.download, color: Colors.white),
                 const SizedBox(width: 12),
                 const Expanded(
-                    child:
-                        Text('涓嬭浇涓?..', style: TextStyle(color: Colors.white))),
-                Text('${(_downloadProgress * 100).toInt()}%',
-                    style: const TextStyle(color: Colors.white)),
+                  child: Text('涓嬭浇涓?..', style: TextStyle(color: Colors.white)),
+                ),
+                Text(
+                  '${(_downloadProgress * 100).toInt()}%',
+                  style: const TextStyle(color: Colors.white),
+                ),
               ],
             ),
             const SizedBox(height: 8),
             LinearProgressIndicator(
-                value: _downloadProgress, backgroundColor: Colors.white24),
+              value: _downloadProgress,
+              backgroundColor: Colors.white24,
+            ),
           ],
         ),
       ),
@@ -1543,10 +1587,7 @@ class _EncryptionPipelineSheet extends StatefulWidget {
   final String? sessionId;
   final SecureHlsRuntimeSnapshot? runtime;
 
-  const _EncryptionPipelineSheet({
-    this.sessionId,
-    this.runtime,
-  });
+  const _EncryptionPipelineSheet({this.sessionId, this.runtime});
 
   @override
   State<_EncryptionPipelineSheet> createState() =>
@@ -1781,11 +1822,7 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
                   ),
                 ],
               ),
-              child: Icon(
-                Icons.shield_rounded,
-                color: themeColor,
-                size: 28,
-              ),
+              child: Icon(Icons.shield_rounded, color: themeColor, size: 28),
             ),
             const SizedBox(width: 12),
             const Text(
@@ -1909,17 +1946,18 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
               decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: 0.05),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.1),
-                ),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.info_outline_rounded,
-                          color: Colors.white54, size: 14),
+                      Icon(
+                        Icons.info_outline_rounded,
+                        color: Colors.white54,
+                        size: 14,
+                      ),
                       const SizedBox(width: 6),
                       const Text(
                         '浼氳瘽淇℃伅',
@@ -1943,10 +1981,7 @@ class _EncryptionPipelineSheetState extends State<_EncryptionPipelineSheet>
                   const SizedBox(height: 4),
                   Text(
                     'Transport mode: ${(widget.runtime?.segmentRetries ?? 0) > 0 ? 'ZKP + Encrypted GET Fallback' : 'Session GET + ChaCha20-Poly1305'}',
-                    style: const TextStyle(
-                      color: Colors.white38,
-                      fontSize: 11,
-                    ),
+                    style: const TextStyle(color: Colors.white38, fontSize: 11),
                   ),
                 ],
               ),
@@ -2091,8 +2126,11 @@ class _NodeCard extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.check_circle_rounded,
-                  color: Colors.greenAccent, size: 10),
+              Icon(
+                Icons.check_circle_rounded,
+                color: Colors.greenAccent,
+                size: 10,
+              ),
               const SizedBox(width: 3),
               const Text(
                 'Active',
