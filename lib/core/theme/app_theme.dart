@@ -280,6 +280,33 @@ class AppTheme {
           vertical: 18,
         ),
       ),
+      tabBarTheme: TabBarThemeData(
+        labelColor: colorScheme.onSecondaryContainer,
+        unselectedLabelColor: colorScheme.onSurfaceVariant,
+        dividerColor: Colors.transparent,
+        indicatorSize: TabBarIndicatorSize.label,
+        indicator: ShapeDecoration(
+          color: colorScheme.secondaryContainer,
+          shape: const StadiumBorder(),
+        ),
+        overlayColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.pressed)) {
+            return colorScheme.primary.withValues(alpha: 0.08);
+          }
+          if (states.contains(WidgetState.hovered)) {
+            return colorScheme.primary.withValues(alpha: 0.05);
+          }
+          return Colors.transparent;
+        }),
+        splashBorderRadius: BorderRadius.circular(18),
+      ),
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+      ),
       navigationBarTheme: NavigationBarThemeData(
         elevation: 0,
         height: 80,

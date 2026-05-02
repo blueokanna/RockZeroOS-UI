@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/i18n/app_localizations.dart';
 import '../../../../core/network/api_service.dart';
 import '../../../../core/services/wallpaper_service.dart';
+import '../../../../core/theme/app_theme.dart';
 import '../../../files/presentation/pages/lan_transfer_page.dart';
 import '../widgets/platform_game_tab.dart';
 import 'in_app_browser_page.dart';
@@ -125,6 +126,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
   String? _searchQuery;
   Timer? _searchDebounce;
 
@@ -136,6 +138,11 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
   void initState() {
     super.initState();
     _tabController = TabController(length: 10, vsync: this);
+    _searchFocusNode.addListener(() {
+      if (mounted) {
+        setState(() {});
+      }
+    });
     _loadSteamSettings();
   }
 
@@ -143,6 +150,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
   void dispose() {
     _tabController.dispose();
     _searchController.dispose();
+    _searchFocusNode.dispose();
     _searchDebounce?.cancel();
     super.dispose();
   }
@@ -171,7 +179,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
 
   void _onSearchChanged(String value) {
     _searchDebounce?.cancel();
-    _searchDebounce = Timer(const Duration(milliseconds: 500), () {
+    _searchDebounce = Timer(M3Durations.medium1, () {
       if (mounted) {
         setState(() => _searchQuery = value.isEmpty ? null : value);
       }
@@ -182,6 +190,8 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final l10n = context.l10n;
+    final showSearchResults = _searchQuery != null;
+    final searchActive = _searchFocusNode.hasFocus || showSearchResults;
     final hasWallpaper =
         ref.watch(backgroundModeProvider) == BackgroundMode.customWallpaper &&
             ref.watch(customWallpaperPathProvider) != null;
@@ -295,39 +305,57 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                     Padding(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 8),
-                      child: SizedBox(
-                        height: 44,
-                        child: TextField(
-                          controller: _searchController,
-                          onChanged: _onSearchChanged,
-                          style: const TextStyle(fontSize: 14),
-                          decoration: InputDecoration(
-                            hintText: l10n.tr('appstore.search_global_hint'),
-                            hintStyle: TextStyle(
-                              fontSize: 14,
-                              color: colorScheme.onSurfaceVariant,
+                      child: AnimatedContainer(
+                        duration: M3Durations.short4,
+                        curve: M3Curves.standard,
+                        decoration: BoxDecoration(
+                          color: searchActive
+                              ? colorScheme.secondaryContainer
+                                  .withValues(alpha: 0.72)
+                              : colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(24),
+                          border: Border.all(
+                            color: searchActive
+                                ? colorScheme.primary.withValues(alpha: 0.24)
+                                : Colors.transparent,
+                          ),
+                        ),
+                        child: SizedBox(
+                          height: 44,
+                          child: TextField(
+                            controller: _searchController,
+                            focusNode: _searchFocusNode,
+                            onChanged: _onSearchChanged,
+                            style: const TextStyle(fontSize: 14),
+                            decoration: InputDecoration(
+                              hintText: l10n.tr('appstore.search_global_hint'),
+                              hintStyle: TextStyle(
+                                fontSize: 14,
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                              prefixIcon: Icon(Icons.search_rounded,
+                                  size: 20,
+                                  color: colorScheme.onSurfaceVariant),
+                              suffixIcon: showSearchResults
+                                  ? IconButton(
+                                      icon: Icon(Icons.clear_rounded,
+                                          size: 18,
+                                          color: colorScheme.onSurfaceVariant),
+                                      onPressed: () {
+                                        _searchController.clear();
+                                        _searchFocusNode.unfocus();
+                                        setState(() => _searchQuery = null);
+                                      },
+                                    )
+                                  : null,
+                              filled: false,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(24),
+                                borderSide: BorderSide.none,
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 0),
                             ),
-                            prefixIcon: Icon(Icons.search_rounded,
-                                size: 20, color: colorScheme.onSurfaceVariant),
-                            suffixIcon: _searchQuery != null
-                                ? IconButton(
-                                    icon: Icon(Icons.clear_rounded,
-                                        size: 18,
-                                        color: colorScheme.onSurfaceVariant),
-                                    onPressed: () {
-                                      _searchController.clear();
-                                      setState(() => _searchQuery = null);
-                                    },
-                                  )
-                                : null,
-                            filled: true,
-                            fillColor: colorScheme.surfaceContainerHighest,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(24),
-                              borderSide: BorderSide.none,
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 0),
                           ),
                         ),
                       ),
@@ -364,31 +392,58 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
             ),
           ),
         ],
-        body: _searchQuery != null
-            ? _buildSearchResults()
-            : TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildOverviewTab(),
-                  _buildRecommendationsTab(),
-                  _buildMyLibraryTab(),
-                  _buildSteamTab(),
-                  PlatformGameTab(
-                      platform: GamePlatform.epic,
-                      apiService: ref.read(apiServiceProvider)),
-                  PlatformGameTab(
-                      platform: GamePlatform.wegame,
-                      apiService: ref.read(apiServiceProvider)),
-                  PlatformGameTab(
-                      platform: GamePlatform.ubisoft,
-                      apiService: ref.read(apiServiceProvider)),
-                  PlatformGameTab(
-                      platform: GamePlatform.xbox,
-                      apiService: ref.read(apiServiceProvider)),
-                  _buildWasmAppsTab(),
-                  _buildPluginsTab(),
-                ],
+        body: AnimatedSwitcher(
+          duration: M3Durations.medium3,
+          switchInCurve: M3Curves.emphasizedDecelerate,
+          switchOutCurve: M3Curves.emphasizedAccelerate,
+          transitionBuilder: (child, animation) {
+            final offsetAnimation = Tween<Offset>(
+              begin: const Offset(0, 0.035),
+              end: Offset.zero,
+            ).animate(
+              CurvedAnimation(
+                parent: animation,
+                curve: M3Curves.emphasizedDecelerate,
               ),
+            );
+
+            return FadeTransition(
+              opacity: animation,
+              child: SlideTransition(position: offsetAnimation, child: child),
+            );
+          },
+          child: showSearchResults
+              ? KeyedSubtree(
+                  key: const ValueKey('wasm-store-search'),
+                  child: _buildSearchResults(),
+                )
+              : KeyedSubtree(
+                  key: const ValueKey('wasm-store-tabs'),
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _buildOverviewTab(),
+                      _buildRecommendationsTab(),
+                      _buildMyLibraryTab(),
+                      _buildSteamTab(),
+                      PlatformGameTab(
+                          platform: GamePlatform.epic,
+                          apiService: ref.read(apiServiceProvider)),
+                      PlatformGameTab(
+                          platform: GamePlatform.wegame,
+                          apiService: ref.read(apiServiceProvider)),
+                      PlatformGameTab(
+                          platform: GamePlatform.ubisoft,
+                          apiService: ref.read(apiServiceProvider)),
+                      PlatformGameTab(
+                          platform: GamePlatform.xbox,
+                          apiService: ref.read(apiServiceProvider)),
+                      _buildWasmAppsTab(),
+                      _buildPluginsTab(),
+                    ],
+                  ),
+                ),
+        ),
       ),
     );
   }
@@ -507,12 +562,9 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
           itemCount: items.length,
           itemBuilder: (context, index) {
             final game = items[index] as Map<String, dynamic>;
-            return _GameListTile(game: game).animate().fadeIn(
-                  delay: Duration(milliseconds: index * 50),
-                  duration: 300.ms,
-                );
+            return _GameListTile(game: game);
           },
-        );
+        ).m3FadeIn(duration: M3Durations.medium2);
       },
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => _buildErrorState('搜索失败: $e'),
@@ -678,11 +730,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
           ),
         ],
       ),
-    ).animate().fadeIn(duration: 400.ms).scale(
-          begin: const Offset(0.95, 0.95),
-          duration: 400.ms,
-          curve: Curves.easeOutCubic,
-        );
+    ).m3ScaleIn(duration: M3Durations.medium3);
   }
 
   // ============================================================================
@@ -865,10 +913,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
               itemCount: games.length,
               itemBuilder: (context, index) {
                 final game = games[index] as Map<String, dynamic>;
-                return _LibraryGameTile(game: game).animate().fadeIn(
-                      delay: Duration(milliseconds: (index * 30).clamp(0, 500)),
-                      duration: 200.ms,
-                    );
+                return _LibraryGameTile(game: game);
               },
             ),
           );
@@ -1066,7 +1111,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
           ),
         ],
       ),
-    ).animate().fadeIn(duration: 300.ms).slideY(begin: -0.1);
+    ).m3FadeIn(duration: M3Durations.medium2);
   }
 
   Widget _buildPlayerProfileSkeleton() {
@@ -1134,7 +1179,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
           ),
         ],
       ),
-    ).animate().fadeIn(delay: 200.ms, duration: 300.ms);
+    ).m3FadeIn(duration: M3Durations.medium2);
   }
 
   // ============================================================================
@@ -1163,10 +1208,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
               return _RecommendationTile(
                 game: game,
                 rank: index,
-              ).animate().fadeIn(
-                    delay: Duration(milliseconds: index * 40),
-                    duration: 250.ms,
-                  );
+              );
             },
           ),
         );
