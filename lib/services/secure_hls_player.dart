@@ -1,20 +1,9 @@
-<<<<<<< HEAD
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:thirds/blake3.dart' as blake3;
-import 'package:video_player/video_player.dart';
-
-import 'sae_client.dart';
-import 'secure_hls_proxy.dart';
-
-=======
-import 'dart:convert';
-import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
-import 'package:pointycastle/export.dart' as pc;
 import 'package:thirds/blake3.dart' as blake3;
 import 'package:video_player/video_player.dart';
 
@@ -23,88 +12,49 @@ import 'zkp/hls_bulletproof_auth.dart';
 import 'sae_client.dart';
 import 'secure_hls_proxy.dart';
 
-/// 安全 HLS 播放器
-///
-/// 使用 SAE 握手 + Bulletproofs ZKP 证明 + AES-256-GCM 加密
-///
-/// ## 安全架构
-/// 1. SAE 握手：与服务器建立共享密钥 (PMK)
-/// 2. Bulletproofs ZKP：证明用户知道密码，不泄露密码
-/// 3. AES-256-GCM：使用 PMK 派生的密钥加密视频段
-///
-/// ## 使用流程
-/// 1. 调用 initializeSaeHandshake() 完成 SAE 握手
-/// 2. 调用 play() 开始播放视频
-/// 3. 每个视频段请求都会自动生成 ZKP 证明
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
 class SecureHlsPlayer {
   final String baseUrl;
   final String jwtToken;
   static const int _requiredSaeGroup = 19;
 
-<<<<<<< HEAD
-  Uint8List? _pmk;
+  Uint8List? _pmk; // Pairwise Master Key
   String? _sessionId;
   String? _password;
 
-  SecureHlsProxyServer? _proxy;
-=======
-  // SAE 握手相关
-  Uint8List? _pmk; // Pairwise Master Key
-  String? _sessionId;
-  String? _password; // 保存密码用于 ZKP 证明生成
-
-  // ZKP 注册数据（从服务器获取）
   PasswordRegistration? _zkpRegistration;
 
-  // Bulletproofs 认证上下文
   late final HlsBulletproofAuth _bulletproofAuth;
 
-  // 加密器
   HlsEncryptor? _encryptor;
   SecureHlsProxyServer? _proxy;
 
-  // 视频播放器
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
   VideoPlayerController? _controller;
 
   SecureHlsPlayer({
     required this.baseUrl,
     required this.jwtToken,
-<<<<<<< HEAD
-  });
-=======
   }) {
     _bulletproofAuth = HlsBulletproofAuth();
   }
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
 
   bool _isSuccessStatus(int statusCode) =>
       statusCode >= 200 && statusCode < 300;
 
-<<<<<<< HEAD
-=======
-  /// 步骤 1: 初始化 SAE 握手
-  ///
-  /// 执行完整的 WPA3-SAE 握手，建立与服务器的共享密钥 (PMK)。
-  /// 同时获取用户的 ZKP 注册数据用于后续的证明生成。
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
   Future<void> initializeSaeHandshake(
     String userId,
-    String password,
-    String fileId,
-  ) async {
-<<<<<<< HEAD
-    _password = password;
+    String password, {
+    String? fileId,
+    String? filePath,
+  }) async {
+    if ((fileId == null || fileId.isEmpty) &&
+        (filePath == null || filePath.isEmpty)) {
+      throw Exception('Either fileId or filePath must be provided');
+    }
 
-=======
     debugPrint('[SecureHLS] Starting SAE handshake for user: $userId');
 
-    // 保存密码用于 ZKP 证明生成
     _password = password;
 
-    // 1. 创建 SAE 客户端
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
     final normalizedClientId =
         Uint8List.fromList(blake3.blake3(utf8.encode(userId), 32));
     final normalizedServerId = Uint8List.fromList(
@@ -117,58 +67,25 @@ class SecureHlsPlayer {
       deviceIdPeer: normalizedServerId,
     );
 
-<<<<<<< HEAD
     final clientCommit = saeClient.generateCommit();
 
-=======
-    // 2. 生成客户端 commit（返回 Map）
-    final clientCommit = saeClient.generateCommit();
-
-    // 3. 初始化服务器 SAE 握手
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
     final initResponse = await http.post(
       Uri.parse('$baseUrl/api/v1/secure-hls/sae/init'),
       headers: {
         'Authorization': 'Bearer $jwtToken',
         'Content-Type': 'application/json',
       },
-<<<<<<< HEAD
-      body: jsonEncode({'user_id': userId, 'file_id': fileId}),
-=======
       body: jsonEncode({
         'user_id': userId,
-        'file_id': fileId,
+        if (fileId != null && fileId.isNotEmpty) 'file_id': fileId,
+        if (filePath != null && filePath.isNotEmpty) 'file_path': filePath,
       }),
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
     );
 
     if (!_isSuccessStatus(initResponse.statusCode)) {
       throw Exception('SAE init failed: ${initResponse.body}');
     }
 
-<<<<<<< HEAD
-    final initData = jsonDecode(initResponse.body) as Map<String, dynamic>;
-    final tempSessionId = initData['temp_session_id'];
-    final antiCloggingToken = initData['anti_clogging_token'];
-    final selectedGroup = initData['selected_group'];
-    final supportedGroups = initData['supported_groups'];
-
-    if (antiCloggingToken == null ||
-        antiCloggingToken is! String ||
-        antiCloggingToken.isEmpty) {
-      throw Exception('SAE anti-clogging token is missing');
-    }
-    if (selectedGroup is! int || selectedGroup != _requiredSaeGroup) {
-      throw Exception(
-          'SAE selected_group invalid: expected $_requiredSaeGroup, got $selectedGroup');
-    }
-    if (supportedGroups is! List ||
-        !supportedGroups.any((g) => g == _requiredSaeGroup)) {
-      throw Exception(
-          'SAE supported_groups does not include required group $_requiredSaeGroup');
-    }
-
-=======
     final initData = jsonDecode(initResponse.body);
     final tempSessionId = initData['temp_session_id'];
     final antiCloggingToken = initData['anti_clogging_token'];
@@ -195,8 +112,6 @@ class SecureHlsPlayer {
 
     debugPrint('[SecureHLS] Got temp session: $tempSessionId');
 
-    // 4. 发送客户端 commit（clientCommit 已经是 Base64 编码）
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
     final commitResponse = await http.post(
       Uri.parse('$baseUrl/api/v1/secure-hls/sae/commit'),
       headers: {
@@ -214,24 +129,13 @@ class SecureHlsPlayer {
       throw Exception('SAE commit failed: ${commitResponse.body}');
     }
 
-<<<<<<< HEAD
-    final commitData = jsonDecode(commitResponse.body) as Map<String, dynamic>;
-    final serverCommit = commitData['server_commit'] as Map<String, dynamic>;
-    saeClient.processCommit(serverCommit);
-
-    final clientConfirm = saeClient.generateConfirm();
-=======
     final commitData = jsonDecode(commitResponse.body);
     final serverCommit = commitData['server_commit'] as Map<String, dynamic>;
 
-    // 5. 处理服务器 commit
     saeClient.processCommit(serverCommit);
 
-    // 6. 生成客户端 confirm
     final clientConfirm = saeClient.generateConfirm();
 
-    // 7. 发送客户端 confirm
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
     final confirmResponse = await http.post(
       Uri.parse('$baseUrl/api/v1/secure-hls/sae/confirm'),
       headers: {
@@ -249,25 +153,13 @@ class SecureHlsPlayer {
       throw Exception('SAE confirm failed: ${confirmResponse.body}');
     }
 
-<<<<<<< HEAD
-    final confirmData =
-        jsonDecode(confirmResponse.body) as Map<String, dynamic>;
-    final serverConfirm = confirmData['server_confirm'] as Map<String, dynamic>;
-    saeClient.verifyConfirm(serverConfirm);
-    _pmk = saeClient.getPmk();
-=======
     final confirmData = jsonDecode(confirmResponse.body);
 
-    // 8. 验证服务器 confirm
     final serverConfirm = confirmData['server_confirm'] as Map<String, dynamic>;
     saeClient.verifyConfirm(serverConfirm);
 
-    // 9. 获取 PMK
     _pmk = saeClient.getPmk();
     debugPrint('[SecureHLS] SAE handshake completed, PMK obtained');
-
-    // 10. 创建 HLS 会话（不使用 direct_mode，所有段加密传输）
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
 
     final sessionResponse = await http.post(
       Uri.parse('$baseUrl/api/v1/secure-hls/session/create'),
@@ -275,32 +167,17 @@ class SecureHlsPlayer {
         'Authorization': 'Bearer $jwtToken',
         'Content-Type': 'application/json',
       },
-<<<<<<< HEAD
-      body: jsonEncode({'temp_session_id': tempSessionId, 'file_id': fileId}),
-=======
       body: jsonEncode({
         'temp_session_id': tempSessionId,
-        'file_id': fileId,
+        if (fileId != null && fileId.isNotEmpty) 'file_id': fileId,
+        if (filePath != null && filePath.isNotEmpty) 'file_path': filePath,
       }),
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
     );
 
     if (!_isSuccessStatus(sessionResponse.statusCode)) {
       throw Exception('Session create failed: ${sessionResponse.body}');
     }
 
-<<<<<<< HEAD
-    final sessionData =
-        jsonDecode(sessionResponse.body) as Map<String, dynamic>;
-    _sessionId = sessionData['session_id']?.toString();
-    if (_sessionId == null || _sessionId!.isEmpty) {
-      throw Exception('Session id missing from secure-hls response');
-    }
-  }
-
-  Future<VideoPlayerController> play() async {
-    final playlistUrl = await getProxyPlaylistUrl();
-=======
     final sessionData = jsonDecode(sessionResponse.body);
     _sessionId = sessionData['session_id'];
     final zkpEnabled = sessionData['zkp_enabled'] ?? false;
@@ -309,7 +186,6 @@ class SecureHlsPlayer {
     debugPrint('[SecureHLS] HLS session created: $_sessionId '
         '(ZKP: $zkpEnabled, direct: $directMode)');
 
-    // 11. 初始化加密器（使用 HKDF-Blake3 派生密钥）
     _encryptor = HlsEncryptor(
       pmk: _pmk!,
       sessionId: _sessionId!,
@@ -319,11 +195,6 @@ class SecureHlsPlayer {
     );
   }
 
-  /// 步骤 2: 播放视频
-  ///
-  /// 注意：Flutter video_player 不支持自定义 HTTP 客户端，
-  /// 需要使用本地代理服务器模式来拦截和解密视频段。
-  /// 请参考 SecureHlsProxyServer 类的实现。
   Future<VideoPlayerController> play() async {
     if (_sessionId == null || _pmk == null) {
       throw Exception('SAE handshake not completed');
@@ -337,18 +208,16 @@ class SecureHlsPlayer {
       throw Exception('Password not available for ZKP proof generation');
     }
 
-    // 启动本地代理以在每个分片请求中附加 Bulletproofs ZKP 证明
     _proxy ??= SecureHlsProxyServer(
       baseUrl: baseUrl,
       sessionId: _sessionId!,
       pmk: _pmk!,
       password: _password!,
-      jwtToken: jwtToken, // 传递 JWT token 给代理
+      jwtToken: jwtToken,
     );
 
     final proxyPlaylistUrl = await _proxy!.start();
 
-    // 使用代理返回的播放列表 URL 初始化播放器
     _controller = VideoPlayerController.networkUrl(
       Uri.parse(proxyPlaylistUrl),
       httpHeaders: const {},
@@ -361,27 +230,14 @@ class SecureHlsPlayer {
     return _controller!;
   }
 
-  /// 直接播放模式（无代理、无加密、无 ZKP）
-  ///
-  /// 视频段通过 GET 请求直接获取，不经过本地代理。
-  /// 安全性由 session_id（随机 UUID）保证。
-  /// 适合 ARM 等低性能设备，避免每段的 ZKP 证明和加解密开销。
-  ///
-  /// 流程：
-  /// 1. 播放器直接 GET playlist.m3u8（session 鉴权）
-  /// 2. 播放器直接 GET segment_N.ts（session 鉴权）
-  /// 3. 服务器返回明文视频段
-  /// 4. 支持随点随播（ffmpeg VOD 分片 + HLS ENDLIST）
   Future<VideoPlayerController> playDirect() async {
     if (_sessionId == null) {
       throw Exception(
           'SAE handshake not completed. Call initializeSaeHandshake() first.');
     }
 
-    // 直接使用服务器的播放列表 URL（不需要本地代理）
     final playlistUrl = '$baseUrl/api/v1/secure-hls/$_sessionId/playlist.m3u8';
     debugPrint('[SecureHLS] Direct play mode: $playlistUrl');
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
 
     _controller = VideoPlayerController.networkUrl(
       Uri.parse(playlistUrl),
@@ -389,44 +245,11 @@ class SecureHlsPlayer {
     );
 
     await _controller!.initialize();
-<<<<<<< HEAD
-    return _controller!;
-  }
-
-  Future<String> getProxyPlaylistUrl() async {
-    if (_sessionId == null || _pmk == null) {
-      throw Exception('SAE handshake not completed');
-    }
-    if (_password == null) {
-      throw Exception('Password not available for SAE session continuity');
-    }
-
-    _proxy ??= SecureHlsProxyServer(
-      baseUrl: baseUrl,
-      sessionId: _sessionId!,
-      pmk: _pmk!,
-      password: _password!,
-      jwtToken: jwtToken,
-    );
-
-    return _proxy!.start();
-  }
-
-  String getDirectPlaylistUrl() {
-    if (_sessionId == null) {
-      throw Exception('SAE handshake not completed');
-    }
-    return '$baseUrl/api/v1/secure-hls/$_sessionId/playlist.m3u8';
-  }
-
-=======
     debugPrint('[SecureHLS] Video player initialized (direct mode, no proxy)');
 
     return _controller!;
   }
 
-  /// 停止播放
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
   Future<void> stop() async {
     final sid = _sessionId;
     if (sid != null) {
@@ -437,13 +260,7 @@ class SecureHlsPlayer {
             if (jwtToken.isNotEmpty) 'Authorization': 'Bearer $jwtToken',
           },
         ).timeout(const Duration(seconds: 5));
-<<<<<<< HEAD
       } catch (_) {}
-=======
-      } catch (_) {
-        // 会话 stop 失败不应阻止本地资源释放
-      }
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
     }
 
     await _proxy?.stop();
@@ -453,28 +270,14 @@ class SecureHlsPlayer {
     _sessionId = null;
     _pmk = null;
     _password = null;
-<<<<<<< HEAD
-  }
-
-  VideoPlayerController? get controller => _controller;
-  SecureHlsProxyServer? get proxy => _proxy;
-  String? get sessionId => _sessionId;
-  Uint8List? get pmk => _pmk;
-=======
     _zkpRegistration = null;
     _encryptor = null;
   }
 
-  /// 获取播放器控制器
   VideoPlayerController? get controller => _controller;
 
-  /// 获取代理服务器实例（用于段预取等）
   SecureHlsProxyServer? get proxy => _proxy;
 
-  /// 获取代理播放列表 URL
-  ///
-  /// 启动本地代理服务器（如果未启动），返回代理播放列表 URL。
-  /// 供 media_kit 或其他播放器使用。
   Future<String> getProxyPlaylistUrl() async {
     if (_sessionId == null || _pmk == null) {
       throw Exception('SAE handshake not completed');
@@ -495,11 +298,6 @@ class SecureHlsPlayer {
     return await _proxy!.start();
   }
 
-  /// 获取直接播放列表 URL（无代理模式）
-  ///
-  /// 返回服务器的播放列表 URL，播放器直接通过 GET 请求获取视频段。
-  /// 无需本地代理、ZKP 证明或段加解密，适合 ARM 等低性能设备。
-  /// 支持随点随播（ffmpeg VOD 分片）。
   String getDirectPlaylistUrl() {
     if (_sessionId == null) {
       throw Exception('SAE handshake not completed');
@@ -507,21 +305,13 @@ class SecureHlsPlayer {
     return '$baseUrl/api/v1/secure-hls/$_sessionId/playlist.m3u8';
   }
 
-  /// 获取会话 ID
   String? get sessionId => _sessionId;
 
-  /// 获取 PMK
   Uint8List? get pmk => _pmk;
 
-  /// 获取 ZKP 注册数据
   PasswordRegistration? get zkpRegistration => _zkpRegistration;
 }
 
-/// HLS 加密器
-///
-/// 负责：
-/// 1. 生成 Bulletproofs ZKP 证明
-/// 2. 解密视频段（AES-256-GCM）
 class HlsEncryptor {
   final Uint8List pmk;
   final String sessionId;
@@ -537,17 +327,9 @@ class HlsEncryptor {
     required this.zkpRegistration,
     required this.bulletproofAuth,
   }) {
-    // 从 PMK 派生加密密钥（使用 HKDF-Blake3，与 Rust 端完全一致）
     _encryptionKey = _deriveKey(pmk, 'hls-master-key');
   }
 
-  /// 生成 Bulletproofs ZKP 证明
-  ///
-  /// 生成完整的零知识证明，证明用户知道密码。
-  /// 证明包含：
-  /// - Schnorr 证明：证明知道密码和 blinding factor
-  /// - Bulletproofs 范围证明：证明密码熵值 >= 28 bits
-  /// - 时间戳和 nonce：防止重放攻击
   String generateZkpProof() {
     if (zkpRegistration == null) {
       throw StateError(
@@ -555,7 +337,6 @@ class HlsEncryptor {
       );
     }
 
-    // 确保 FFI 已初始化
     if (!bulletproofAuth.isInitialized) {
       if (!bulletproofAuth.initializeAuto()) {
         throw StateError(
@@ -567,71 +348,40 @@ class HlsEncryptor {
 
     debugPrint('[HlsEncryptor] Generating full Bulletproofs ZKP proof...');
 
-    // generateProof 直接返回 Base64 编码的证明字符串
     final proofBase64 = bulletproofAuth.generateProof(
       password,
       zkpRegistration!,
       context: 'hls_segment_access',
     );
 
-    debugPrint('[HlsEncryptor] ✅ Bulletproofs ZKP proof generated');
+    debugPrint('[HlsEncryptor] Bulletproofs ZKP proof generated');
 
     return proofBase64;
   }
 
-  /// 解密视频段（AES-256-GCM）
-  ///
-  /// 格式：nonce (12 bytes) + ciphertext + tag (16 bytes)
-  Uint8List decryptSegment(Uint8List encryptedData) {
+  Future<Uint8List> decryptSegment(Uint8List encryptedData) async {
     if (encryptedData.length < 28) {
-      throw Exception('Encrypted data too short for AES-256-GCM');
+      throw Exception('Encrypted data too short for ChaCha20-Poly1305');
     }
 
-    // 提取 nonce（前 12 字节）
     final nonce = encryptedData.sublist(0, 12);
-    // 剩余部分是 ciphertext + auth tag
-    final ciphertextWithTag = encryptedData.sublist(12);
+    final ciphertext = encryptedData.sublist(12, encryptedData.length - 16);
+    final macBytes = encryptedData.sublist(encryptedData.length - 16);
 
-    // 使用 AES-256-GCM 解密
-    return _aesGcmDecrypt(_encryptionKey, nonce, ciphertextWithTag);
+    final plaintext = await Chacha20.poly1305Aead().decrypt(
+      SecretBox(ciphertext, nonce: nonce, mac: Mac(macBytes)),
+      secretKey: SecretKey(_encryptionKey),
+    );
+
+    return Uint8List.fromList(plaintext);
   }
 
-  /// 从密钥派生子密钥（HKDF-Blake3，与 Rust 端完全一致）
   Uint8List _deriveKey(Uint8List key, String info) {
     final hkdf = HkdfBlake3.withSessionSalt(sessionId, key);
     return hkdf.expand(Uint8List.fromList(utf8.encode(info)), 32);
   }
-
-  /// AES-256-GCM 解密
-  Uint8List _aesGcmDecrypt(
-    Uint8List key,
-    Uint8List nonce,
-    Uint8List ciphertextWithTag,
-  ) {
-    final gcm = pc.GCMBlockCipher(pc.AESEngine());
-
-    final params = pc.AEADParameters(
-      pc.KeyParameter(key),
-      128, // tag 长度（位）
-      nonce,
-      Uint8List(0), // AAD
-    );
-
-    gcm.init(false, params);
-
-    try {
-      return gcm.process(ciphertextWithTag);
-    } catch (e) {
-      throw Exception('AES-256-GCM decryption failed: $e');
-    }
-  }
 }
 
-/// 自定义 HTTP 客户端（拦截 TS 段请求）
-///
-/// 用于拦截视频段请求，自动添加 ZKP 证明。
-/// 注意：Flutter video_player 不直接支持自定义 HTTP 客户端，
-/// 生产环境请使用 SecureHlsProxyServer。
 class SecureHttpClient extends http.BaseClient {
   final String baseUrl;
   final String sessionId;
@@ -650,14 +400,11 @@ class SecureHttpClient extends http.BaseClient {
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     final url = request.url.toString();
 
-    // 拦截 TS 段请求
     if (url.contains('.ts')) {
       debugPrint('[SecureHLS] Intercepting segment request: $url');
 
-      // 生成 Bulletproofs ZKP 证明
       final zkpProof = encryptor.generateZkpProof();
 
-      // 发送 POST 请求（带 ZKP 证明）
       final response = await http.post(
         request.url,
         headers: {
@@ -678,9 +425,8 @@ class SecureHttpClient extends http.BaseClient {
         );
       }
 
-      // 解密视频段
       final encryptedData = response.bodyBytes;
-      final decryptedData = encryptor.decryptSegment(encryptedData);
+      final decryptedData = await encryptor.decryptSegment(encryptedData);
 
       debugPrint(
           '[SecureHLS] Segment decrypted: ${decryptedData.length} bytes');
@@ -692,8 +438,6 @@ class SecureHttpClient extends http.BaseClient {
       );
     }
 
-    // 其他请求直接转发
     return _inner.send(request);
   }
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
 }

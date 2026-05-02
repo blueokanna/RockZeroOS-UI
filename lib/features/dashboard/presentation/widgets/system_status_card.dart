@@ -4,11 +4,17 @@ import 'package:flutter_animate/flutter_animate.dart';
 
 import '../../../../core/models/api_models.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../storage/presentation/providers/disk_platform_capabilities_provider.dart';
 
 class SystemStatusCard extends StatelessWidget {
   final AsyncValue<HardwareInfo?> hardwareInfo;
+  final AsyncValue<DiskPlatformCapabilities> diskCapabilities;
 
-  const SystemStatusCard({super.key, required this.hardwareInfo});
+  const SystemStatusCard({
+    super.key,
+    required this.hardwareInfo,
+    required this.diskCapabilities,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -79,6 +85,16 @@ class SystemStatusCard extends StatelessWidget {
         _buildNoDiskModeRow(context, info)
             .animate()
             .fadeIn(delay: 80.ms, curve: M3Curves.emphasizedDecelerate),
+        const SizedBox(height: 12),
+        diskCapabilities
+            .when(
+              data: (capabilities) =>
+                  _buildStorageModeRow(context, capabilities),
+              loading: () => const SizedBox.shrink(),
+              error: (_, __) => const SizedBox.shrink(),
+            )
+            .animate()
+            .fadeIn(delay: 90.ms, curve: M3Curves.emphasizedDecelerate),
         const SizedBox(height: 12),
 
         // System info row
@@ -178,6 +194,46 @@ class SystemStatusCard extends StatelessWidget {
               active
                   ? 'No-disk playback mode ACTIVE ($sessions session${sessions == 1 ? '' : 's'})'
                   : 'No-disk playback mode inactive',
+              style: textTheme.bodyMedium?.copyWith(
+                color: statusColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStorageModeRow(
+    BuildContext context,
+    DiskPlatformCapabilities capabilities,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final active = capabilities.readWriteOnlyMode;
+    final statusColor = active ? colorScheme.secondary : colorScheme.primary;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: statusColor.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: statusColor.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            active ? Icons.lock_outline_rounded : Icons.task_alt_rounded,
+            size: 20,
+            color: statusColor,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              active
+                  ? 'Storage backend is read-only for files + disk status'
+                  : 'Storage backend supports full disk management',
               style: textTheme.bodyMedium?.copyWith(
                 color: statusColor,
                 fontWeight: FontWeight.w600,

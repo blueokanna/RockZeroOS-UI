@@ -917,6 +917,79 @@ class StorageInfo {
   Map<String, dynamic> toJson() => _$StorageInfoToJson(this);
 }
 
+@JsonSerializable()
+class StorageRootBindingStatus {
+  final String platform;
+  @JsonKey(name: 'scoped_mode')
+  final bool scopedMode;
+  final bool configured;
+  @JsonKey(name: 'requires_selection')
+  final bool requiresSelection;
+  @JsonKey(name: 'selected_root')
+  final String? selectedRoot;
+  @JsonKey(name: 'config_path')
+  final String? configPath;
+
+  StorageRootBindingStatus({
+    required this.platform,
+    required this.scopedMode,
+    required this.configured,
+    required this.requiresSelection,
+    this.selectedRoot,
+    this.configPath,
+  });
+
+  factory StorageRootBindingStatus.fromJson(Map<String, dynamic> json) =>
+      _$StorageRootBindingStatusFromJson(json);
+  Map<String, dynamic> toJson() => _$StorageRootBindingStatusToJson(this);
+}
+
+@JsonSerializable()
+class StorageRootBrowseEntry {
+  final String name;
+  final String path;
+  @JsonKey(name: 'is_directory')
+  final bool isDirectory;
+  @JsonKey(name: 'total_space')
+  final int? totalSpace;
+  @JsonKey(name: 'available_space')
+  final int? availableSpace;
+  @JsonKey(name: 'file_system')
+  final String? fileSystem;
+
+  StorageRootBrowseEntry({
+    required this.name,
+    required this.path,
+    required this.isDirectory,
+    this.totalSpace,
+    this.availableSpace,
+    this.fileSystem,
+  });
+
+  factory StorageRootBrowseEntry.fromJson(Map<String, dynamic> json) =>
+      _$StorageRootBrowseEntryFromJson(json);
+  Map<String, dynamic> toJson() => _$StorageRootBrowseEntryToJson(this);
+}
+
+@JsonSerializable()
+class StorageRootBrowseResponse {
+  @JsonKey(name: 'current_path')
+  final String currentPath;
+  @JsonKey(name: 'parent_path')
+  final String? parentPath;
+  final List<StorageRootBrowseEntry> entries;
+
+  StorageRootBrowseResponse({
+    required this.currentPath,
+    this.parentPath,
+    required this.entries,
+  });
+
+  factory StorageRootBrowseResponse.fromJson(Map<String, dynamic> json) =>
+      _$StorageRootBrowseResponseFromJson(json);
+  Map<String, dynamic> toJson() => _$StorageRootBrowseResponseToJson(this);
+}
+
 // ============ File Preview Models ============
 
 @JsonSerializable()

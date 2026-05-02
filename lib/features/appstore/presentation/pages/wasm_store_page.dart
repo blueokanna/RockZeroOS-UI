@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../../core/i18n/app_localizations.dart';
 import '../../../../core/network/api_service.dart';
 import '../../../../core/services/wallpaper_service.dart';
 import '../../../files/presentation/pages/lan_transfer_page.dart';
@@ -180,6 +181,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final l10n = context.l10n;
     final hasWallpaper =
         ref.watch(backgroundModeProvider) == BackgroundMode.customWallpaper &&
             ref.watch(customWallpaperPathProvider) != null;
@@ -203,7 +205,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                       size: 22, color: colorScheme.primary),
                   const SizedBox(width: 8),
                   Text(
-                    '游戏中心',
+                    l10n.tr('appstore.title'),
                     style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
@@ -217,7 +219,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
             actions: [
               IconButton(
                 icon: const Icon(Icons.refresh_rounded),
-                tooltip: '刷新',
+                tooltip: l10n.tr('appstore.refresh'),
                 onPressed: () {
                   ref.invalidate(wasmStoreOverviewProvider);
                   ref.invalidate(steamFeaturedProvider);
@@ -226,7 +228,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
               ),
               PopupMenuButton<String>(
                 icon: const Icon(Icons.more_vert_rounded),
-                tooltip: '更多',
+                tooltip: l10n.tr('appstore.more'),
                 onSelected: (value) {
                   switch (value) {
                     case 'lan_transfer':
@@ -240,38 +242,38 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                   }
                 },
                 itemBuilder: (context) => [
-                  const PopupMenuItem(
+                  PopupMenuItem(
                     value: 'lan_transfer',
                     child: ListTile(
                       leading: Icon(Icons.swap_horiz_rounded),
-                      title: Text('局域网传输'),
+                      title: Text(l10n.tr('appstore.menu.lan_transfer')),
                       dense: true,
                       contentPadding: EdgeInsets.zero,
                     ),
                   ),
-                  const PopupMenuItem(
+                  PopupMenuItem(
                     value: 'github_import',
                     child: ListTile(
                       leading: Icon(Icons.download_rounded),
-                      title: Text('GitHub 导入'),
+                      title: Text(l10n.tr('appstore.menu.github_import')),
                       dense: true,
                       contentPadding: EdgeInsets.zero,
                     ),
                   ),
-                  const PopupMenuItem(
+                  PopupMenuItem(
                     value: 'wasm_script',
                     child: ListTile(
                       leading: Icon(Icons.terminal_rounded),
-                      title: Text('WASM 脚本执行'),
+                      title: Text(l10n.tr('appstore.menu.wasm_script')),
                       dense: true,
                       contentPadding: EdgeInsets.zero,
                     ),
                   ),
-                  const PopupMenuItem(
+                  PopupMenuItem(
                     value: 'steam_settings',
                     child: ListTile(
                       leading: Icon(Icons.person_search_rounded),
-                      title: Text('Steam 账号设置'),
+                      title: Text(l10n.tr('appstore.menu.steam_settings')),
                       dense: true,
                       contentPadding: EdgeInsets.zero,
                     ),
@@ -300,7 +302,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                           onChanged: _onSearchChanged,
                           style: const TextStyle(fontSize: 14),
                           decoration: InputDecoration(
-                            hintText: '搜索游戏、应用、插件...',
+                            hintText: l10n.tr('appstore.search_global_hint'),
                             hintStyle: TextStyle(
                               fontSize: 14,
                               color: colorScheme.onSurfaceVariant,
@@ -343,17 +345,17 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                         fontSize: 13,
                         fontWeight: FontWeight.w400,
                       ),
-                      tabs: const [
-                        Tab(text: '推荐'),
-                        Tab(text: '每日Top30'),
-                        Tab(text: '我的游戏库'),
-                        Tab(text: 'Steam'),
-                        Tab(text: 'Epic Game'),
-                        Tab(text: 'WeGame'),
-                        Tab(text: 'Ubisoft'),
-                        Tab(text: 'Xbox'),
-                        Tab(text: 'WASM 应用'),
-                        Tab(text: '插件'),
+                      tabs: [
+                        Tab(text: l10n.tr('appstore.tab.recommended')),
+                        Tab(text: l10n.tr('appstore.tab.daily_top')),
+                        Tab(text: l10n.tr('appstore.tab.library')),
+                        const Tab(text: 'Steam'),
+                        Tab(text: l10n.tr('appstore.tab.epic')),
+                        const Tab(text: 'WeGame'),
+                        const Tab(text: 'Ubisoft'),
+                        const Tab(text: 'Xbox'),
+                        Tab(text: l10n.tr('appstore.tab.wasm_apps')),
+                        Tab(text: l10n.tr('appstore.tab.plugins')),
                       ],
                     ),
                   ],

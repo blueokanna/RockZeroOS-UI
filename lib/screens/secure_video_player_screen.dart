@@ -6,7 +6,8 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../core/services/video_player_service.dart';
 
 class SecureVideoPlayerScreen extends ConsumerStatefulWidget {
-  final String fileId;
+  final String? fileId;
+  final String? filePath;
   final String fileName;
   final String jwtToken;
   final String userId;
@@ -15,13 +16,18 @@ class SecureVideoPlayerScreen extends ConsumerStatefulWidget {
 
   const SecureVideoPlayerScreen({
     super.key,
-    required this.fileId,
+    this.fileId,
+    this.filePath,
     required this.fileName,
     required this.jwtToken,
     required this.userId,
     required this.password,
     required this.baseUrl,
-  });
+  }) : assert(
+          (fileId != null && fileId != '') ||
+              (filePath != null && filePath != ''),
+          'Either fileId or filePath is required',
+        );
 
   @override
   ConsumerState<SecureVideoPlayerScreen> createState() =>
@@ -71,6 +77,7 @@ class _SecureVideoPlayerScreenState
       userId: widget.userId,
       password: widget.password,
       fileId: widget.fileId,
+      filePath: widget.filePath,
       fileName: widget.fileName,
     );
 
@@ -81,7 +88,7 @@ class _SecureVideoPlayerScreenState
   @override
   void dispose() {
     _isDisposed = true;
-    // 不停止播放器 - 让它继续在小窗模式播放
+    // 不停止播放器，让它继续在小窗模式播放
     final service = ref.read(videoPlayerServiceProvider.notifier);
     service.exitFullscreen();
     _exitFullscreen();
@@ -185,11 +192,7 @@ class _SecureVideoPlayerScreenState
           ),
           const SizedBox(height: 12),
           Text(
-<<<<<<< HEAD
-            'SAE 握手 + ChaCha20-Poly1305 加密',
-=======
             'SAE 握手 + AES-256-GCM 加密',
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
             style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
           ),
           const SizedBox(height: 32),
@@ -367,11 +370,7 @@ class _SecureVideoPlayerScreenState
                       Icon(Icons.lock, color: Colors.green, size: 14),
                       SizedBox(width: 4),
                       Text(
-<<<<<<< HEAD
-                        'ChaCha20-Poly1305',
-=======
                         'AES-256-GCM',
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
                         style: TextStyle(
                           color: Colors.green,
                           fontSize: 11,

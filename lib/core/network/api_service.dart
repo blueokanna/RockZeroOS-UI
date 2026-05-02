@@ -540,6 +540,12 @@ class ApiService {
     return (response.data as List).cast<Map<String, dynamic>>();
   }
 
+  /// Get backend disk management capabilities
+  Future<Map<String, dynamic>> getDiskCapabilities() async {
+    final response = await _dio.get('/api/v1/disk/capabilities');
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
   // ============ App Store API ============
 
   // CasaOS App Store
@@ -688,6 +694,37 @@ class ApiService {
   }
 
   // ============ File Manager API ============
+
+  Future<StorageRootBindingStatus> getStorageScopeStatus() async {
+    final response = await _dio.get('/api/v1/filemanager/scope/status');
+    return StorageRootBindingStatus.fromJson(response.data);
+  }
+
+  Future<StorageRootBrowseResponse> browseStorageScope({String? path}) async {
+    final response = await _dio.get(
+      '/api/v1/filemanager/scope/browse',
+      queryParameters: {
+        if (path != null && path.isNotEmpty) 'path': path,
+      },
+    );
+    return StorageRootBrowseResponse.fromJson(response.data);
+  }
+
+  Future<void> configureStorageScope({
+    required String path,
+    bool createIfMissing = false,
+  }) async {
+    await _dio.post(
+      '/api/v1/filemanager/scope/configure',
+      data: {
+        'path': path,
+        'create_if_missing': createIfMissing,
+      },
+      options: Options(
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ),
+    );
+  }
 
   Future<DirectoryListing> listDirectory({
     String? path,
@@ -846,6 +883,19 @@ class ApiService {
       queryParameters: {'path': path},
     );
     return FilePreviewResponse.fromJson(response.data);
+  }
+
+  Future<void> saveTextFile({
+    required String path,
+    required String content,
+  }) async {
+    await _dio.post(
+      '/api/v1/filemanager/text/save',
+      data: {'path': path, 'content': content},
+      options: Options(
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ),
+    );
   }
 
   /// Get media file information

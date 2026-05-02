@@ -64,12 +64,12 @@ class AuthNotifier extends Notifier<AuthState> {
     final accessToken = await _storage.read(key: 'access_token');
     final userJson = await _storage.read(key: 'user');
 
-    // 只有在有token和用户数据时才标记为已认证
-    // 但不自动登录，需要用户进行生物识别或密码认证
+    // Keep the cached user for UI restoration, but require a fresh local
+    // authentication step before marking the session as fully authenticated.
     if (accessToken != null && userJson != null) {
       try {
         final user = User.fromJson(jsonDecode(userJson));
-        // 不设置 isAuthenticated = true，让用户重新认证
+        // Do not mark the user authenticated until biometric/password recheck completes.
         state = state.copyWith(user: user, isAuthenticated: false);
       } catch (e) {
         debugPrint('[Auth] Failed to parse stored user: $e');
@@ -95,7 +95,7 @@ class AuthNotifier extends Notifier<AuthState> {
         return false;
       }
 
-      // 保存认证数据（包括密码哈希）
+      // Persist tokens, user data, and the derived password hash used by SAE.
       await _saveAuthData(response, password: password);
 
       state = state.copyWith(
@@ -132,7 +132,7 @@ class AuthNotifier extends Notifier<AuthState> {
       }
 
       try {
-        // 尝试刷新token以验证会话是否有效
+        // 灏濊瘯鍒锋柊token浠ラ獙璇佷細璇濇槸鍚︽湁鏁?
         final newTokens = await _api.refreshToken(refreshToken);
         await _storage.write(key: 'access_token', value: newTokens.accessToken);
         await _storage.write(
@@ -148,7 +148,7 @@ class AuthNotifier extends Notifier<AuthState> {
         return true;
       } catch (e) {
         debugPrint('[Auth] Token refresh failed: $e');
-        // Token过期或无效，清除存储的凭据
+        // The stored session can no longer be trusted after refresh failure.
         await _storage.deleteAll();
         state = state.copyWith(
           isLoading: false,
@@ -219,7 +219,7 @@ class AuthNotifier extends Notifier<AuthState> {
     state = const AuthState();
   }
 
-  /// 保存 tokens（用于 ZKP 认证后保存 tokens）
+  /// Persist tokens after a successful password or ZKP-based sign-in.
   Future<void> saveTokens({
     required String accessToken,
     required String refreshToken,
@@ -227,7 +227,7 @@ class AuthNotifier extends Notifier<AuthState> {
     await _storage.write(key: 'access_token', value: accessToken);
     await _storage.write(key: 'refresh_token', value: refreshToken);
 
-    // 尝试获取用户信息
+    // Refresh the user snapshot so the provider state stays complete.
     try {
       final userResponse = await _api.getCurrentUser();
       if (userResponse != null) {
@@ -262,28 +262,23 @@ class AuthNotifier extends Notifier<AuthState> {
       await _storage.write(key: 'user_email', value: response.user!.email);
       await _storage.write(key: 'user_role', value: response.user!.role);
 
-      // 保存密码哈希（用于 SAE 握手）
-<<<<<<< HEAD
-      // 注意：这里保存的是密码的 BLAKE3 哈希，不是明文密码
-=======
-      // 注意：这里保存的是密码的 SHA3-256 哈希，不是明文密码
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
+      // Persist only a derived hash for later SAE handshakes. Plaintext passwords
+      // are deleted immediately after the hash is stored.
       if (password != null) {
         final passwordHash = _hashPassword(password);
         await _storage.write(key: 'user_password_hash', value: passwordHash);
         await _storage.delete(key: 'user_password_plain');
-        debugPrint('[Auth] ✅ Saved password hash for SAE handshake');
+        debugPrint('[Auth] Saved password hash for SAE handshake');
       }
     }
   }
 
-  /// 计算密码的 Blake3 哈希
+  /// Compute the Blake3 digest used as the SAE-side password secret.
   ///
-  /// 这个哈希值用于 SAE 握手，不是用于认证
-  /// 认证使用的是 JWT token
-  /// 与 Rust 端的 compute_sae_secret 函数保持一致
+  /// This value is only for handshake material alignment with the Rust backend;
+  /// request authentication still relies on JWT tokens.
   String _hashPassword(String password) {
-    // 使用 Blake3 哈希（与 Rust blake3::hash 兼容）
+    // Match the backend's blake3::hash behavior byte-for-byte.
     final hash = blake3.blake3(utf8.encode(password), 32);
     return hash.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }

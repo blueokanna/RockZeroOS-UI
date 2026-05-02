@@ -9,6 +9,7 @@ import '../../../../core/network/api_service.dart';
 import '../../../../core/services/wallpaper_service.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../storage/presentation/pages/disk_management_page.dart';
+import '../../../storage/presentation/providers/disk_platform_capabilities_provider.dart';
 
 // System info providers with auto-refresh
 final systemInfoProvider = FutureProvider.autoDispose<SystemInfo?>((ref) async {
@@ -85,6 +86,7 @@ class SystemPage extends ConsumerWidget {
     final diskInfo = ref.watch(diskInfoProvider);
     final usbDevices = ref.watch(usbDevicesProvider);
     final hardwareInfo = ref.watch(hardwareInfoAllProvider);
+    final diskCapabilities = ref.watch(diskPlatformCapabilitiesProvider);
     final hasWallpaper =
         ref.watch(backgroundModeProvider) == BackgroundMode.customWallpaper &&
             (ref.watch(customWallpaperPathProvider)?.isNotEmpty ?? false);
@@ -120,6 +122,7 @@ class SystemPage extends ConsumerWidget {
                 _SystemInfoCard(
                   systemInfo: systemInfo,
                   hardwareInfo: hardwareInfo,
+                  diskCapabilities: diskCapabilities,
                 ),
                 const SizedBox(height: 20),
 
@@ -157,8 +160,13 @@ class SystemPage extends ConsumerWidget {
 class _SystemInfoCard extends StatelessWidget {
   final AsyncValue<SystemInfo?> systemInfo;
   final AsyncValue<HardwareInfo?> hardwareInfo;
+  final AsyncValue<DiskPlatformCapabilities> diskCapabilities;
 
-  const _SystemInfoCard({required this.systemInfo, required this.hardwareInfo});
+  const _SystemInfoCard({
+    required this.systemInfo,
+    required this.hardwareInfo,
+    required this.diskCapabilities,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -246,6 +254,51 @@ class _SystemInfoCard extends StatelessWidget {
                           active
                               ? 'No-disk playback mode ACTIVE ($sessions session${sessions == 1 ? '' : 's'})'
                               : 'No-disk playback mode inactive',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: statusColor,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+              loading: () => const SizedBox.shrink(),
+              error: (_, __) => const SizedBox.shrink(),
+            ),
+            diskCapabilities.when(
+              data: (capabilities) {
+                final active = capabilities.readWriteOnlyMode;
+                final statusColor =
+                    active ? colorScheme.secondary : colorScheme.primary;
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: statusColor.withValues(alpha: 0.25),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        active
+                            ? Icons.lock_outline_rounded
+                            : Icons.admin_panel_settings_rounded,
+                        size: 18,
+                        color: statusColor,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          active
+                              ? 'Storage backend is in read-only mode for status + file access only'
+                              : 'Storage backend allows full management operations',
                           style: textTheme.bodySmall?.copyWith(
                             color: statusColor,
                             fontWeight: FontWeight.w600,
@@ -690,25 +743,66 @@ class _CpuCard extends StatelessWidget {
           itemBuilder: (context, index) {
             // Determine architecture for this core based on coreTypes
             String? archName;
+            String? coreLabel;
             if (coreTypes != null && coreTypes.isNotEmpty) {
               // Map core index to architecture type
               // Typically big.LITTLE: first N cores are big (A73), rest are little (A53)
               int cumulativeCount = 0;
+              var typeIndex = 0;
               for (final coreType in coreTypes) {
                 cumulativeCount += coreType.count;
                 if (index < cumulativeCount) {
                   archName = coreType.coreName;
+                  coreLabel = _classifyCoreLabel(
+                    coreType.coreName,
+                    typeIndex: typeIndex,
+                    totalTypes: coreTypes.length,
+                  );
                   break;
                 }
+                typeIndex += 1;
               }
             }
             return RepaintBoundary(
-              child: _CoreUsageCard(core: cores[index], archName: archName),
+              child: _CoreUsageCard(
+                core: cores[index],
+                archName: archName,
+                coreLabel: coreLabel,
+              ),
             );
           },
         );
       },
     );
+  }
+
+  String? _classifyCoreLabel(
+    String rawName, {
+    required int typeIndex,
+    required int totalTypes,
+  }) {
+    final lower = rawName.toLowerCase();
+
+    if (lower.contains('performance') || lower.contains('p-core')) {
+      return 'P-core';
+    }
+    if (lower.contains('efficiency') || lower.contains('e-core')) {
+      return 'E-core';
+    }
+
+    final match = RegExp(r'[Aa](\d+)').firstMatch(rawName);
+    if (match != null) {
+      final family = int.tryParse(match.group(1) ?? '');
+      if (family != null) {
+        return family >= 70 ? 'Big' : 'Little';
+      }
+    }
+
+    if (totalTypes == 2) {
+      return typeIndex == 0 ? 'P-core' : 'E-core';
+    }
+
+    return null;
   }
 
   Color _getUsageColor(double usage) {
@@ -728,8 +822,13 @@ class _CpuCard extends StatelessWidget {
 class _CoreUsageCard extends StatelessWidget {
   final CpuCoreInfo core;
   final String? archName;
+  final String? coreLabel;
 
-  const _CoreUsageCard({required this.core, this.archName});
+  const _CoreUsageCard({
+    required this.core,
+    this.archName,
+    this.coreLabel,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -737,16 +836,9 @@ class _CoreUsageCard extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     final usageColor = _getUsageColor(core.usage);
 
-    // Extract short architecture name (e.g., "A73" from "Cortex-A73")
-    String? shortArch;
-    if (archName != null) {
-      final match = RegExp(r'[Aa](\d+)').firstMatch(archName!);
-      if (match != null) {
-        shortArch = 'A${match.group(1)}';
-      } else {
-        shortArch = archName;
-      }
-    }
+    final compactArch = _compactCoreName(archName);
+    final detailText =
+        archName != null && archName != compactArch ? archName : null;
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -771,7 +863,7 @@ class _CoreUsageCard extends StatelessWidget {
                   fontWeight: FontWeight.w500,
                 ),
               ),
-              if (shortArch != null) ...[
+              if (coreLabel != null || compactArch != null) ...[
                 const SizedBox(width: 4),
                 Container(
                   padding:
@@ -781,7 +873,7 @@ class _CoreUsageCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    shortArch,
+                    coreLabel ?? compactArch!,
                     style: textTheme.labelSmall?.copyWith(
                       color: colorScheme.onPrimaryContainer,
                       fontWeight: FontWeight.w600,
@@ -792,6 +884,19 @@ class _CoreUsageCard extends StatelessWidget {
               ],
             ],
           ),
+          if (detailText != null) ...[
+            const SizedBox(height: 4),
+            SizedBox(
+              height: 14,
+              child: _MarqueeText(
+                text: detailText,
+                style: textTheme.labelSmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 10,
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 6),
           TweenAnimationBuilder<double>(
             tween: Tween(begin: 0, end: core.usage),
@@ -834,6 +939,121 @@ class _CoreUsageCard extends StatelessWidget {
     if (usage >= 70) return Colors.orange;
     if (usage >= 50) return Colors.amber.shade700;
     return Colors.green;
+  }
+
+  String? _compactCoreName(String? rawName) {
+    if (rawName == null || rawName.isEmpty) {
+      return null;
+    }
+
+    final match = RegExp(r'[Aa](\d+)').firstMatch(rawName);
+    if (match != null) {
+      return 'A${match.group(1)}';
+    }
+
+    final lower = rawName.toLowerCase();
+    if (lower.contains('performance') || lower.contains('p-core')) {
+      return 'P-core';
+    }
+    if (lower.contains('efficiency') || lower.contains('e-core')) {
+      return 'E-core';
+    }
+    if (lower.contains('intel')) {
+      return 'Intel';
+    }
+    if (lower.contains('amd')) {
+      return 'AMD';
+    }
+    if (lower.contains('apple')) {
+      return 'Apple';
+    }
+
+    return rawName.length > 14 ? '${rawName.substring(0, 14)}…' : rawName;
+  }
+}
+
+class _MarqueeText extends StatefulWidget {
+  final String text;
+  final TextStyle? style;
+
+  const _MarqueeText({required this.text, this.style});
+
+  @override
+  State<_MarqueeText> createState() => _MarqueeTextState();
+}
+
+class _MarqueeTextState extends State<_MarqueeText>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final textPainter = TextPainter(
+          text: TextSpan(text: widget.text, style: widget.style),
+          maxLines: 1,
+          textDirection: TextDirection.ltr,
+        )..layout(maxWidth: double.infinity);
+
+        if (textPainter.width <= constraints.maxWidth) {
+          _controller.stop();
+          return Text(
+            widget.text,
+            maxLines: 1,
+            overflow: TextOverflow.visible,
+            style: widget.style,
+          );
+        }
+
+        final gap = 24.0;
+        final cycleWidth = textPainter.width + gap;
+        final seconds = (cycleWidth / 28).clamp(4, 14).toDouble();
+        _controller.duration = Duration(milliseconds: (seconds * 1000).round());
+        if (!_controller.isAnimating) {
+          _controller.repeat();
+        }
+
+        Widget textChild() => Text(
+              widget.text,
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.visible,
+              style: widget.style,
+            );
+
+        return ClipRect(
+          child: AnimatedBuilder(
+            animation: _controller,
+            builder: (context, child) {
+              return Transform.translate(
+                offset: Offset(-cycleWidth * _controller.value, 0),
+                child: child,
+              );
+            },
+            child: Row(
+              children: [
+                textChild(),
+                SizedBox(width: gap),
+                textChild(),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 }
 

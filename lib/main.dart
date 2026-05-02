@@ -2,11 +2,13 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'core/i18n/app_localizations.dart';
 import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
 import 'core/services/device_discovery_service.dart';
@@ -107,12 +109,19 @@ class _RockZeroAppState extends ConsumerState<RockZeroApp> {
             : seedColor);
 
     return MaterialApp.router(
-      title: 'RockZero',
+      onGenerateTitle: (context) => context.l10n.tr('app.title'),
       debugShowCheckedModeBanner: false,
       themeMode: themeMode,
       theme: AppTheme.light(effectiveColor),
       darkTheme: AppTheme.dark(effectiveColor),
       routerConfig: router,
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [
+        AppLocalizations.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       builder: (context, child) {
         // 根据实际亮度更新系统栏图标颜色
         final brightness = Theme.of(context).brightness;

@@ -3,36 +3,14 @@ import 'dart:typed_data';
 
 import 'package:thirds/blake3.dart' as blake3;
 
-/// HKDF-Blake3 密钥派生
-///
-/// 使用 Blake3 作为底层哈希实现 HKDF（RFC 5869）的 Extract + Expand 过程。
-/// 与 Rust 端 `rockzero_media::session::HkdfBlake3` 完全兼容。
-///
-/// ## 使用示例
-/// ```dart
-/// final hkdf = HkdfBlake3.withSessionSalt(sessionId, pmk);
-/// final key = hkdf.expand(utf8.encode('hls-master-key'), 32);
-/// ```
 class HkdfBlake3 {
-  /// 提取后的伪随机密钥 (PRK)
   final Uint8List _prk;
 
-  /// 使用 HKDF-Extract 从 IKM 和 salt 生成 PRK
-  ///
-  /// 与 Rust 端 `HkdfBlake3::new` 一致。
   HkdfBlake3({
     required Uint8List ikm,
     Uint8List? salt,
   }) : _prk = _extract(salt ?? Uint8List(32), ikm);
 
-  /// 使用 session ID 作为 salt 构造
-  ///
-  /// 与 Rust 端 `HkdfBlake3::new_with_session_salt` 完全一致：
-  /// ```rust
-  /// let salt_input = format!("hls-session-salt:{}", session_id);
-  /// let salt = blake3::hash(salt_input.as_bytes());
-  /// // PRK = blake3(salt || ikm)
-  /// ```
   factory HkdfBlake3.withSessionSalt(String sessionId, Uint8List pmk) {
     // 与 Rust 端一致：salt = blake3("hls-session-salt:" + session_id)
     final saltInput = 'hls-session-salt:$sessionId';
@@ -41,12 +19,6 @@ class HkdfBlake3 {
     return HkdfBlake3(ikm: pmk, salt: saltHash);
   }
 
-  /// HKDF-Expand：从 PRK 派生指定长度的密钥材料
-  ///
-  /// 与 Rust 端 `HkdfBlake3::expand` 一致。
-  ///
-  /// - [info]: 上下文信息字节
-  /// - [length]: 输出密钥长度（字节）
   Uint8List expand(Uint8List info, int length) {
     final output = <int>[];
     var t = Uint8List(0);
@@ -68,10 +40,6 @@ class HkdfBlake3 {
     return _blake3KeyedHash(salt, ikm);
   }
 
-  /// Blake3 keyed hash (HMAC 替代品)
-  ///
-  /// 与 Rust 端和 SaeClientCurve25519._blake3KeyedHash 一致：
-  /// 将 key 规范化为 32 字节，然后 H(key || message)。
   static Uint8List _blake3KeyedHash(Uint8List key, Uint8List message) {
     Uint8List normalizedKey;
     if (key.length == 32) {

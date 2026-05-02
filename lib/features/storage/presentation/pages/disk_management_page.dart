@@ -4,10 +4,26 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
 import '../../../../core/services/biometric_service.dart';
 import '../../../../core/services/device_discovery_service.dart';
 import '../../../../core/services/filesystem_monitor_service.dart';
+import '../providers/disk_platform_capabilities_provider.dart';
+
+String _formatStorageBytes(int bytes) {
+  if (bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  double value = bytes.toDouble();
+  var index = 0;
+
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index++;
+  }
+
+  return '${value.toStringAsFixed(value >= 100 || index == 0 ? 0 : 1)} ${units[index]}';
+}
 
 /// Supported file systems for formatting
 const List<Map<String, dynamic>> supportedFileSystems = [
@@ -235,18 +251,52 @@ class _DiskManagementPageState extends ConsumerState<DiskManagementPage> {
     }
   }
 
+  Future<void> _openWindowsRootBindingDialog(
+    DiskPlatformCapabilities capabilities,
+  ) async {
+    if (!capabilities.scopedStorageRequired) {
+      return;
+    }
+
+    final changed = await showDialog<bool>(
+      context: context,
+      builder: (context) => _WindowsRootBindingDialog(
+        currentRoot: capabilities.selectedRoot,
+        configPath: capabilities.configPath,
+      ),
+    );
+
+    if (changed == true && mounted) {
+      ref.invalidate(diskPlatformCapabilitiesProvider);
+      ref.invalidate(allDisksDetailProvider);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Windows storage root updated successfully'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final disksAsync = ref.watch(allDisksDetailProvider);
+    final capabilitiesAsync = ref.watch(diskPlatformCapabilitiesProvider);
+    final capabilities = capabilitiesAsync.maybeWhen(
+      data: (value) => value,
+      orElse: () => DiskPlatformCapabilities.safeFallback(),
+    );
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Disk Management'),
+        title: Text(
+          capabilities.readWriteOnlyMode ? 'Disk Status' : 'Disk Management',
+        ),
         centerTitle: true,
         actions: [
-          if (_isScanning)
+          if (_isScanning && capabilities.supportsDiskScan)
             const Padding(
               padding: EdgeInsets.all(12),
               child: SizedBox(
@@ -255,7 +305,7 @@ class _DiskManagementPageState extends ConsumerState<DiskManagementPage> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
             )
-          else
+          else if (capabilities.supportsDiskScan)
             IconButton(
               icon: const Icon(Icons.search_rounded),
               onPressed: _scanDisks,
@@ -304,14 +354,24 @@ class _DiskManagementPageState extends ConsumerState<DiskManagementPage> {
             return _buildEmptyState(colorScheme, textTheme);
           }
           return RefreshIndicator(
-            onRefresh: () async => ref.invalidate(allDisksDetailProvider),
-            child: ListView.builder(
+            onRefresh: () async {
+              ref.invalidate(diskPlatformCapabilitiesProvider);
+              ref.invalidate(allDisksDetailProvider);
+            },
+            child: ListView(
               padding: const EdgeInsets.all(16),
-              itemCount: filteredDisks.length,
-              itemBuilder: (context, index) => _DiskCard(
-                disk: filteredDisks[index],
-                onRefresh: () => ref.invalidate(allDisksDetailProvider),
-              ),
+              children: [
+                _buildEnvironmentBanner(colorScheme, textTheme, capabilities),
+                if (capabilities.readWriteOnlyMode)
+                  _buildCapabilityBanner(colorScheme, textTheme, capabilities),
+                ...filteredDisks.map(
+                  (disk) => _DiskCard(
+                    disk: disk,
+                    capabilities: capabilities,
+                    onRefresh: () => ref.invalidate(allDisksDetailProvider),
+                  ),
+                ),
+              ],
             ),
           );
         },
@@ -332,6 +392,178 @@ class _DiskManagementPageState extends ConsumerState<DiskManagementPage> {
         ),
         error: (error, stack) =>
             _buildErrorState(colorScheme, textTheme, error),
+      ),
+    );
+  }
+
+  Widget _buildCapabilityBanner(
+    ColorScheme colorScheme,
+    TextTheme textTheme,
+    DiskPlatformCapabilities capabilities,
+  ) {
+    final platform = capabilities.platform.toUpperCase();
+    final message = capabilities.restrictionMessage ??
+        'This backend currently exposes disk status only. File operations remain available, but storage management actions are disabled.';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colorScheme.secondaryContainer.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: colorScheme.secondary.withValues(alpha: 0.25),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.info_rounded, color: colorScheme.secondary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Read-only storage mode on $platform',
+                  style: textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.onSecondaryContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            message,
+            style: textTheme.bodyMedium?.copyWith(
+              color: colorScheme.onSecondaryContainer,
+              height: 1.4,
+            ),
+          ),
+          if (capabilities.scopedStorageRequired) ...[
+            const SizedBox(height: 14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: colorScheme.surface.withValues(alpha: 0.72),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    capabilities.scopedStorageConfigured
+                        ? 'Current Windows root'
+                        : 'Windows root binding required',
+                    style: textTheme.labelLarge?.copyWith(
+                      color: colorScheme.secondary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    capabilities.selectedRoot?.isNotEmpty == true
+                        ? capabilities.selectedRoot!
+                        : 'No Windows storage root is currently bound.',
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onSurface,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (capabilities.configPath?.isNotEmpty == true) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Binding file: ${capabilities.configPath}',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: () => _openWindowsRootBindingDialog(capabilities),
+                        icon: Icon(
+                          capabilities.scopedStorageConfigured
+                              ? Icons.drive_file_rename_outline_rounded
+                              : Icons.folder_open_rounded,
+                        ),
+                        label: Text(
+                          capabilities.scopedStorageConfigured
+                              ? 'Rebind Root'
+                              : 'Bind Root',
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEnvironmentBanner(
+    ColorScheme colorScheme,
+    TextTheme textTheme,
+    DiskPlatformCapabilities capabilities,
+  ) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colorScheme.primaryContainer.withValues(alpha: 0.34),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: colorScheme.primary.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.developer_board_rounded, color: colorScheme.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  capabilities.environmentLabel,
+                  style: textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.onPrimaryContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _EnvironmentChip(
+                icon: Icons.layers_rounded,
+                label: capabilities.environmentProfile,
+              ),
+              _EnvironmentChip(
+                icon: Icons.memory_rounded,
+                label: capabilities.architecture,
+              ),
+              if (capabilities.deviceModel?.isNotEmpty == true)
+                _EnvironmentChip(
+                  icon: Icons.precision_manufacturing_rounded,
+                  label: capabilities.deviceModel!,
+                ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -404,11 +636,370 @@ class _DiskManagementPageState extends ConsumerState<DiskManagementPage> {
   }
 }
 
+class _EnvironmentChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _EnvironmentChip({
+    required this.icon,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: colorScheme.surface.withValues(alpha: 0.75),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: colorScheme.primary),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WindowsRootBindingDialog extends ConsumerStatefulWidget {
+  final String? currentRoot;
+  final String? configPath;
+
+  const _WindowsRootBindingDialog({
+    this.currentRoot,
+    this.configPath,
+  });
+
+  @override
+  ConsumerState<_WindowsRootBindingDialog> createState() =>
+      _WindowsRootBindingDialogState();
+}
+
+class _WindowsRootBindingDialogState
+    extends ConsumerState<_WindowsRootBindingDialog> {
+  late String _browsePath;
+  late Future<StorageRootBrowseResponse> _browseFuture;
+  bool _isSubmitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _browsePath = widget.currentRoot ?? '';
+    _browseFuture = _loadBrowse();
+  }
+
+  Future<StorageRootBrowseResponse> _loadBrowse() {
+    final api = ref.read(apiServiceProvider);
+    return api.browseStorageScope(path: _browsePath.isEmpty ? null : _browsePath);
+  }
+
+  Future<void> _setBrowsePath(String path) async {
+    setState(() {
+      _browsePath = path;
+      _browseFuture = _loadBrowse();
+    });
+  }
+
+  Future<void> _configureRoot(String path) async {
+    if (path.isEmpty || _isSubmitting) {
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+    try {
+      final api = ref.read(apiServiceProvider);
+      await api.configureStorageScope(path: path);
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).pop(true);
+    } on DioException catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      final details = error.response?.data;
+      final message = details is Map<String, dynamic>
+          ? (details['message'] as String?) ?? error.message ?? error.toString()
+          : error.message ?? error.toString();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString()),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    return AlertDialog(
+      title: Text(
+        widget.currentRoot?.isNotEmpty == true
+            ? 'Rebind Windows Storage Root'
+            : 'Bind Windows Storage Root',
+      ),
+      content: SizedBox(
+        width: 720,
+        child: FutureBuilder<StorageRootBrowseResponse>(
+          future: _browseFuture,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const SizedBox(
+                height: 240,
+                child: Center(child: CircularProgressIndicator()),
+              );
+            }
+
+            if (snapshot.hasError) {
+              return SizedBox(
+                height: 240,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Failed to browse Windows storage roots',
+                      style: textTheme.titleMedium?.copyWith(
+                        color: colorScheme.error,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      snapshot.error.toString(),
+                      style: textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: () {
+                        setState(() => _browseFuture = _loadBrowse());
+                      },
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            final browse = snapshot.data!;
+            final canUseCurrentFolder = browse.currentPath.isNotEmpty;
+
+            return ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 520),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (widget.currentRoot?.isNotEmpty == true) ...[
+                    Text(
+                      'Current bound root',
+                      style: textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      widget.currentRoot!,
+                      style: textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Browse path',
+                          style: textTheme.labelLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          browse.currentPath.isEmpty ? 'Drive list' : browse.currentPath,
+                          style: textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if (widget.configPath?.isNotEmpty == true) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            'Binding file: ${widget.configPath}',
+                            style: textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      if (browse.parentPath != null)
+                        OutlinedButton.icon(
+                          onPressed: _isSubmitting
+                              ? null
+                              : () => _setBrowsePath(browse.parentPath ?? ''),
+                          icon: const Icon(Icons.arrow_upward_rounded),
+                          label: const Text('Up One Level'),
+                        ),
+                      FilledButton.icon(
+                        onPressed: !canUseCurrentFolder || _isSubmitting
+                            ? null
+                            : () => _configureRoot(browse.currentPath),
+                        icon: _isSubmitting
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.check_circle_rounded),
+                        label: Text(
+                          canUseCurrentFolder
+                              ? 'Use This Folder'
+                              : 'Choose a Drive or Folder',
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: browse.entries.isEmpty
+                        ? Center(
+                            child: Text(
+                              browse.currentPath.isEmpty
+                                  ? 'No Windows drives were reported by the backend.'
+                                  : 'This folder has no subdirectories. You can bind the current folder directly.',
+                              style: textTheme.bodyMedium?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          )
+                        : ListView.separated(
+                            itemCount: browse.entries.length,
+                            separatorBuilder: (_, __) => const Divider(height: 1),
+                            itemBuilder: (context, index) {
+                              final entry = browse.entries[index];
+                              final subtitle = entry.totalSpace != null &&
+                                      entry.availableSpace != null
+                                  ? '${_formatStorageBytes(entry.availableSpace!)} free / ${_formatStorageBytes(entry.totalSpace!)} total'
+                                  : entry.path;
+
+                              return ListTile(
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 4,
+                                  vertical: 4,
+                                ),
+                                leading: Icon(
+                                  browse.currentPath.isEmpty
+                                      ? Icons.storage_rounded
+                                      : Icons.folder_rounded,
+                                  color: colorScheme.primary,
+                                ),
+                                title: Text(
+                                  entry.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                subtitle: Text(
+                                  subtitle,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                trailing: Wrap(
+                                  spacing: 8,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    TextButton(
+                                      onPressed: _isSubmitting
+                                          ? null
+                                          : () => _configureRoot(entry.path),
+                                      child: const Text('Use'),
+                                    ),
+                                    const Icon(Icons.chevron_right_rounded),
+                                  ],
+                                ),
+                                onTap: _isSubmitting
+                                    ? null
+                                    : () => _setBrowsePath(entry.path),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(false),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+}
+
 class _DiskCard extends ConsumerWidget {
   final DiskDetail disk;
+  final DiskPlatformCapabilities capabilities;
   final VoidCallback onRefresh;
 
-  const _DiskCard({required this.disk, required this.onRefresh});
+  const _DiskCard({
+    required this.disk,
+    required this.capabilities,
+    required this.onRefresh,
+  });
 
   // Linux native filesystems
   static const Set<String> linuxNativeFileSystems = {
@@ -873,6 +1464,19 @@ class _DiskCard extends ConsumerWidget {
   }
 
   void _showDiskDetails(BuildContext context, WidgetRef ref) {
+    if (capabilities.readWriteOnlyMode || !capabilities.allowsManagement) {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        builder: (context) => _DiskDetailsSheet(
+          disk: disk,
+          capabilities: capabilities,
+          onRefresh: onRefresh,
+        ),
+      );
+      return;
+    }
+
     // If disk is mounted, show details page directly
     final isMounted = disk.isMounted &&
         disk.mountPoint.isNotEmpty &&
@@ -882,8 +1486,11 @@ class _DiskCard extends ConsumerWidget {
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
-        builder: (context) =>
-            _DiskDetailsSheet(disk: disk, onRefresh: onRefresh),
+        builder: (context) => _DiskDetailsSheet(
+          disk: disk,
+          capabilities: capabilities,
+          onRefresh: onRefresh,
+        ),
       );
       return;
     }
@@ -930,8 +1537,11 @@ class _DiskCard extends ConsumerWidget {
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
-        builder: (context) =>
-            _DiskDetailsSheet(disk: disk, onRefresh: onRefresh),
+        builder: (context) => _DiskDetailsSheet(
+          disk: disk,
+          capabilities: capabilities,
+          onRefresh: onRefresh,
+        ),
       );
     }
   }
@@ -1302,9 +1912,14 @@ class _InitializeDiskSheetState extends ConsumerState<_InitializeDiskSheet> {
 
 class _DiskDetailsSheet extends ConsumerStatefulWidget {
   final DiskDetail disk;
+  final DiskPlatformCapabilities capabilities;
   final VoidCallback onRefresh;
 
-  const _DiskDetailsSheet({required this.disk, required this.onRefresh});
+  const _DiskDetailsSheet({
+    required this.disk,
+    required this.capabilities,
+    required this.onRefresh,
+  });
 
   @override
   ConsumerState<_DiskDetailsSheet> createState() => _DiskDetailsSheetState();
@@ -1313,7 +1928,28 @@ class _DiskDetailsSheet extends ConsumerStatefulWidget {
 class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
   bool _isLoading = false;
 
+  void _showUnsupportedAction(String action) {
+    if (!mounted) return;
+    final platform = widget.capabilities.platform.toUpperCase();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$action is disabled by the $platform backend policy.'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+  }
+
   Future<void> _mountDisk() async {
+    final needsInitialization = _needsInitialization();
+    if (needsInitialization && !widget.capabilities.supportsInitialize) {
+      _showUnsupportedAction('Disk initialization');
+      return;
+    }
+    if (!needsInitialization && !widget.capabilities.supportsMount) {
+      _showUnsupportedAction('Disk mount');
+      return;
+    }
+
     // Check if unpartitioned whole disk device
     final devicePath = widget.disk.devicePath;
     final isWholeDisk = _isWholeDiskDevice(devicePath);
@@ -1352,6 +1988,11 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
   }
 
   void _showInitializeDialog() {
+    if (!widget.capabilities.supportsInitialize) {
+      _showUnsupportedAction('Disk initialization');
+      return;
+    }
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1363,6 +2004,11 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
   }
 
   void _showMountOptionsDialog() {
+    if (!widget.capabilities.supportsMount) {
+      _showUnsupportedAction('Disk mount');
+      return;
+    }
+
     // Use showModalBottomSheet instead of showDialog, better for mobile
     showModalBottomSheet(
       context: context,
@@ -1385,6 +2031,11 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
   }
 
   Future<void> _unmountDisk() async {
+    if (!widget.capabilities.supportsUnmount) {
+      _showUnsupportedAction('Disk unmount');
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
       final api = ref.read(apiServiceProvider);
@@ -1417,6 +2068,11 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
   }
 
   Future<void> _ejectDisk() async {
+    if (!widget.capabilities.supportsEject) {
+      _showUnsupportedAction('Disk eject');
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
       final api = ref.read(apiServiceProvider);
@@ -1445,6 +2101,11 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
   }
 
   void _showFormatDialog() {
+    if (!widget.capabilities.supportsFormat) {
+      _showUnsupportedAction('Disk format');
+      return;
+    }
+
     // Use showModalBottomSheet instead of showDialog
     showModalBottomSheet(
       context: context,
@@ -1463,6 +2124,11 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
   }
 
   void _showRenameDialog() {
+    if (!widget.capabilities.supportsRename) {
+      _showUnsupportedAction('Disk rename');
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => _RenameDiskDialog(
@@ -1582,81 +2248,135 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
                         ?.copyWith(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 16),
-                  if (!isMounted) ...[
-                    FilledButton.icon(
-                      onPressed: _isLoading ? null : _mountDisk,
-                      icon: _isLoading
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Icon(_needsInitialization()
-                              ? Icons.build_rounded
-                              : Icons.play_arrow_rounded),
-                      label: Text(_needsInitialization()
-                          ? 'Initialize Disk'
-                          : 'Mount Disk'),
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size(double.infinity, 48),
-                        backgroundColor: _needsInitialization()
-                            ? Theme.of(context).colorScheme.error
-                            : null,
+                  if (!widget.capabilities.allowsManagement) ...[
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: colorScheme.secondaryContainer.withValues(
+                          alpha: 0.35,
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: colorScheme.secondary.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.lock_outline_rounded,
+                                color: colorScheme.secondary,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  'Disk management disabled by backend',
+                                  style: textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            widget.capabilities.restrictionMessage ??
+                                'This backend exposes disk status only. Use file browsing features for read/write access.',
+                            style: textTheme.bodyMedium?.copyWith(height: 1.4),
+                          ),
+                        ],
                       ),
                     ),
-                    if (_needsInitialization()) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        'This disk is not partitioned or formatted, needs initialization',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Theme.of(context).colorScheme.error,
-                            ),
-                        textAlign: TextAlign.center,
+                  ] else ...[
+                    if (!isMounted &&
+                        (_needsInitialization()
+                            ? widget.capabilities.supportsInitialize
+                            : widget.capabilities.supportsMount)) ...[
+                      FilledButton.icon(
+                        onPressed: _isLoading ? null : _mountDisk,
+                        icon: _isLoading
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : Icon(_needsInitialization()
+                                ? Icons.build_rounded
+                                : Icons.play_arrow_rounded),
+                        label: Text(_needsInitialization()
+                            ? 'Initialize Disk'
+                            : 'Mount Disk'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(double.infinity, 48),
+                          backgroundColor: _needsInitialization()
+                              ? Theme.of(context).colorScheme.error
+                              : null,
+                        ),
+                      ),
+                      if (_needsInitialization()) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'This disk is not partitioned or formatted, needs initialization',
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context).colorScheme.error,
+                                  ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                    ] else if (isMounted &&
+                        widget.capabilities.supportsUnmount) ...[
+                      FilledButton.tonalIcon(
+                        onPressed: _isLoading ? null : _unmountDisk,
+                        icon: const Icon(Icons.eject_rounded),
+                        label: const Text('Unmount Disk'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(double.infinity, 48),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (widget.capabilities.supportsRename) ...[
+                      OutlinedButton.icon(
+                        onPressed: _showRenameDialog,
+                        icon: const Icon(Icons.edit_rounded),
+                        label: const Text('Rename'),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(double.infinity, 48),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (widget.disk.isRemovable &&
+                        widget.capabilities.supportsEject) ...[
+                      OutlinedButton.icon(
+                        onPressed: _isLoading ? null : _ejectDisk,
+                        icon: const Icon(Icons.eject_rounded),
+                        label: const Text('Safely Eject'),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(double.infinity, 48),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (widget.capabilities.supportsFormat) ...[
+                      OutlinedButton.icon(
+                        onPressed: _showFormatDialog,
+                        icon: Icon(Icons.format_paint_rounded,
+                            color: colorScheme.error),
+                        label: Text('Format',
+                            style: TextStyle(color: colorScheme.error)),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(double.infinity, 48),
+                          side: BorderSide(color: colorScheme.error),
+                        ),
                       ),
                     ],
-                    const SizedBox(height: 12),
-                  ] else ...[
-                    FilledButton.tonalIcon(
-                      onPressed: _isLoading ? null : _unmountDisk,
-                      icon: const Icon(Icons.eject_rounded),
-                      label: const Text('Unmount Disk'),
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size(double.infinity, 48),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
                   ],
-                  OutlinedButton.icon(
-                    onPressed: _showRenameDialog,
-                    icon: const Icon(Icons.edit_rounded),
-                    label: const Text('Rename'),
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 48),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (widget.disk.isRemovable) ...[
-                    OutlinedButton.icon(
-                      onPressed: _isLoading ? null : _ejectDisk,
-                      icon: const Icon(Icons.eject_rounded),
-                      label: const Text('Safely Eject'),
-                      style: OutlinedButton.styleFrom(
-                        minimumSize: const Size(double.infinity, 48),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  OutlinedButton.icon(
-                    onPressed: _showFormatDialog,
-                    icon: Icon(Icons.format_paint_rounded,
-                        color: colorScheme.error),
-                    label: Text('Format',
-                        style: TextStyle(color: colorScheme.error)),
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 48),
-                      side: BorderSide(color: colorScheme.error),
-                    ),
-                  ),
                   const SizedBox(height: 24),
                 ],
               ),

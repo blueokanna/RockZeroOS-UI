@@ -6,8 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../services/wallpaper_service.dart';
 
-/// 毛玻璃背景Widget
-/// 根据背景模式显示不同的背景效果
 class GlassmorphicBackground extends ConsumerWidget {
   final Widget child;
   final double blurSigma;
@@ -36,7 +34,6 @@ class GlassmorphicBackground extends ConsumerWidget {
             colorScheme,
           ),
         ),
-        // 毛玻璃效果层
         Positioned.fill(
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
@@ -45,7 +42,6 @@ class GlassmorphicBackground extends ConsumerWidget {
             ),
           ),
         ),
-        // 内容层
         child,
       ],
     );

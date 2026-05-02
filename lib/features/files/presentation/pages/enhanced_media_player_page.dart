@@ -167,36 +167,18 @@ class _EnhancedMediaPlayerPageState
       _videoController = VideoController(
         _player!,
         configuration: const VideoControllerConfiguration(
-          // Enable hardware decoding for better performance on ARM
           enableHardwareAcceleration: true,
         ),
       );
 
-      // Set mpv properties for better HLS and video compatibility
       if (_player!.platform is NativePlayer) {
         final mpv = _player!.platform as NativePlayer;
-        // ★ PTS 时间戳修正：将起始时间重新基准为 0
         await mpv.setProperty('rebase-start-time', 'yes');
         await mpv.setProperty(
           'demuxer-lavf-o',
           'fflags=+genpts+discardcorrupt',
         );
-<<<<<<< HEAD
-        // Android: enforce MediaCodec hardware decode and disable software fallback.
-        if (Platform.isAndroid) {
-          await mpv.setProperty('hwdec', 'mediacodec-copy');
-          await mpv.setProperty('hwdec-codecs', 'all');
-          await mpv.setProperty('vd-lavc-software-fallback', 'no');
-          await mpv.setProperty('vo', 'gpu');
-          await mpv.setProperty('gpu-context', 'android');
-        } else {
-          await mpv.setProperty('hwdec', 'auto-safe');
-        }
-=======
-        // Video output: prefer GPU-accelerated rendering
         await mpv.setProperty('hwdec', 'auto-safe');
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
-        // Cache settings for network streams
         await mpv.setProperty('cache', 'yes');
         await mpv.setProperty('cache-secs', '30');
         await mpv.setProperty('demuxer-max-bytes', '64MiB');
@@ -258,7 +240,7 @@ class _EnhancedMediaPlayerPageState
 
       if (mounted) {
         setState(() {
-          _error = '播放失败: $e';
+          _error = 'Error messages: $e';
           _isLoading = false;
         });
       }
@@ -346,7 +328,7 @@ class _EnhancedMediaPlayerPageState
         if (!ms.isGranted) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('需要存储权限')),
+              const SnackBar(content: Text('Storage permission is required')),
             );
           }
           return;
@@ -374,7 +356,9 @@ class _EnhancedMediaPlayerPageState
         }
       }
 
-      if (downloadDir == null) throw Exception('无法获取下载目录');
+      if (downloadDir == null) {
+        throw Exception('Unable to resolve download directory');
+      }
       if (!await downloadDir.exists()) {
         await downloadDir.create(recursive: true);
       }
@@ -405,7 +389,7 @@ class _EnhancedMediaPlayerPageState
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('已下载到 ${downloadDir.path}'),
+            content: Text('Downloaded to ${downloadDir.path}'),
             backgroundColor: Colors.green,
           ),
         );
@@ -413,7 +397,9 @@ class _EnhancedMediaPlayerPageState
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('下载失败: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('Download failed: $e'),
+              backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -489,9 +475,6 @@ class _EnhancedMediaPlayerPageState
 
   Widget _buildVideoPlayer() {
     if (_videoController == null) return const SizedBox.shrink();
-    // Use SizedBox.expand to ensure the Video widget gets full constraints.
-    // Without explicit sizing, media_kit's Video widget may have zero size
-    // on some devices (especially ARM/Android), causing audio-only playback.
     return SizedBox.expand(
       child: Video(
         controller: _videoController!,
@@ -539,7 +522,7 @@ class _EnhancedMediaPlayerPageState
           FilledButton.icon(
             onPressed: _initializePlayer,
             icon: const Icon(Icons.refresh),
-            label: const Text('重试'),
+            label: const Text('Retry'),
           ),
         ],
       ),
@@ -728,8 +711,8 @@ class _EnhancedMediaPlayerPageState
                 const Icon(Icons.download_rounded, color: Colors.white),
                 const SizedBox(width: 12),
                 const Expanded(
-                    child:
-                        Text('下载中...', style: TextStyle(color: Colors.white))),
+                    child: Text('Downloading...',
+                        style: TextStyle(color: Colors.white))),
                 Text('${(_downloadProgress * 100).toInt()}%',
                     style: const TextStyle(color: Colors.white)),
               ],

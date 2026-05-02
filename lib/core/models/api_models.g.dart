@@ -695,6 +695,68 @@ Map<String, dynamic> _$StorageInfoToJson(StorageInfo instance) =>
       'usage_percentage': instance.usagePercentage,
     };
 
+StorageRootBindingStatus _$StorageRootBindingStatusFromJson(
+        Map<String, dynamic> json) =>
+    StorageRootBindingStatus(
+      platform: json['platform'] as String,
+      scopedMode: json['scoped_mode'] as bool,
+      configured: json['configured'] as bool,
+      requiresSelection: json['requires_selection'] as bool,
+      selectedRoot: json['selected_root'] as String?,
+      configPath: json['config_path'] as String?,
+    );
+
+Map<String, dynamic> _$StorageRootBindingStatusToJson(
+        StorageRootBindingStatus instance) =>
+    <String, dynamic>{
+      'platform': instance.platform,
+      'scoped_mode': instance.scopedMode,
+      'configured': instance.configured,
+      'requires_selection': instance.requiresSelection,
+      'selected_root': instance.selectedRoot,
+      'config_path': instance.configPath,
+    };
+
+StorageRootBrowseEntry _$StorageRootBrowseEntryFromJson(
+        Map<String, dynamic> json) =>
+    StorageRootBrowseEntry(
+      name: json['name'] as String,
+      path: json['path'] as String,
+      isDirectory: json['is_directory'] as bool,
+      totalSpace: (json['total_space'] as num?)?.toInt(),
+      availableSpace: (json['available_space'] as num?)?.toInt(),
+      fileSystem: json['file_system'] as String?,
+    );
+
+Map<String, dynamic> _$StorageRootBrowseEntryToJson(
+        StorageRootBrowseEntry instance) =>
+    <String, dynamic>{
+      'name': instance.name,
+      'path': instance.path,
+      'is_directory': instance.isDirectory,
+      'total_space': instance.totalSpace,
+      'available_space': instance.availableSpace,
+      'file_system': instance.fileSystem,
+    };
+
+StorageRootBrowseResponse _$StorageRootBrowseResponseFromJson(
+        Map<String, dynamic> json) =>
+    StorageRootBrowseResponse(
+      currentPath: json['current_path'] as String,
+      parentPath: json['parent_path'] as String?,
+      entries: (json['entries'] as List<dynamic>)
+          .map((e) => StorageRootBrowseEntry.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+
+Map<String, dynamic> _$StorageRootBrowseResponseToJson(
+        StorageRootBrowseResponse instance) =>
+    <String, dynamic>{
+      'current_path': instance.currentPath,
+      'parent_path': instance.parentPath,
+      'entries': instance.entries.map((e) => e.toJson()).toList(),
+    };
+
 FilePreviewResponse _$FilePreviewResponseFromJson(Map<String, dynamic> json) =>
     FilePreviewResponse(
       content: json['content'] as String,

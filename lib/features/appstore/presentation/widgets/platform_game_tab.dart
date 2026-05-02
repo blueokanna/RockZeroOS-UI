@@ -1,9 +1,9 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../core/i18n/app_localizations.dart';
 import '../../../../core/network/api_service.dart';
 
 // ============================================================================
@@ -939,6 +939,7 @@ class PlatformGameTab extends StatefulWidget {
 class _PlatformGameTabState extends State<PlatformGameTab>
     with AutomaticKeepAliveClientMixin {
   late final PlatformConfig _config;
+  String? _apiBaseUrl;
   Set<String> _savedGameIds = {};
   bool _loading = true;
   String? _selectedCategory;
@@ -957,8 +958,28 @@ class _PlatformGameTabState extends State<PlatformGameTab>
   void initState() {
     super.initState();
     _config = PlatformConfig.forPlatform(widget.platform);
+    _apiBaseUrl = widget.apiService?.baseUrl;
     _loadSavedGames();
     _fetchPlatformGames();
+  }
+
+  @override
+  void didUpdateWidget(covariant PlatformGameTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    final nextBaseUrl = widget.apiService?.baseUrl;
+    final endpointChanged = nextBaseUrl != _apiBaseUrl;
+    final platformChanged = oldWidget.platform != widget.platform;
+
+    if (endpointChanged || platformChanged) {
+      _apiBaseUrl = nextBaseUrl;
+      _liveGames = const [];
+      _isLiveData = false;
+      _selectedCategory = null;
+      _searchQuery = '';
+      _searchController.clear();
+      _fetchPlatformGames();
+    }
   }
 
   @override
@@ -986,29 +1007,58 @@ class _PlatformGameTabState extends State<PlatformGameTab>
       };
 
       final result = await apiService
-          .getPlatformGames(platform: platformName, pageSize: 30)
-          .timeout(const Duration(seconds: 12));
+          .getPlatformGames(platform: platformName, pageSize: 80)
+          .timeout(const Duration(seconds: 20));
 
-      final items = result['items'] as List<dynamic>? ?? [];
+      final items = (result['items'] ??
+              result['data'] ??
+              result['results'] ??
+              result['games']) as List<dynamic>? ??
+          [];
       if (items.isNotEmpty) {
         final parsed = items
             .map((item) {
               final map = item as Map<String, dynamic>;
               final name = map['name'] as String? ?? '';
               final id = map['id'] as String? ?? '';
-              final developer = map['developer'] as String? ?? '';
-              final genre = map['genre'] as String? ?? '游戏';
-              final desc = map['description'] as String? ?? '';
+              final bundled = _findBundledGame(id: id, name: name);
+              final developer = _firstNonEmptyString([
+                map['developer'],
+                map['publisher'],
+                map['seller'],
+                bundled?.developer,
+                _config.name,
+              ]);
+              final genre = _firstNonEmptyString([
+                map['genre'],
+                _firstGenre(map['genres']),
+                bundled?.genre,
+                '游戏',
+              ]);
+              final desc = _firstNonEmptyString([
+                map['description'],
+                map['short_description'],
+                bundled?.description,
+                '$name · $developer',
+              ]);
               final isFree = map['is_free'] as bool? ?? false;
-              final headerImage = map['header_image'] as String? ?? '';
-              final storeUrl = map['store_url'] as String? ?? '';
-              final tags = (map['tags'] as List<dynamic>?)
-                      ?.map((t) => t.toString())
-                      .toList() ??
-                  [];
-
-              final priceMap = map['price'] as Map<String, dynamic>?;
-              final priceStr = priceMap?['formatted'] as String? ?? '';
+              final headerImage = _firstNonEmptyString([
+                map['header_image'],
+                map['headerImage'],
+                map['hero_image'],
+                map['cover_image'],
+                map['image'],
+                map['thumbnail'],
+                map['tiny_image'],
+                bundled?.headerImageUrl,
+              ]);
+              final storeUrl = _firstNonEmptyString([
+                map['store_url'],
+                bundled?.storeUrl,
+              ]);
+              final tags = _extractTags(map, genre, bundled);
+              final priceStr = _extractPrice(map, bundled, isFree);
+              final rating = _asDouble(map['rating']) ?? bundled?.rating ?? 4.0;
 
               return GameData(
                 id: id.isNotEmpty ? id : 'live_$name',
@@ -1019,10 +1069,11 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                 isFree: isFree,
                 price:
                     priceStr.isNotEmpty && priceStr != '免费' ? priceStr : null,
-                rating: 4.0,
+                rating: rating,
                 tags: tags,
-                coverGradient: _gradientForGenre(genre),
-                coverIcon: _iconForGenre(genre),
+                coverGradient:
+                    bundled?.coverGradient ?? _gradientForGenre(genre),
+                coverIcon: bundled?.coverIcon ?? _iconForGenre(genre),
                 isFeatured: false,
                 headerImageUrl: headerImage,
                 storeUrl: storeUrl,
@@ -1074,6 +1125,205 @@ class _PlatformGameTabState extends State<PlatformGameTab>
 
   List<GameData> get _activeFreeGames =>
       _activeGames.where((g) => g.isFree).toList();
+
+  List<GameCategory> get _activeCategories {
+    if (!_isLiveData || _liveGames.isEmpty) {
+      return _config.categories;
+    }
+
+    final seen = <String>{};
+    final categories = <GameCategory>[];
+    for (final game in _activeGames) {
+      final genre = game.genre.trim();
+      if (genre.isEmpty || genre == '游戏' || !seen.add(genre)) {
+        continue;
+      }
+      categories.add(GameCategory(genre, _iconForGenre(genre)));
+      if (categories.length >= 10) {
+        break;
+      }
+    }
+
+    return categories.isNotEmpty ? categories : _config.categories;
+  }
+
+  String _localizedPlatformSubtitle(BuildContext context) {
+    switch (widget.platform) {
+      case GamePlatform.epic:
+        return context.l10n.tr('appstore.platform.epic.subtitle');
+      case GamePlatform.wegame:
+        return context.l10n.tr('appstore.platform.wegame.subtitle');
+      case GamePlatform.ubisoft:
+        return context.l10n.tr('appstore.platform.ubisoft.subtitle');
+      case GamePlatform.xbox:
+        return context.l10n.tr('appstore.platform.xbox.subtitle');
+    }
+  }
+
+  String _localizedCategoryLabel(BuildContext context, String label) {
+    switch (label) {
+      case '全部':
+        return context.l10n.tr('appstore.section.all');
+      case '动作':
+        return context.l10n.tr('appstore.category.action');
+      case '冒险':
+        return context.l10n.tr('appstore.category.adventure');
+      case '射击':
+        return context.l10n.tr('appstore.category.shooter');
+      case '开放世界':
+        return context.l10n.tr('appstore.category.open_world');
+      case '免费':
+        return context.l10n.tr('appstore.category.free');
+      case '策略':
+        return context.l10n.tr('appstore.category.strategy');
+      case '竞速':
+        return context.l10n.tr('appstore.category.racing');
+      case '格斗':
+        return context.l10n.tr('appstore.category.fighting');
+      case 'RPG':
+        return context.l10n.tr('appstore.category.rpg');
+      case 'MOBA':
+        return context.l10n.tr('appstore.category.moba');
+      default:
+        return label;
+    }
+  }
+
+  String _localizedPrice(BuildContext context, GameData game,
+      {String fallback = ''}) {
+    if (game.isFree) {
+      return context.l10n.tr('appstore.price.free');
+    }
+    final price = game.price?.trim() ?? '';
+    if (price.isNotEmpty) {
+      return price;
+    }
+    return fallback;
+  }
+
+  GameData? _findBundledGame({required String id, required String name}) {
+    final normalizedId = _normalizeGameKey(id);
+    final normalizedName = _normalizeGameKey(name);
+
+    for (final game in _config.allGames) {
+      final gameId = _normalizeGameKey(game.id);
+      final fullName = _normalizeGameKey(game.name);
+      final shortName = _normalizeGameKey(game.name.split('/').first.trim());
+      if ((normalizedId.isNotEmpty && gameId == normalizedId) ||
+          (normalizedName.isNotEmpty &&
+              (fullName == normalizedName || shortName == normalizedName))) {
+        return game;
+      }
+    }
+
+    return null;
+  }
+
+  String _normalizeGameKey(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9\u4e00-\u9fa5]+'), '');
+  }
+
+  String _firstNonEmptyString(List<Object?> candidates) {
+    for (final candidate in candidates) {
+      final value = candidate?.toString().trim() ?? '';
+      if (value.isNotEmpty && value != 'null') {
+        return value;
+      }
+    }
+    return '';
+  }
+
+  String _firstGenre(dynamic rawGenres) {
+    if (rawGenres is List) {
+      for (final entry in rawGenres) {
+        if (entry is Map<String, dynamic>) {
+          final name = _firstNonEmptyString([entry['name'], entry['path']]);
+          if (name.isNotEmpty) {
+            return name;
+          }
+        } else {
+          final value = entry?.toString().trim() ?? '';
+          if (value.isNotEmpty) {
+            return value;
+          }
+        }
+      }
+    }
+    return '';
+  }
+
+  List<String> _extractTags(
+    Map<String, dynamic> map,
+    String genre,
+    GameData? bundled,
+  ) {
+    final tags = <String>[];
+    final dynamic rawTags = map['tags'];
+    if (rawTags is List) {
+      for (final entry in rawTags) {
+        final tag = entry is Map<String, dynamic>
+            ? _firstNonEmptyString([entry['name'], entry['id']])
+            : entry.toString().trim();
+        if (tag.isNotEmpty && !tags.contains(tag)) {
+          tags.add(tag);
+        }
+      }
+    }
+
+    if (tags.isEmpty && genre.isNotEmpty) {
+      tags.add(genre);
+    }
+    if (bundled != null) {
+      for (final tag in bundled.tags) {
+        if (!tags.contains(tag)) {
+          tags.add(tag);
+        }
+      }
+    }
+
+    return tags.take(4).toList();
+  }
+
+  String _extractPrice(
+    Map<String, dynamic> map,
+    GameData? bundled,
+    bool isFree,
+  ) {
+    if (isFree) {
+      return '免费';
+    }
+
+    final rawPrice = map['price'];
+    if (rawPrice is Map<String, dynamic>) {
+      final formatted = _firstNonEmptyString([
+        rawPrice['formatted'],
+        rawPrice['display'],
+      ]);
+      if (formatted.isNotEmpty) {
+        return formatted;
+      }
+    }
+
+    final directPrice = _firstNonEmptyString([
+      map['price_text'],
+      map['formatted_price'],
+      map['price'],
+      bundled?.price,
+    ]);
+    return directPrice;
+  }
+
+  double? _asDouble(dynamic value) {
+    if (value is num) {
+      return value.toDouble();
+    }
+    if (value is String) {
+      return double.tryParse(value);
+    }
+    return null;
+  }
 
   List<Color> _gradientForGenre(String genre) {
     final g = genre.toLowerCase();
@@ -1171,7 +1421,12 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     // 反馈
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(wasSaved ? '已取消收藏 ${game.name}' : '已收藏 ${game.name}'),
+        content: Text(
+          context.l10n.tr(
+            wasSaved ? 'appstore.saved.removed' : 'appstore.saved.added',
+            {'name': game.name},
+          ),
+        ),
         duration: const Duration(seconds: 1),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -1208,6 +1463,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final l10n = context.l10n;
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -1229,27 +1485,34 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                   _buildBrandHero(cs, tt),
                   const SizedBox(height: 20),
 
-                  // 精选推荐（仅在未筛选分类时展示）
                   if (_selectedCategory == null && _searchQuery.isEmpty) ...[
-                    _buildSectionTitle('精选推荐', Icons.star_rounded, cs, tt),
+                    _buildSectionTitle(
+                      l10n.tr('appstore.section.featured'),
+                      Icons.star_rounded,
+                      cs,
+                      tt,
+                    ),
                     const SizedBox(height: 10),
                     _buildFeaturedCarousel(cs, tt),
                     const SizedBox(height: 24),
-
-                    // 免费游戏
                     if (_activeFreeGames.isNotEmpty) ...[
                       _buildSectionTitle(
-                          '免费游戏', Icons.card_giftcard_rounded, cs, tt),
+                        l10n.tr('appstore.section.free'),
+                        Icons.card_giftcard_rounded,
+                        cs,
+                        tt,
+                      ),
                       const SizedBox(height: 10),
                       _buildFreeGamesRow(cs, tt),
                       const SizedBox(height: 24),
                     ],
-
-                    // 收藏游戏
                     if (_savedGameIds.isNotEmpty) ...[
-                      _buildSectionTitle('我的收藏', Icons.favorite_rounded, cs, tt,
+                      _buildSectionTitle(l10n.tr('appstore.section.saved'),
+                          Icons.favorite_rounded, cs, tt,
                           trailing: Text(
-                            '${_savedGameIds.length} 款',
+                            l10n.isChinese
+                                ? '${_savedGameIds.length} 款'
+                                : '${_savedGameIds.length}',
                             style: tt.labelMedium
                                 ?.copyWith(color: cs.onSurfaceVariant),
                           )),
@@ -1269,12 +1532,16 @@ class _PlatformGameTabState extends State<PlatformGameTab>
 
                   // 游戏列表标题
                   _buildSectionTitle(
-                    _selectedCategory ?? '全部游戏',
+                    _selectedCategory != null
+                        ? _localizedCategoryLabel(context, _selectedCategory!)
+                        : l10n.tr('appstore.section.all'),
                     Icons.grid_view_rounded,
                     cs,
                     tt,
                     trailing: Text(
-                      '${displayGames.length} 款',
+                      l10n.isChinese
+                          ? '${displayGames.length} 款'
+                          : '${displayGames.length}',
                       style:
                           tt.labelMedium?.copyWith(color: cs.onSurfaceVariant),
                     ),
@@ -1300,8 +1567,11 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                           const SizedBox(height: 12),
                           Text(
                             _searchQuery.isNotEmpty
-                                ? '未找到匹配「$_searchQuery」的游戏'
-                                : '该分类暂无游戏',
+                                ? l10n.tr(
+                                    'appstore.search_empty',
+                                    {'query': _searchQuery},
+                                  )
+                                : l10n.tr('appstore.category_empty'),
                             style: tt.bodyMedium
                                 ?.copyWith(color: cs.onSurfaceVariant),
                           ),
@@ -1382,7 +1652,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  _config.subtitle,
+                  _localizedPlatformSubtitle(context),
                   style: TextStyle(
                     color: Colors.white.withValues(alpha: 0.85),
                     fontSize: 13,
@@ -1390,10 +1660,17 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${_activeGames.length} 款游戏 · '
-                  '${_activeFreeGames.length} 款免费 · '
-                  '${_savedGameIds.length} 款已收藏'
-                  '${_isLiveData ? ' · 🔴 实时' : ''}',
+                  context.l10n.tr(
+                    'appstore.hero.summary',
+                    {
+                      'games': '${_activeGames.length}',
+                      'free': '${_activeFreeGames.length}',
+                      'saved': '${_savedGameIds.length}',
+                      'live': _isLiveData
+                          ? context.l10n.tr('appstore.hero.live')
+                          : '',
+                    },
+                  ),
                   style: TextStyle(
                     color: Colors.white.withValues(alpha: 0.6),
                     fontSize: 11,
@@ -1404,7 +1681,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
           ),
         ],
       ),
-    ).animate().fadeIn(duration: 300.ms).slideY(begin: 0.04, end: 0);
+    );
   }
 
   // --------------------------------------------------------------------------
@@ -1415,7 +1692,10 @@ class _PlatformGameTabState extends State<PlatformGameTab>
       controller: _searchController,
       onChanged: (v) => setState(() => _searchQuery = v.trim()),
       decoration: InputDecoration(
-        hintText: '搜索 ${_config.name} 游戏...',
+        hintText: context.l10n.tr(
+          'appstore.search_hint',
+          {'platform': _config.name},
+        ),
         prefixIcon: const Icon(Icons.search_rounded, size: 20),
         suffixIcon: _searchQuery.isNotEmpty
             ? IconButton(
@@ -1464,7 +1744,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
               onTap: () => _showGameDetail(game),
               onToggleSave: () => _toggleSave(game),
             ),
-          ).animate().fadeIn(delay: (index * 80).ms, duration: 300.ms);
+          );
         },
       ),
     );
@@ -1490,7 +1770,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
               isSaved: _savedGameIds.contains(game.id),
               onTap: () => _showGameDetail(game),
             ),
-          ).animate().fadeIn(delay: (index * 60).ms, duration: 250.ms);
+          );
         },
       ),
     );
@@ -1520,7 +1800,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
               showFavBadge: true,
               onTap: () => _showGameDetail(game),
             ),
-          ).animate().fadeIn(delay: (index * 60).ms, duration: 250.ms);
+          );
         },
       ),
     );
@@ -1535,8 +1815,8 @@ class _PlatformGameTabState extends State<PlatformGameTab>
       child: ListView(
         scrollDirection: Axis.horizontal,
         children: [
-          _buildChip('全部', null, cs),
-          ..._config.categories.map((cat) => _buildChip(cat.name, cat, cs)),
+          _buildChip(context.l10n.tr('appstore.section.all'), null, cs),
+          ..._activeCategories.map((cat) => _buildChip(cat.name, cat, cs)),
         ],
       ),
     );
@@ -1549,7 +1829,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
       padding: const EdgeInsets.only(right: 8),
       child: FilterChip(
         avatar: cat != null ? Icon(cat.icon, size: 16) : null,
-        label: Text(label),
+        label: Text(_localizedCategoryLabel(context, label)),
         selected: isSelected,
         onSelected: (_) => setState(
           () => _selectedCategory =
@@ -1641,7 +1921,11 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                               ?.copyWith(fontWeight: FontWeight.w600),
                         ),
                         const SizedBox(width: 8),
-                        _tagBadge(game.genre, cs, tt),
+                        _tagBadge(
+                          _localizedCategoryLabel(context, game.genre),
+                          cs,
+                          tt,
+                        ),
                         if (game.tags.isNotEmpty) ...[
                           const SizedBox(width: 4),
                           _tagBadge(game.tags.first, cs, tt),
@@ -1665,7 +1949,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
-                      game.isFree ? '免费' : (game.price ?? ''),
+                      _localizedPrice(context, game),
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
@@ -1696,7 +1980,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
           ),
         ),
       ),
-    ).animate().fadeIn(delay: (index * 50).ms, duration: 250.ms);
+    );
   }
 
   Widget _tagBadge(String text, ColorScheme cs, TextTheme tt) {
@@ -1798,7 +2082,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
 
                     // 描述
                     Text(
-                      '游戏简介',
+                      context.l10n.tr('appstore.info.description'),
                       style:
                           tt.titleSmall?.copyWith(fontWeight: FontWeight.w600),
                     ),
@@ -1908,9 +2192,9 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                   color: Colors.green,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Text(
-                  '免费',
-                  style: TextStyle(
+                child: Text(
+                  context.l10n.tr('appstore.price.free'),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
@@ -1952,7 +2236,11 @@ class _PlatformGameTabState extends State<PlatformGameTab>
               borderRadius: BorderRadius.circular(12),
             ),
           ),
-          child: Text(game.isFree ? '免费游玩' : (game.price ?? '获取')),
+          child: Text(game.isFree
+              ? context.l10n.tr('appstore.action.play_free')
+              : (game.price?.isNotEmpty == true
+                  ? game.price!
+                  : context.l10n.tr('appstore.action.get'))),
         ),
       ],
     );
@@ -1987,7 +2275,7 @@ class _PlatformGameTabState extends State<PlatformGameTab>
             borderRadius: BorderRadius.circular(10),
           ),
           child: Text(
-            game.genre,
+            _localizedCategoryLabel(context, game.genre),
             style: TextStyle(
               color: _config.brandColor,
               fontWeight: FontWeight.w600,
@@ -2041,27 +2329,61 @@ class _PlatformGameTabState extends State<PlatformGameTab>
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            _detailInfoRow('开发商', game.developer, tt, cs),
-            const Divider(height: 20),
-            _detailInfoRow('类型', game.genre, tt, cs),
-            const Divider(height: 20),
             _detailInfoRow(
-              '价格',
-              game.isFree ? '免费' : (game.price ?? '未知'),
+              context.l10n.tr('appstore.info.developer'),
+              game.developer,
               tt,
               cs,
             ),
             const Divider(height: 20),
-            _detailInfoRow('平台', _config.name, tt, cs),
+            _detailInfoRow(
+              context.l10n.tr('appstore.info.type'),
+              _localizedCategoryLabel(context, game.genre),
+              tt,
+              cs,
+            ),
             const Divider(height: 20),
-            _detailInfoRow('评分', '${game.rating}/5.0', tt, cs),
+            _detailInfoRow(
+              context.l10n.tr('appstore.info.price'),
+              _localizedPrice(
+                context,
+                game,
+                fallback: context.l10n.tr('appstore.price.unknown'),
+              ),
+              tt,
+              cs,
+            ),
+            const Divider(height: 20),
+            _detailInfoRow(
+              context.l10n.tr('appstore.info.platform'),
+              _config.name,
+              tt,
+              cs,
+            ),
+            const Divider(height: 20),
+            _detailInfoRow(
+              context.l10n.tr('appstore.info.rating'),
+              '${game.rating}/5.0',
+              tt,
+              cs,
+            ),
             if (game.storeUrl != null && game.storeUrl!.isNotEmpty) ...[
               const Divider(height: 20),
-              _detailInfoRow('商店', game.storeUrl!, tt, cs),
+              _detailInfoRow(
+                context.l10n.tr('appstore.info.store'),
+                game.storeUrl!,
+                tt,
+                cs,
+              ),
             ],
             if (_isLiveData) ...[
               const Divider(height: 20),
-              _detailInfoRow('数据来源', '官方 API 实时数据', tt, cs),
+              _detailInfoRow(
+                context.l10n.tr('appstore.info.source'),
+                context.l10n.tr('appstore.info.live_api'),
+                tt,
+                cs,
+              ),
             ],
           ],
         ),
@@ -2167,9 +2489,9 @@ class _FeaturedGameCard extends StatelessWidget {
                           color: Colors.green,
                           borderRadius: BorderRadius.circular(6),
                         ),
-                        child: const Text(
-                          '免费',
-                          style: TextStyle(
+                        child: Text(
+                          context.l10n.tr('appstore.price.free'),
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 10,
                             fontWeight: FontWeight.bold,
@@ -2350,9 +2672,9 @@ class _CompactGameCard extends StatelessWidget {
                           color: Colors.green,
                           borderRadius: BorderRadius.circular(4),
                         ),
-                        child: const Text(
-                          '免费',
-                          style: TextStyle(
+                        child: Text(
+                          context.l10n.tr('appstore.price.free'),
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 8,
                             fontWeight: FontWeight.bold,

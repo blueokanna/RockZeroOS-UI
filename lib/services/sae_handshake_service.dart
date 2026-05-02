@@ -1,9 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-<<<<<<< HEAD
-import 'dart:typed_data';
-=======
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -164,7 +160,7 @@ class SaeHandshakeService {
       return (sessionId, pmk);
     } catch (e) {
       if (e.toString().contains('timeout')) {
-        throw Exception('连接超时，请检查网络');
+        throw Exception('Connection timed out, please check your network.');
       }
       rethrow;
     }
@@ -313,15 +309,8 @@ class SaeHandshakeService {
   }
 
   Uint8List _generateServerDeviceId() {
-<<<<<<< HEAD
-    return Uint8List.fromList(blake3.blake3(
-      utf8.encode('rockzero-server-device-id'),
-      32,
-    ));
-=======
     return Uint8List.fromList(
         blake3.blake3(utf8.encode('rockzero-server-device-id'), 32));
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
   }
 
   Uint8List _generateClientDeviceId(String userId) {

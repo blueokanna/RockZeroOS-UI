@@ -125,8 +125,9 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
   }
 
   void _showOrientationLockToast() {
-    final message =
-        _orientationLock == OrientationLockMode.auto ? '旋转已解锁' : '旋转已锁定';
+    final message = _orientationLock == OrientationLockMode.auto
+        ? 'Rotation unlocked'
+        : 'Rotation locked';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -203,22 +204,6 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
         ),
       );
 
-<<<<<<< HEAD
-      if (_player!.platform is NativePlayer) {
-        final mpv = _player!.platform as NativePlayer;
-        if (Platform.isAndroid) {
-          await mpv.setProperty('hwdec', 'mediacodec-copy');
-          await mpv.setProperty('hwdec-codecs', 'all');
-          await mpv.setProperty('vd-lavc-software-fallback', 'no');
-          await mpv.setProperty('vo', 'gpu');
-          await mpv.setProperty('gpu-context', 'android');
-        } else {
-          await mpv.setProperty('hwdec', 'auto-safe');
-        }
-      }
-
-=======
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
       _videoController = VideoController(_player!);
 
       _player!.stream.playing.listen((playing) {
@@ -286,13 +271,13 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
   String _parseError(String error) {
     final lower = error.toLowerCase();
     if (lower.contains('timeout')) {
-      return '视频加载超时，请检查网络连接';
+      return 'Video loading timed out, please check your network connection.';
     } else if (lower.contains('network') || lower.contains('connection')) {
-      return '网络连接失败，请检查网络';
+      return 'Network connection failed, please check your network.';
     } else if (lower.contains('format') || lower.contains('codec')) {
-      return '视频格式不支持';
+      return 'Unsupported video format.';
     }
-    return '播放失败: $error';
+    return 'Error: $error';
   }
 
   void _handlePlaybackComplete() {
@@ -378,7 +363,7 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
         if (!ms.isGranted) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('需要存储权限')),
+              const SnackBar(content: Text('Storage permission is required')),
             );
           }
           return;
@@ -406,7 +391,9 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
         }
       }
 
-      if (downloadDir == null) throw Exception('无法获取下载目录');
+      if (downloadDir == null) {
+        throw Exception('Unable to resolve download directory');
+      }
       if (!await downloadDir.exists()) {
         await downloadDir.create(recursive: true);
       }
@@ -437,7 +424,7 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('已下载到 ${downloadDir.path}'),
+            content: Text('Downloaded to ${downloadDir.path}'),
             backgroundColor: Colors.green,
           ),
         );
@@ -445,7 +432,9 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('下载失败: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('Download failed: $e'),
+              backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -577,7 +566,7 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
           FilledButton.icon(
             onPressed: _initializePlayer,
             icon: const Icon(Icons.refresh),
-            label: const Text('重试'),
+            label: const Text('Retry'),
           ),
         ],
       ),
@@ -778,7 +767,8 @@ class _MediaPlayerPageState extends ConsumerState<MediaPlayerPage>
                 const Icon(Icons.download_rounded, color: Colors.white),
                 const SizedBox(width: 12),
                 const Expanded(
-                  child: Text('下载中...', style: TextStyle(color: Colors.white)),
+                  child: Text('Downloading...',
+                      style: TextStyle(color: Colors.white)),
                 ),
                 Text(
                   '${(_downloadProgress * 100).toInt()}%',

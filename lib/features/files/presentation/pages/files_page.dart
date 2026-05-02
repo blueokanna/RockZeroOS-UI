@@ -54,6 +54,59 @@ String safeDisplayName(String name) {
   }
 }
 
+const _editableTextExtensions = <String>{
+  'txt',
+  'md',
+  'json',
+  'xml',
+  'yaml',
+  'yml',
+  'toml',
+  'ini',
+  'cfg',
+  'conf',
+  'log',
+  'csv',
+  'html',
+  'htm',
+  'css',
+  'js',
+  'ts',
+  'jsx',
+  'tsx',
+  'vue',
+  'py',
+  'rs',
+  'go',
+  'java',
+  'c',
+  'cpp',
+  'h',
+  'hpp',
+  'sh',
+  'bash',
+  'zsh',
+  'sql',
+  'properties',
+};
+
+bool isInlineTextEditable(FileEntry entry) {
+  if (entry.isDirectory) return false;
+
+  final mimeType = (entry.mimeType ?? '').toLowerCase();
+  if (mimeType.startsWith('text/')) {
+    return true;
+  }
+
+  final dotIndex = entry.name.lastIndexOf('.');
+  if (dotIndex <= 0 || dotIndex == entry.name.length - 1) {
+    return false;
+  }
+
+  final extension = entry.name.substring(dotIndex + 1).toLowerCase();
+  return _editableTextExtensions.contains(extension);
+}
+
 // ============ Providers ============
 class FilesViewModeNotifier extends Notifier<bool> {
   @override
@@ -97,6 +150,29 @@ final fileErrorProvider = NotifierProvider<FileErrorNotifier, String?>(
   FileErrorNotifier.new,
 );
 
+final storageScopeStatusProvider = FutureProvider<StorageRootBindingStatus>(
+  (ref) async {
+    final device = ref.watch(connectedDeviceProvider);
+    if (device == null) {
+      throw Exception('Not connected to any device.');
+    }
+
+    final api = ref.read(apiServiceProvider);
+    return api.getStorageScopeStatus();
+  },
+);
+
+final storageScopeBrowseProvider =
+    FutureProvider.family<StorageRootBrowseResponse, String>((ref, path) async {
+  final device = ref.watch(connectedDeviceProvider);
+  if (device == null) {
+    throw Exception('Not connected to any device.');
+  }
+
+  final api = ref.read(apiServiceProvider);
+  return api.browseStorageScope(path: path.isEmpty ? null : path);
+});
+
 final directoryListingProvider =
     FutureProvider.family<DirectoryListing?, String>((ref, path) async {
   final device = ref.watch(connectedDeviceProvider);
@@ -138,7 +214,12 @@ final diskInfoProvider = FutureProvider<List<DiskInfo>>((ref) async {
 
   final api = ref.read(apiServiceProvider);
   final allDisks = await api.getDiskInfo();
-  return allDisks.where((disk) => disk.totalSpace > 0).toList();
+  return allDisks.where((disk) {
+    final hasMountPoint =
+        disk.mountPoint.isNotEmpty && disk.mountPoint != 'Not mounted';
+    final hasCapacity = disk.totalSpace > 0 || disk.availableSpace > 0;
+    return hasMountPoint || hasCapacity;
+  }).toList();
 });
 
 // ============ Main Page ============
@@ -158,6 +239,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
   bool _isUploading = false;
   double _uploadProgress = 0;
   bool _showDisks = true;
+  String _storageScopeBrowsePath = '';
+  bool _isConfiguringStorageScope = false;
   late AnimationController _fabAnimationController;
   final ScrollController _scrollController = ScrollController();
   bool _showFab = true;
@@ -182,7 +265,14 @@ class _FilesPageState extends ConsumerState<FilesPage>
     _autoRefreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       if (mounted) {
         final currentPath = ref.read(currentPathProvider);
-        if (_showDisks && currentPath.isEmpty) {
+        final scopeStatus = ref.read(storageScopeStatusProvider).asData?.value;
+        final scopedMode = scopeStatus?.scopedMode == true;
+        final requiresSelection = scopeStatus?.requiresSelection == true;
+
+        if (requiresSelection) {
+          ref.invalidate(storageScopeStatusProvider);
+          ref.invalidate(storageScopeBrowseProvider(_storageScopeBrowsePath));
+        } else if (_showDisks && currentPath.isEmpty && !scopedMode) {
           // 刷新磁盘信息
           ref.invalidate(diskInfoProvider);
         } else {
@@ -198,6 +288,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
       debugPrint('[FilesPage] Received FS event: $event');
       if (mounted) {
         final currentPath = ref.read(currentPathProvider);
+        final scopeStatus = ref.read(storageScopeStatusProvider).asData?.value;
+        final scopedMode = scopeStatus?.scopedMode == true;
+        final showDiskView = _showDisks && currentPath.isEmpty && !scopedMode;
 
         // 判断事件是否影响当前视图
         bool shouldRefresh = false;
@@ -224,11 +317,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
           }
 
           // 无论如何都要刷新磁盘列表
-          if (_showDisks || shouldResetPath) {
+          if (showDiskView || shouldResetPath) {
             debugPrint('[FilesPage] Invalidating disk info provider');
             ref.invalidate(diskInfoProvider);
           }
-        } else if (_showDisks && currentPath.isEmpty) {
+        } else if (showDiskView) {
           // 在磁盘视图，监听磁盘事件
           if (event.type == FileSystemEventType.diskMounted ||
               event.type == FileSystemEventType.diskUnmounted) {
@@ -266,7 +359,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
           ref.invalidate(diskInfoProvider);
         } else if (shouldRefresh) {
           // 立即刷新
-          if (_showDisks && currentPath.isEmpty) {
+          if (showDiskView) {
             ref.invalidate(diskInfoProvider);
           } else {
             ref.invalidate(directoryListingProvider(currentPath));
@@ -290,6 +383,28 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
   void _handleBackNavigation() {
     final currentPath = ref.read(currentPathProvider);
+    final scopeStatus = ref.read(storageScopeStatusProvider).asData?.value;
+    final scopedMode = scopeStatus?.scopedMode == true;
+    final requiresSelection = scopeStatus?.requiresSelection == true;
+
+    if (requiresSelection) return;
+
+    if (scopedMode) {
+      if (currentPath.isEmpty) {
+        return;
+      }
+
+      final parts =
+          currentPath.split('/').where((part) => part.isNotEmpty).toList();
+      if (parts.length <= 1) {
+        ref.read(currentPathProvider.notifier).setPath('');
+      } else {
+        ref
+            .read(currentPathProvider.notifier)
+            .setPath(parts.sublist(0, parts.length - 1).join('/'));
+      }
+      return;
+    }
 
     if (_showDisks) return;
 
@@ -344,6 +459,14 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
   bool _canPop() {
     final currentPath = ref.read(currentPathProvider);
+    final scopeStatus = ref.read(storageScopeStatusProvider).asData?.value;
+    final scopedMode = scopeStatus?.scopedMode == true;
+    final requiresSelection = scopeStatus?.requiresSelection == true;
+
+    if (requiresSelection || scopedMode) {
+      return currentPath.isEmpty;
+    }
+
     return _showDisks && currentPath.isEmpty;
   }
 
@@ -358,12 +481,55 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
   @override
   Widget build(BuildContext context) {
-    final currentPath = ref.watch(currentPathProvider);
-    final listing = ref.watch(directoryListingProvider(currentPath));
-    final disks = ref.watch(diskInfoProvider);
-    final errorMessage = ref.watch(fileErrorProvider);
+    final storageScopeStatus = ref.watch(storageScopeStatusProvider);
 
-    final showDiskView = _showDisks && currentPath.isEmpty;
+    return storageScopeStatus.when(
+      data: _buildResolvedFilesPage,
+      loading: () => Scaffold(
+        body: CustomScrollView(
+          slivers: [
+            _buildAppBar(
+              false,
+              '',
+              requiresStorageSelection: true,
+            ),
+            _buildLoadingState(),
+          ],
+        ),
+      ),
+      error: (error, _) => Scaffold(
+        body: CustomScrollView(
+          slivers: [
+            _buildAppBar(
+              false,
+              '',
+              requiresStorageSelection: true,
+            ),
+            _buildDiskErrorState(error.toString()),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildResolvedFilesPage(StorageRootBindingStatus storageScopeStatus) {
+    final currentPath = ref.watch(currentPathProvider);
+    final errorMessage = ref.watch(fileErrorProvider);
+    final scopedMode = storageScopeStatus.scopedMode;
+    final requiresStorageSelection = storageScopeStatus.requiresSelection ||
+        (storageScopeStatus.platform == 'windows' &&
+            !storageScopeStatus.configured);
+    final listing = requiresStorageSelection
+        ? null
+        : ref.watch(directoryListingProvider(currentPath));
+    final disks = !scopedMode && _showDisks && currentPath.isEmpty
+        ? ref.watch(diskInfoProvider)
+        : null;
+    final storageScopeBrowse = requiresStorageSelection
+        ? ref.watch(storageScopeBrowseProvider(_storageScopeBrowsePath))
+        : null;
+
+    final showDiskView = !scopedMode && _showDisks && currentPath.isEmpty;
     final hasWallpaper =
         ref.watch(backgroundModeProvider) == BackgroundMode.customWallpaper &&
             (ref.watch(customWallpaperPathProvider)?.isNotEmpty ?? false);
@@ -387,19 +553,29 @@ class _FilesPageState extends ConsumerState<FilesPage>
           body: CustomScrollView(
             controller: _scrollController,
             slivers: [
-              _buildAppBar(showDiskView, currentPath),
-              if (!showDiskView)
+              _buildAppBar(
+                showDiskView,
+                currentPath,
+                requiresStorageSelection: requiresStorageSelection,
+              ),
+              if (scopedMode) _buildScopedStorageBanner(storageScopeStatus),
+              if (!showDiskView && !requiresStorageSelection)
                 SliverToBoxAdapter(child: _buildBreadcrumb(currentPath)),
               if (_isUploading)
                 SliverToBoxAdapter(child: _buildUploadProgress()),
-              if (showDiskView)
-                disks.when(
+              if (requiresStorageSelection)
+                _buildWindowsStorageSetup(
+                  storageScopeStatus,
+                  storageScopeBrowse!,
+                )
+              else if (showDiskView)
+                disks!.when(
                   data: (diskList) => _buildDiskGrid(diskList),
                   loading: () => _buildLoadingState(),
                   error: (e, s) => _buildDiskErrorState(e.toString()),
                 )
               else
-                listing.when(
+                listing!.when(
                   data: (data) {
                     if (data == null) {
                       final device = ref.read(connectedDeviceProvider);
@@ -417,7 +593,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
                 ),
             ],
           ),
-          floatingActionButton: showDiskView
+          floatingActionButton: showDiskView || requiresStorageSelection
               ? null
               : AnimatedSlide(
                   duration: M3Durations.medium2,
@@ -433,12 +609,26 @@ class _FilesPageState extends ConsumerState<FilesPage>
     );
   }
 
-  Widget _buildAppBar(bool showDiskView, String currentPath) {
+  Widget _buildAppBar(
+    bool showDiskView,
+    String currentPath, {
+    required bool requiresStorageSelection,
+  }) {
     final colorScheme = Theme.of(context).colorScheme;
+    final title = requiresStorageSelection
+        ? 'Storage Setup'
+        : showDiskView
+            ? 'Storage'
+            : 'Files';
+    final titleIcon = requiresStorageSelection
+        ? Icons.folder_special_rounded
+        : showDiskView
+            ? Icons.storage_rounded
+            : Icons.folder_rounded;
 
     return SliverAppBar.large(
       title: InkWell(
-        onTap: showDiskView
+        onTap: showDiskView && !requiresStorageSelection
             ? () {
                 // 点击 Storage 标题时，导航到存储管理页面
                 Navigator.of(context).push(
@@ -466,14 +656,14 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Icon(
-                  showDiskView ? Icons.storage_rounded : Icons.folder_rounded,
+                  titleIcon,
                   size: 22,
                   color: Colors.white,
                 ),
               ),
               const SizedBox(width: 12),
-              Text(showDiskView ? 'Storage' : 'Files'),
-              if (showDiskView) ...[
+              Text(title),
+              if (showDiskView && !requiresStorageSelection) ...[
                 const SizedBox(width: 4),
                 Icon(
                   Icons.arrow_forward_ios_rounded,
@@ -486,7 +676,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
         ),
       ),
       actions: [
-        if (!showDiskView) ...[
+        if (!showDiskView && !requiresStorageSelection) ...[
           IconButton(
             icon: AnimatedSwitcher(
               duration: M3Durations.short4,
@@ -531,7 +721,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
         IconButton(
           icon: const Icon(Icons.refresh_rounded),
           onPressed: () {
-            if (showDiskView) {
+            if (requiresStorageSelection) {
+              ref.invalidate(storageScopeStatusProvider);
+              ref.invalidate(
+                  storageScopeBrowseProvider(_storageScopeBrowsePath));
+            } else if (showDiskView) {
               ref.invalidate(diskInfoProvider);
             } else {
               ref.invalidate(directoryListingProvider(currentPath));
@@ -570,6 +764,366 @@ class _FilesPageState extends ConsumerState<FilesPage>
         ],
       ),
     );
+  }
+
+  Widget _buildScopedStorageBanner(StorageRootBindingStatus status) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final selectedRoot = status.selectedRoot;
+    final message = status.requiresSelection
+        ? 'Windows backend requires a single storage folder before file access is enabled.'
+        : selectedRoot == null || selectedRoot.isEmpty
+            ? 'Windows backend is running in scoped storage mode.'
+            : 'Windows backend is limited to $selectedRoot';
+
+    return SliverToBoxAdapter(
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: status.requiresSelection
+              ? colorScheme.errorContainer.withValues(alpha: 0.45)
+              : colorScheme.tertiaryContainer.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: status.requiresSelection
+                ? colorScheme.error.withValues(alpha: 0.2)
+                : colorScheme.tertiary.withValues(alpha: 0.2),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              status.requiresSelection
+                  ? Icons.warning_amber_rounded
+                  : Icons.lock_rounded,
+              color: status.requiresSelection
+                  ? colorScheme.error
+                  : colorScheme.tertiary,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                message,
+                style: TextStyle(
+                  color: status.requiresSelection
+                      ? colorScheme.onErrorContainer
+                      : colorScheme.onTertiaryContainer,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWindowsStorageSetup(
+    StorageRootBindingStatus status,
+    AsyncValue<StorageRootBrowseResponse> browseAsync,
+  ) {
+    return browseAsync.when(
+      loading: _buildLoadingState,
+      error: (error, _) => _buildDiskErrorState(error.toString()),
+      data: (browse) {
+        final colorScheme = Theme.of(context).colorScheme;
+        final textTheme = Theme.of(context).textTheme;
+        final canUseCurrentFolder = browse.currentPath.isNotEmpty;
+
+        return SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Card(
+                  elevation: 0,
+                  color: colorScheme.primaryContainer.withValues(alpha: 0.35),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 52,
+                              height: 52,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    colorScheme.primary,
+                                    colorScheme.tertiary,
+                                  ],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                ),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: const Icon(
+                                Icons.folder_special_rounded,
+                                color: Colors.white,
+                                size: 28,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Choose Windows Storage Root',
+                                    style: textTheme.titleLarge?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'Select exactly one folder on one Windows disk. All file read, write, delete, copy, move, rename, upload, and download operations will stay inside that scope.',
+                                    style: textTheme.bodyMedium?.copyWith(
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: colorScheme.surface.withValues(alpha: 0.65),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Current browse path',
+                                style: textTheme.labelLarge?.copyWith(
+                                  color: colorScheme.primary,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                browse.currentPath.isEmpty
+                                    ? 'Drive list'
+                                    : browse.currentPath,
+                                style: textTheme.bodyMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 12,
+                          children: [
+                            if (browse.parentPath != null)
+                              OutlinedButton.icon(
+                                onPressed: _isConfiguringStorageScope
+                                    ? null
+                                    : () {
+                                        setState(() {
+                                          _storageScopeBrowsePath =
+                                              browse.parentPath ?? '';
+                                        });
+                                      },
+                                icon: const Icon(Icons.arrow_upward_rounded),
+                                label: const Text('Up One Level'),
+                              ),
+                            FilledButton.icon(
+                              onPressed: !canUseCurrentFolder ||
+                                      _isConfiguringStorageScope
+                                  ? null
+                                  : () => _configureStorageScope(
+                                        browse.currentPath,
+                                      ),
+                              icon: _isConfiguringStorageScope
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.check_circle_rounded),
+                              label: Text(
+                                canUseCurrentFolder
+                                    ? 'Use This Folder'
+                                    : 'Choose a Drive or Folder',
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (status.configPath != null) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            'Binding file: ${status.configPath}',
+                            style: textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                if (browse.entries.isEmpty)
+                  Card(
+                    elevation: 0,
+                    color: colorScheme.surfaceContainerLow,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Text(
+                        browse.currentPath.isEmpty
+                            ? 'No Windows drives were reported by the backend.'
+                            : 'This folder has no subdirectories. You can use the current folder directly.',
+                        style: textTheme.bodyMedium?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  Card(
+                    elevation: 0,
+                    color: colorScheme.surfaceContainerLow,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: browse.entries.length,
+                      separatorBuilder: (_, __) => Divider(
+                        height: 1,
+                        color: colorScheme.outlineVariant,
+                      ),
+                      itemBuilder: (context, index) {
+                        final entry = browse.entries[index];
+                        final subtitle = entry.totalSpace != null &&
+                                entry.availableSpace != null
+                            ? '${_formatBytes(entry.availableSpace!)} free / ${_formatBytes(entry.totalSpace!)} total'
+                            : entry.path;
+
+                        return ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 6,
+                          ),
+                          leading: Container(
+                            width: 42,
+                            height: 42,
+                            decoration: BoxDecoration(
+                              color: colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Icon(
+                              browse.currentPath.isEmpty
+                                  ? Icons.storage_rounded
+                                  : Icons.folder_rounded,
+                              color: colorScheme.onPrimaryContainer,
+                            ),
+                          ),
+                          title: Text(
+                            entry.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            subtitle,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: Wrap(
+                            spacing: 8,
+                            children: [
+                              TextButton(
+                                onPressed: _isConfiguringStorageScope
+                                    ? null
+                                    : () => _configureStorageScope(entry.path),
+                                child: const Text('Use'),
+                              ),
+                              Icon(
+                                Icons.chevron_right_rounded,
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ],
+                          ),
+                          onTap: _isConfiguringStorageScope
+                              ? null
+                              : () {
+                                  setState(() {
+                                    _storageScopeBrowsePath = entry.path;
+                                  });
+                                },
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _configureStorageScope(String path) async {
+    if (path.isEmpty || _isConfiguringStorageScope) return;
+
+    setState(() => _isConfiguringStorageScope = true);
+
+    try {
+      final api = ref.read(apiServiceProvider);
+      await api.configureStorageScope(path: path);
+
+      ref.read(currentPathProvider.notifier).setPath('');
+      ref.invalidate(storageScopeStatusProvider);
+      ref.invalidate(storageScopeBrowseProvider(_storageScopeBrowsePath));
+      ref.invalidate(directoryListingProvider(''));
+
+      if (mounted) {
+        setState(() {
+          _showDisks = false;
+          _storageScopeBrowsePath = '';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Windows storage root set to $path'),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to configure storage root: $error'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isConfiguringStorageScope = false);
+      }
+    }
   }
 
   Widget _buildBreadcrumb(String path) {
@@ -2006,6 +2560,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
     final isImage = mimeType.startsWith('image/');
     final isVideo = mimeType.startsWith('video/');
     final isAudio = mimeType.startsWith('audio/');
+    final isTextEditable = isInlineTextEditable(entry);
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
@@ -2075,6 +2630,20 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   onTap: () {
                     Navigator.pop(context);
                     _openMediaPreview(entry);
+                  },
+                ),
+              if (isTextEditable)
+                ListTile(
+                  leading: _buildActionIcon(
+                    Icons.edit_note_rounded,
+                    Colors.green.withValues(alpha: 0.15),
+                    Colors.green,
+                  ),
+                  title: const Text('Edit Text'),
+                  subtitle: const Text('Open inline editor'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _openTextEditor(entry);
                   },
                 ),
               ListTile(
@@ -3670,6 +4239,171 @@ class _FilesPageState extends ConsumerState<FilesPage>
             );
           },
           transitionDuration: M3Durations.medium4,
+        ),
+      );
+    }
+  }
+
+  Future<void> _openTextEditor(FileEntry entry) async {
+    final api = ref.read(apiServiceProvider);
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    FilePreviewResponse preview;
+    try {
+      preview = await api.previewTextFile(entry.path);
+    } catch (error) {
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load text file: $error')),
+        );
+      }
+      return;
+    }
+
+    if (mounted) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+
+    if (!mounted) return;
+
+    if (preview.truncated) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'This file is larger than the inline editor limit and can only be previewed.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    final controller = TextEditingController(text: preview.content);
+    bool isSaving = false;
+    String? saveError;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => Dialog.fullscreen(
+          child: Scaffold(
+            appBar: AppBar(
+              leading: IconButton(
+                icon: const Icon(Icons.close_rounded),
+                onPressed:
+                    isSaving ? null : () => Navigator.pop(dialogContext, false),
+              ),
+              title: Text('Edit ${safeDisplayName(entry.name)}'),
+              actions: [
+                TextButton.icon(
+                  onPressed: isSaving
+                      ? null
+                      : () async {
+                          setDialogState(() {
+                            isSaving = true;
+                            saveError = null;
+                          });
+
+                          try {
+                            await api.saveTextFile(
+                              path: entry.path,
+                              content: controller.text,
+                            );
+                            if (dialogContext.mounted) {
+                              Navigator.pop(dialogContext, true);
+                            }
+                          } catch (error) {
+                            setDialogState(() {
+                              isSaving = false;
+                              saveError = error.toString();
+                            });
+                          }
+                        },
+                  icon: isSaving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.save_rounded),
+                  label: const Text('Save'),
+                ),
+                const SizedBox(width: 8),
+              ],
+            ),
+            body: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Encoding: ${preview.encoding} · Size: ${_formatFileSize(preview.size)}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  if (saveError != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.errorContainer.withValues(alpha: 0.5),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        saveError!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: controller,
+                      expands: true,
+                      minLines: null,
+                      maxLines: null,
+                      keyboardType: TextInputType.multiline,
+                      textAlignVertical: TextAlignVertical.top,
+                      decoration: InputDecoration(
+                        hintText: 'Edit file content',
+                        alignLabelWithHint: true,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        filled: true,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    controller.dispose();
+
+    if (saved == true && mounted) {
+      final currentPath = ref.read(currentPathProvider);
+      ref.invalidate(directoryListingProvider(currentPath));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Saved ${safeDisplayName(entry.name)}'),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
         ),
       );
     }

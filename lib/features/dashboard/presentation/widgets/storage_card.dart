@@ -5,6 +5,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import '../../../../core/models/api_models.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../pages/dashboard_page.dart';
+import '../../../storage/presentation/providers/disk_platform_capabilities_provider.dart';
 
 // Original StorageCard for backward compatibility
 class StorageCard extends StatelessWidget {
@@ -220,8 +221,13 @@ class StorageCard extends StatelessWidget {
 // New TotalStorageCard that shows ALL storage combined
 class TotalStorageCard extends StatelessWidget {
   final AsyncValue<TotalStorageInfo?> storageInfo;
+  final AsyncValue<DiskPlatformCapabilities> diskCapabilities;
 
-  const TotalStorageCard({super.key, required this.storageInfo});
+  const TotalStorageCard({
+    super.key,
+    required this.storageInfo,
+    required this.diskCapabilities,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -274,10 +280,26 @@ class TotalStorageCard extends StatelessWidget {
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      Text(
-                        'All disks combined',
-                        style: textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
+                      diskCapabilities.when(
+                        data: (capabilities) => Text(
+                          capabilities.readWriteOnlyMode
+                              ? 'All disks combined · status-only backend'
+                              : 'All disks combined',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        loading: () => Text(
+                          'All disks combined',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        error: (_, __) => Text(
+                          'All disks combined',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
                         ),
                       ),
                     ],
@@ -286,6 +308,53 @@ class TotalStorageCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 20),
+            diskCapabilities.when(
+              data: (capabilities) {
+                if (!capabilities.readWriteOnlyMode) {
+                  return const SizedBox.shrink();
+                }
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colorScheme.secondaryContainer.withValues(
+                      alpha: 0.40,
+                    ),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: colorScheme.secondary.withValues(alpha: 0.20),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.lock_outline_rounded,
+                        size: 18,
+                        color: colorScheme.secondary,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          capabilities.restrictionMessage ??
+                              'This backend exposes storage totals in read-only mode. Use file operations instead of disk management actions.',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSecondaryContainer,
+                            fontWeight: FontWeight.w600,
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+              loading: () => const SizedBox.shrink(),
+              error: (_, __) => const SizedBox.shrink(),
+            ),
             storageInfo.when(
               data: (info) {
                 if (info == null) return _buildErrorState(context);

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../theme/app_theme.dart';
 import '../../features/auth/presentation/pages/login_page.dart';
 import '../../features/auth/presentation/pages/register_page.dart';
 import '../../features/auth/providers/auth_provider.dart';
@@ -40,58 +41,21 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/discover',
         name: 'discover',
-        pageBuilder: (context, state) => CustomTransitionPage(
-          key: state.pageKey,
-          child: const DeviceDiscoveryPage(),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return FadeTransition(opacity: animation, child: child);
-          },
-        ),
+        pageBuilder: (context, state) =>
+            _buildEntranceTransition(state, const DeviceDiscoveryPage()),
       ),
 
       GoRoute(
         path: '/login',
         name: 'login',
-        pageBuilder: (context, state) => CustomTransitionPage(
-          key: state.pageKey,
-          child: const LoginPage(),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0, 0.1),
-                end: Offset.zero,
-              ).animate(
-                CurvedAnimation(
-                  parent: animation,
-                  curve: Curves.easeOutCubic,
-                ),
-              ),
-              child: FadeTransition(opacity: animation, child: child),
-            );
-          },
-        ),
+        pageBuilder: (context, state) =>
+            _buildEntranceTransition(state, const LoginPage()),
       ),
       GoRoute(
         path: '/register',
         name: 'register',
-        pageBuilder: (context, state) => CustomTransitionPage(
-          key: state.pageKey,
-          child: const RegisterPage(),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0, 0.1),
-                end: Offset.zero,
-              ).animate(
-                CurvedAnimation(
-                  parent: animation,
-                  curve: Curves.easeOutCubic,
-                ),
-              ),
-              child: FadeTransition(opacity: animation, child: child),
-            );
-          },
-        ),
+        pageBuilder: (context, state) =>
+            _buildEntranceTransition(state, const RegisterPage()),
       ),
 
       // Main App Shell
@@ -134,19 +98,63 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   );
 });
 
+CustomTransitionPage _buildEntranceTransition(
+  GoRouterState state,
+  Widget child,
+) {
+  return CustomTransitionPage(
+    key: state.pageKey,
+    child: RepaintBoundary(child: child),
+    transitionDuration: M3Durations.short4,
+    reverseTransitionDuration: M3Durations.short3,
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) {
+        return child;
+      }
+
+      final curvedAnimation = CurvedAnimation(
+        parent: animation,
+        curve: M3Curves.emphasizedDecelerate,
+        reverseCurve: M3Curves.emphasizedAccelerate,
+      );
+
+      return SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.03),
+          end: Offset.zero,
+        ).animate(curvedAnimation),
+        child: FadeTransition(opacity: curvedAnimation, child: child),
+      );
+    },
+  );
+}
+
 CustomTransitionPage _buildPageTransition(GoRouterState state, Widget child) {
   return CustomTransitionPage(
     key: state.pageKey,
-    child: child,
-    transitionDuration: const Duration(milliseconds: 200),
-    reverseTransitionDuration: const Duration(milliseconds: 150),
+    child: RepaintBoundary(child: child),
+    transitionDuration: M3Durations.short4,
+    reverseTransitionDuration: M3Durations.short3,
     transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) {
+        return child;
+      }
+
+      final curvedAnimation = CurvedAnimation(
+        parent: animation,
+        curve: M3Curves.standardDecelerate,
+        reverseCurve: M3Curves.standardAccelerate,
+      );
+
       return FadeTransition(
-        opacity: CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOut,
+        opacity: curvedAnimation,
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 0.015),
+            end: Offset.zero,
+          ).animate(curvedAnimation),
+          child: child,
         ),
-        child: child,
       );
     },
   );

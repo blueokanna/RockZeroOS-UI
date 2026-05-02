@@ -8,6 +8,7 @@ import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
 import '../../../../core/services/wallpaper_service.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../storage/presentation/providers/disk_platform_capabilities_provider.dart';
 import '../widgets/system_status_card.dart';
 import '../widgets/storage_card.dart';
 import '../widgets/network_status_card.dart';
@@ -263,6 +264,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
     final hardwareInfo = ref.watch(hardwareInfoProvider);
     final storageInfo = ref.watch(totalStorageInfoProvider);
     final networkInfo = ref.watch(networkSpeedProvider);
+    final diskCapabilities = ref.watch(diskPlatformCapabilitiesProvider);
 
     // Convert NetworkInfo? to AsyncValue for compatibility
     final networkInfoAsync = networkInfo != null
@@ -340,6 +342,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                       return _buildWideLayout(
                         context,
                         hardwareInfo,
+                        diskCapabilities,
                         storageInfo,
                         networkInfoAsync,
                       );
@@ -347,6 +350,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                       return _buildMediumLayout(
                         context,
                         hardwareInfo,
+                        diskCapabilities,
                         storageInfo,
                         networkInfoAsync,
                       );
@@ -354,6 +358,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                       return _buildNarrowLayout(
                         context,
                         hardwareInfo,
+                        diskCapabilities,
                         storageInfo,
                         networkInfoAsync,
                       );
@@ -371,6 +376,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
   Widget _buildWideLayout(
     BuildContext context,
     AsyncValue<HardwareInfo?> hardwareInfo,
+    AsyncValue<DiskPlatformCapabilities> diskCapabilities,
     AsyncValue<TotalStorageInfo?> storageInfo,
     AsyncValue<NetworkInfo?> networkInfo,
   ) {
@@ -381,7 +387,10 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
           children: [
             Expanded(
               flex: 3,
-              child: SystemStatusCard(hardwareInfo: hardwareInfo)
+              child: SystemStatusCard(
+                hardwareInfo: hardwareInfo,
+                diskCapabilities: diskCapabilities,
+              )
                   .animate()
                   .fadeIn(delay: 100.ms, curve: M3Curves.emphasizedDecelerate)
                   .slideX(begin: -0.03, curve: M3Curves.emphasized),
@@ -391,7 +400,10 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
               flex: 2,
               child: Column(
                 children: [
-                  TotalStorageCard(storageInfo: storageInfo)
+                  TotalStorageCard(
+                    storageInfo: storageInfo,
+                    diskCapabilities: diskCapabilities,
+                  )
                       .animate()
                       .fadeIn(
                         delay: 150.ms,
@@ -418,12 +430,16 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
   Widget _buildMediumLayout(
     BuildContext context,
     AsyncValue<HardwareInfo?> hardwareInfo,
+    AsyncValue<DiskPlatformCapabilities> diskCapabilities,
     AsyncValue<TotalStorageInfo?> storageInfo,
     AsyncValue<NetworkInfo?> networkInfo,
   ) {
     return Column(
       children: [
-        SystemStatusCard(hardwareInfo: hardwareInfo)
+        SystemStatusCard(
+          hardwareInfo: hardwareInfo,
+          diskCapabilities: diskCapabilities,
+        )
             .animate()
             .fadeIn(delay: 100.ms, curve: M3Curves.emphasizedDecelerate)
             .slideY(begin: 0.03, curve: M3Curves.emphasized),
@@ -432,7 +448,10 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: TotalStorageCard(storageInfo: storageInfo)
+              child: TotalStorageCard(
+                storageInfo: storageInfo,
+                diskCapabilities: diskCapabilities,
+              )
                   .animate()
                   .fadeIn(delay: 150.ms, curve: M3Curves.emphasizedDecelerate)
                   .slideX(begin: -0.03, curve: M3Curves.emphasized),
@@ -453,17 +472,24 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
   Widget _buildNarrowLayout(
     BuildContext context,
     AsyncValue<HardwareInfo?> hardwareInfo,
+    AsyncValue<DiskPlatformCapabilities> diskCapabilities,
     AsyncValue<TotalStorageInfo?> storageInfo,
     AsyncValue<NetworkInfo?> networkInfo,
   ) {
     return Column(
       children: [
-        SystemStatusCard(hardwareInfo: hardwareInfo)
+        SystemStatusCard(
+          hardwareInfo: hardwareInfo,
+          diskCapabilities: diskCapabilities,
+        )
             .animate()
             .fadeIn(delay: 100.ms, curve: M3Curves.emphasizedDecelerate)
             .slideY(begin: 0.03, curve: M3Curves.emphasized),
         const SizedBox(height: 16),
-        TotalStorageCard(storageInfo: storageInfo)
+        TotalStorageCard(
+          storageInfo: storageInfo,
+          diskCapabilities: diskCapabilities,
+        )
             .animate()
             .fadeIn(delay: 150.ms, curve: M3Curves.emphasizedDecelerate)
             .slideY(begin: 0.03, curve: M3Curves.emphasized),

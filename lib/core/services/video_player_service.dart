@@ -1,8 +1,4 @@
 import 'dart:async';
-<<<<<<< HEAD
-import 'dart:io';
-=======
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,7 +7,6 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../services/secure_hls_player.dart';
 
-/// 视频播放器状态
 class VideoPlayerState {
   final bool isPlaying;
   final bool isBuffering;
@@ -83,7 +78,6 @@ class VideoPlayerState {
       currentFileId != null && currentFileId!.isNotEmpty && isInitialized;
 }
 
-/// 全局视频播放器服务 - 支持小窗播放和后台播放
 class VideoPlayerService extends Notifier<VideoPlayerState> {
   Player? _player;
   VideoController? _videoController;
@@ -100,28 +94,32 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
   Player? get player => _player;
   VideoController? get videoController => _videoController;
 
-  /// 开始播放安全加密视频
   Future<void> playSecureVideo({
     required String baseUrl,
     required String jwtToken,
     required String userId,
     required String password,
-    required String fileId,
+    String? fileId,
+    String? filePath,
     required String fileName,
   }) async {
-    // 如果正在播放同一个文件，不重新初始化
-    if (state.currentFileId == fileId &&
+    final resolvedTarget =
+        (fileId != null && fileId.isNotEmpty) ? fileId : filePath;
+    if (resolvedTarget == null || resolvedTarget.isEmpty) {
+      throw ArgumentError('Either fileId or filePath must be provided');
+    }
+
+    if (state.currentFileId == resolvedTarget &&
         _player != null &&
         state.isInitialized) {
       await _player!.play();
       return;
     }
 
-    // 停止当前播放
     await stop();
 
     state = state.copyWith(
-      currentFileId: fileId,
+      currentFileId: resolvedTarget,
       currentFileName: fileName,
       isBuffering: true,
       error: null,
@@ -129,7 +127,6 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
     );
 
     try {
-      // 1. SAE 握手
       _securePlayer = SecureHlsPlayer(
         baseUrl: baseUrl,
         jwtToken: jwtToken,
@@ -138,14 +135,11 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
       await _securePlayer!.initializeSaeHandshake(
         userId,
         password,
-        fileId,
+        fileId: fileId,
+        filePath: filePath,
       );
 
-      // 2. 使用直接播放模式（无代理，无加密，适合 ARM 设备）
       final playUrl = _securePlayer!.getDirectPlaylistUrl();
-
-      // 3. 创建播放器
-      //    ★ 低内存策略：限制播放器内部缓存，避免高内存设备压力
       _player = Player(
         configuration: const PlayerConfiguration(
           bufferSize: 16 * 1024 * 1024,
@@ -154,11 +148,9 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
 
       _videoController = VideoController(_player!);
 
-      // 3.5. 设置 mpv 属性：PTS 修正 + HLS 优化 + ARM 多核 + 零磁盘缓存
       if (_player!.platform is NativePlayer) {
         final mpv = _player!.platform as NativePlayer;
 
-        // ── 缓存策略：禁用磁盘缓存，限制内存缓存 ──
         await mpv.setProperty('cache', 'no');
         await mpv.setProperty('cache-on-disk', 'no');
         await mpv.setProperty('cache-secs', '0');
@@ -166,38 +158,16 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
         await mpv.setProperty('demuxer-readahead-secs', '1');
         await mpv.setProperty('demuxer-max-back-bytes', '2MiB');
 
-        // ── 多核并行解码：自动利用所有 CPU 核心 ──
         await mpv.setProperty('vd-lavc-threads', '0');
         await mpv.setProperty('ad-lavc-threads', '0');
         await mpv.setProperty('demuxer-thread', 'yes');
 
-<<<<<<< HEAD
-        // ── 安卓平台强制硬件解码（MediaCodec），禁用软解回退 ──
-        if (Platform.isAndroid) {
-          await mpv.setProperty('hwdec', 'mediacodec-copy');
-          await mpv.setProperty('hwdec-codecs', 'all');
-          await mpv.setProperty('vd-lavc-software-fallback', 'no');
-          await mpv.setProperty('vd-lavc-dr', 'yes');
-          await mpv.setProperty('vo', 'gpu');
-          await mpv.setProperty('gpu-context', 'android');
-        } else {
-          await mpv.setProperty('hwdec', 'auto-safe');
-          await mpv.setProperty('hwdec-codecs', 'all');
-          await mpv.setProperty('vd-lavc-software-fallback', 'inf');
-          await mpv.setProperty('vd-lavc-dr', 'yes');
-        }
-=======
-        // ── 硬件解码 + CPU 回退（AV1 等不支持的编码自动回退软解码）──
         await mpv.setProperty('hwdec', 'auto-safe');
         await mpv.setProperty('hwdec-codecs', 'all');
         await mpv.setProperty('vd-lavc-software-fallback', 'inf');
         await mpv.setProperty('vd-lavc-dr', 'yes');
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
 
-        // ── PTS 时间戳修正 ──
         await mpv.setProperty('rebase-start-time', 'yes');
-
-        // ── HLS 优化 ──
         await mpv.setProperty(
           'demuxer-lavf-o',
           'fflags=+genpts+discardcorrupt,live_start_index=0',
@@ -206,18 +176,13 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
         await mpv.setProperty(
             'stream-lavf-o', 'reconnect=1,reconnect_streamed=1');
 
-        // ── 音视频同步 ──
         await mpv.setProperty('video-sync', 'audio');
 
-        // ── 渲染优化 ──
         await mpv.setProperty('vo', 'gpu');
         await mpv.setProperty('gpu-context', 'auto');
       }
 
-      // 4. 设置监听器
       _setupListeners();
-
-      // 5. 开始播放
       await _player!.open(Media(playUrl), play: true);
 
       state = state.copyWith(
@@ -281,24 +246,23 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
 
   String _formatError(String error) {
     if (error.contains('HTTP 500')) {
-      return '服务器转码失败，请稍后重试';
+      return 'Server transcoding failed, please try again later.';
     }
     if (error.contains('HTTP 404')) {
-      return '视频文件不存在';
+      return 'Video file not found.';
     }
     if (error.contains('timeout') || error.contains('Timeout')) {
-      return '连接超时，请检查网络';
+      return 'Connection timed out, please check your network.';
     }
     if (error.contains('SAE') || error.contains('handshake')) {
-      return '安全握手失败，请重新登录';
+      return 'Secure handshake failed, please log in again.';
     }
     if (error.contains('decrypt') || error.contains('Decrypt')) {
-      return '解密失败，密钥可能不匹配';
+      return 'Decryption failed, the key may not match.';
     }
     return error;
   }
 
-  /// 切换播放/暂停
   Future<void> togglePlayPause() async {
     if (_player == null) return;
     if (state.isPlaying) {
@@ -311,7 +275,6 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
   Future<void> pause() async => await _player?.pause();
   Future<void> resume() async => await _player?.play();
 
-  /// Seek 到指定位置
   Future<void> seekTo(Duration position) async {
     if (_player == null || !state.isInitialized) return;
 
@@ -326,7 +289,6 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
       position: clampedPosition,
     );
 
-    // Notify proxy to prebuffer around the seek target
     final proxy = _securePlayer?.proxy;
     if (proxy != null) {
       final segmentIndex = clampedPosition.inSeconds ~/ 6;
@@ -357,45 +319,37 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
     });
   }
 
-  /// 相对 seek
   Future<void> seekRelative(int seconds) async {
     final newPos = state.position + Duration(seconds: seconds);
     await seekTo(newPos);
   }
 
-  /// 进入小窗模式
   void enterPipMode() {
     state = state.copyWith(isPipMode: true, isFullscreen: false);
   }
 
-  /// 退出小窗模式
   void exitPipMode() {
     state = state.copyWith(isPipMode: false);
   }
 
-  /// 进入全屏
   void enterFullscreen() {
     state = state.copyWith(isFullscreen: true, isPipMode: false);
   }
 
-  /// 退出全屏
   void exitFullscreen() {
     state = state.copyWith(isFullscreen: false);
   }
 
-  /// 设置音量
   Future<void> setVolume(double volume) async {
     state = state.copyWith(volume: volume);
     await _player?.setVolume(volume * 100);
   }
 
-  /// 设置播放速度
   Future<void> setSpeed(double speed) async {
     state = state.copyWith(speed: speed);
     await _player?.setRate(speed);
   }
 
-  /// 停止播放并清理资源
   Future<void> stop() async {
     _cancelSubscriptions();
     await _player?.stop();

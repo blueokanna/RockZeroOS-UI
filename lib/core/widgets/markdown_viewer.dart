@@ -27,9 +27,7 @@ class MarkdownViewer extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
-    // 自定义Markdown样式
     final styleSheet = MarkdownStyleSheet(
-      // 标题样式
       h1: textTheme.headlineLarge?.copyWith(
         fontWeight: FontWeight.bold,
         color: colorScheme.onSurface,
@@ -54,12 +52,10 @@ class MarkdownViewer extends StatelessWidget {
         fontWeight: FontWeight.w600,
         color: colorScheme.onSurface,
       ),
-      // 正文样式
       p: textTheme.bodyMedium?.copyWith(
         color: colorScheme.onSurface,
         height: 1.6,
       ),
-      // 代码块样式
       code: textTheme.bodySmall?.copyWith(
         fontFamily: 'monospace',
         backgroundColor: colorScheme.surfaceContainerHighest,
@@ -74,7 +70,6 @@ class MarkdownViewer extends StatelessWidget {
         ),
       ),
       codeblockPadding: const EdgeInsets.all(16),
-      // 引用块样式
       blockquote: textTheme.bodyMedium?.copyWith(
         color: colorScheme.onSurfaceVariant,
         fontStyle: FontStyle.italic,
@@ -88,11 +83,9 @@ class MarkdownViewer extends StatelessWidget {
         ),
       ),
       blockquotePadding: const EdgeInsets.only(left: 16, top: 8, bottom: 8),
-      // 列表样式
       listBullet: textTheme.bodyMedium?.copyWith(
         color: colorScheme.primary,
       ),
-      // 表格样式
       tableHead: textTheme.bodyMedium?.copyWith(
         fontWeight: FontWeight.bold,
         color: colorScheme.onSurface,
@@ -107,12 +100,10 @@ class MarkdownViewer extends StatelessWidget {
       tableHeadAlign: TextAlign.center,
       tableCellsPadding:
           const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      // 链接样式
       a: textTheme.bodyMedium?.copyWith(
         color: colorScheme.primary,
         decoration: TextDecoration.underline,
       ),
-      // 水平线样式
       horizontalRuleDecoration: BoxDecoration(
         border: Border(
           top: BorderSide(
@@ -121,9 +112,7 @@ class MarkdownViewer extends StatelessWidget {
           ),
         ),
       ),
-      // 图片样式
       img: textTheme.bodyMedium,
-      // 强调样式
       strong: textTheme.bodyMedium?.copyWith(
         fontWeight: FontWeight.bold,
         color: colorScheme.onSurface,

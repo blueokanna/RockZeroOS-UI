@@ -1,8 +1,5 @@
 import 'dart:async';
-<<<<<<< HEAD
-import 'dart:io';
-=======
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
+
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -24,7 +21,7 @@ class SimpleVideoTestPage extends StatefulWidget {
 class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
   Player? _player;
   VideoController? _controller;
-  String _status = '准备初始化...';
+  String _status = 'Preparing player...';
   String _details = '';
   bool _isLoading = true;
   String? _error;
@@ -44,39 +41,20 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
 
   Future<void> _initVideo() async {
     setState(() {
-      _status = '正在初始化...';
+      _status = 'Initializing...';
       _details = 'URL: ${widget.videoUrl}';
       _isLoading = true;
       _error = null;
     });
 
     try {
-      _log('开始初始化');
-      _log('URL: ${widget.videoUrl}');
-
-      _log('创建Player...');
+      _log('Initialization started');
       _player = Player(
         configuration: const PlayerConfiguration(
           bufferSize: 32 * 1024 * 1024,
         ),
       );
 
-<<<<<<< HEAD
-      if (_player!.platform is NativePlayer) {
-        final mpv = _player!.platform as NativePlayer;
-        if (Platform.isAndroid) {
-          await mpv.setProperty('hwdec', 'mediacodec-copy');
-          await mpv.setProperty('hwdec-codecs', 'all');
-          await mpv.setProperty('vd-lavc-software-fallback', 'no');
-          await mpv.setProperty('vo', 'gpu');
-          await mpv.setProperty('gpu-context', 'android');
-        } else {
-          await mpv.setProperty('hwdec', 'auto-safe');
-        }
-      }
-
-=======
->>>>>>> a3328d4715e908bd0bcd5c2c8bece0c2ab502f8f
       _controller = VideoController(_player!);
 
       _player!.stream.playing.listen((playing) {
@@ -87,11 +65,11 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
 
       _player!.stream.error.listen((error) {
         if (error.isNotEmpty && mounted) {
-          _log('❌ 播放错误: $error');
+          _log('Playback error: $error');
         }
       });
 
-      _log('打开媒体...');
+      _log('Opening media...');
       await _player!.open(
         Media(
           widget.videoUrl,
@@ -102,17 +80,16 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
         play: true,
       );
 
-      _log('✅ 播放开始');
-
+      _log('Playback started');
       setState(() {
-        _status = '✅ 成功！';
+        _status = 'Success';
         _isLoading = false;
       });
     } catch (e, stack) {
-      _log('❌ 错误: $e');
+      _log('Error: $e');
       _log('Stack: $stack');
       setState(() {
-        _status = '❌ 失败';
+        _status = 'Failed';
         _error = e.toString();
         _isLoading = false;
       });
@@ -130,7 +107,7 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('视频播放测试'),
+        title: const Text('Video playback test'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -166,7 +143,7 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
                 if (_error != null) ...[
                   const SizedBox(height: 8),
                   Text(
-                    '错误: $_error',
+                    'Error: $_error',
                     style: const TextStyle(color: Colors.red),
                   ),
                 ],
@@ -182,9 +159,7 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
             )
           else if (_isLoading)
             const Expanded(
-              child: Center(
-                child: CircularProgressIndicator(),
-              ),
+              child: Center(child: CircularProgressIndicator()),
             )
           else
             const Expanded(
@@ -215,16 +190,14 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   IconButton(
-                    icon: Icon(
-                      _isPlaying ? Icons.pause : Icons.play_arrow,
-                    ),
+                    icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
                     onPressed: () {
                       if (_isPlaying) {
                         _player?.pause();
-                        _log('暂停');
+                        _log('Paused');
                       } else {
                         _player?.play();
-                        _log('播放');
+                        _log('Playing');
                       }
                     },
                   ),
@@ -233,7 +206,7 @@ class _SimpleVideoTestPageState extends State<SimpleVideoTestPage> {
                     onPressed: () {
                       _player?.pause();
                       _player?.seek(Duration.zero);
-                      _log('停止');
+                      _log('Stopped');
                     },
                   ),
                 ],

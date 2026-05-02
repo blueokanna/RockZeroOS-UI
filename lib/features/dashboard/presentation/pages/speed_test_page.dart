@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
+import '../../../../core/i18n/app_localizations.dart';
 import '../../../../core/services/device_discovery_service.dart';
 
 enum SpeedTestState {
@@ -49,35 +50,22 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
   Timer? _downloadUpdateTimer;
   Timer? _uploadUpdateTimer;
 
-  late AnimationController _needleController;
-  late AnimationController _pulseController;
-  late AnimationController _tickController;
-
   static const int _pingTestCount = 20;
   static const int _downloadTestDurationSec = 10;
   static const int _uploadTestDurationSec = 10;
   static const int _downloadChunkSizeMB = 96;
-  static const int _uploadChunkSizeMB = 20;
+  static const int _uploadChunkSizeMB = 8;
+  static const int _uploadParallelRequests = 4;
+  static const int _uploadStreamChunkSizeBytes = 256 * 1024;
+  static const Duration _speedSampleInterval = Duration(milliseconds: 120);
+  static const double _speedSmoothingFactor = 0.22;
 
-  /// 复用 HTTP 客户端以保持 TCP 连接
   late final http.Client _httpClient;
 
   @override
   void initState() {
     super.initState();
     _httpClient = http.Client();
-    _needleController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 600),
-    );
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2000),
-    )..repeat(reverse: true);
-    _tickController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 1),
-    )..repeat();
     _loadConfig();
   }
 
@@ -96,9 +84,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     _isCancelled = true;
     _downloadUpdateTimer?.cancel();
     _uploadUpdateTimer?.cancel();
-    _needleController.dispose();
-    _pulseController.dispose();
-    _tickController.dispose();
     _httpClient.close();
     super.dispose();
   }
@@ -109,7 +94,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     if (device == null) {
       setState(() {
         _state = SpeedTestState.error;
-        _error = 'Not connected to NAS';
+        _error = _tr('speedtest.error.not_connected');
       });
       return;
     }
@@ -126,7 +111,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       _jitter = 0;
       _error = null;
       _testProgress = 0;
-      _testPhase = 'Measuring latency...';
+      _testPhase = _tr('speedtest.phase.latency');
       _isCancelled = false;
     });
 
@@ -135,21 +120,21 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       if (!mounted || _isCancelled) return;
       setState(() {
         _state = SpeedTestState.testingDownload;
-        _testPhase = 'Download...';
+        _testPhase = _tr('speedtest.phase.download');
         _testProgress = 0;
       });
       await _testDownload();
       if (!mounted || _isCancelled) return;
       setState(() {
         _state = SpeedTestState.testingUpload;
-        _testPhase = 'Upload...';
+        _testPhase = _tr('speedtest.phase.upload');
         _testProgress = 0;
       });
       await _testUpload();
       if (!mounted || _isCancelled) return;
       setState(() {
         _state = SpeedTestState.completed;
-        _testPhase = 'Complete';
+        _testPhase = _tr('speedtest.phase.complete');
         _testProgress = 1.0;
       });
     } catch (e) {
@@ -165,14 +150,12 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
   Future<void> _testPing() async {
     if (_serverUrl == null) return;
     final List<int> pings = [];
-    // 使用 empty 端点：零字节响应，最小 HTTP 开销
     final uri = Uri.parse('$_serverUrl/api/v1/speedtest/empty');
     final headers = <String, String>{};
     if (_authToken != null && _authToken!.isNotEmpty) {
       headers['Authorization'] = 'Bearer $_authToken';
     }
 
-    // Warm-up: 前 3 次请求用于建立 TCP 连接 + TLS 握手，不计入 ping
     for (int i = 0; i < 3; i++) {
       if (!mounted || _isCancelled) return;
       try {
@@ -200,11 +183,9 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
           }
         }
       } catch (_) {}
-      // 极短延迟，避免占满 CPU
       await Future.delayed(const Duration(milliseconds: 20));
     }
     if (pings.length > 2) {
-      // 去掉最高和最低值，取平均
       pings.sort();
       final trimmed = pings.sublist(1, pings.length - 1);
       final avg = trimmed.reduce((a, b) => a + b) ~/ trimmed.length;
@@ -228,7 +209,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
   Future<void> _testDownload() async {
     if (_serverUrl == null) return;
-    final List<double> speeds = [];
     final startTime = DateTime.now();
     final testDuration = Duration(seconds: _downloadTestDurationSec);
     final headers = <String, String>{};
@@ -238,34 +218,41 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
     try {
       double instantSpeed = 0;
+      final List<double> samples = [];
       int totalBytes = 0;
+      int bytesSinceLastSample = 0;
       final sw = Stopwatch()..start();
+      var lastSampleAtMs = 0;
 
-      _downloadUpdateTimer =
-          Timer.periodic(const Duration(milliseconds: 150), (t) {
+      _downloadUpdateTimer = Timer.periodic(_speedSampleInterval, (t) {
         if (!mounted || _isCancelled) {
           t.cancel();
           return;
         }
-        final elapsed = sw.elapsedMilliseconds / 1000;
-        if (elapsed > 0 && totalBytes > 0) {
-          final avg = (totalBytes * 8) / (elapsed * 1000000);
-          instantSpeed =
-              instantSpeed == 0 ? avg : instantSpeed * 0.7 + avg * 0.3;
-          setState(() {
-            _currentSpeed = instantSpeed;
-            _downloadSpeed = instantSpeed;
-            _testProgress =
-                (DateTime.now().difference(startTime).inMilliseconds /
-                        testDuration.inMilliseconds)
-                    .clamp(0.0, 1.0);
-          });
+        final nowMs = sw.elapsedMilliseconds;
+        final deltaMs = nowMs - lastSampleAtMs;
+        if (deltaMs > 0 && bytesSinceLastSample > 0) {
+          final intervalMbps =
+              (bytesSinceLastSample * 8) / ((deltaMs / 1000) * 1000000);
+          samples.add(intervalMbps);
+          instantSpeed = _smoothVisualValue(instantSpeed, intervalMbps);
+          bytesSinceLastSample = 0;
+          lastSampleAtMs = nowMs;
+          _updateLiveMetrics(
+            currentSpeed: instantSpeed,
+            downloadSpeed: instantSpeed,
+            progress: (DateTime.now().difference(startTime).inMilliseconds /
+                    testDuration.inMilliseconds)
+                .clamp(0.0, 1.0)
+                .toDouble(),
+          );
+        } else if (deltaMs > 0) {
+          lastSampleAtMs = nowMs;
         }
       });
 
       while (DateTime.now().difference(startTime) < testDuration) {
         if (!mounted || _isCancelled) break;
-        final chunkSw = Stopwatch()..start();
         try {
           final uri = Uri.parse(
               '$_serverUrl/api/v1/speedtest/download?size=$_downloadChunkSizeMB');
@@ -274,29 +261,27 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
           final resp =
               await _httpClient.send(req).timeout(const Duration(seconds: 60));
           if (resp.statusCode == 200) {
-            int chunkBytes = 0;
             await for (final chunk in resp.stream) {
               if (_isCancelled) break;
-              chunkBytes += chunk.length;
               totalBytes += chunk.length;
-            }
-            chunkSw.stop();
-            final e = chunkSw.elapsedMilliseconds / 1000;
-            if (e > 0 && chunkBytes > 0) {
-              speeds.add((chunkBytes * 8) / (e * 1000000));
+              bytesSinceLastSample += chunk.length;
             }
           }
         } catch (_) {}
       }
       _downloadUpdateTimer?.cancel();
       sw.stop();
-      if (speeds.isNotEmpty && mounted && !_isCancelled) {
-        speeds.sort();
-        final median = speeds[speeds.length ~/ 2];
-        setState(() {
-          _downloadSpeed = median;
-          _currentSpeed = median;
-        });
+      final elapsedSecs = sw.elapsedMilliseconds / 1000;
+      final fallback =
+          elapsedSecs > 0 ? (totalBytes * 8) / (elapsedSecs * 1000000) : 0.0;
+      final finalSpeed = _stableSpeedFromSamples(samples, fallback: fallback);
+      if (mounted && !_isCancelled) {
+        _updateLiveMetrics(
+          currentSpeed: finalSpeed,
+          downloadSpeed: finalSpeed,
+          progress: 1,
+          snap: true,
+        );
       }
     } finally {
       _downloadUpdateTimer?.cancel();
@@ -305,17 +290,12 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
   Future<void> _testUpload() async {
     if (_serverUrl == null) return;
-    final List<double> speeds = [];
     final startTime = DateTime.now();
     final testDuration = Duration(seconds: _uploadTestDurationSec);
+    final deadline = startTime.add(testDuration);
     final testData = Uint8List(_uploadChunkSizeMB * 1024 * 1024);
-    final rng = math.Random();
-    for (int i = 0; i < testData.length; i++) {
-      testData[i] = rng.nextInt(256);
-    }
     final headers = <String, String>{
       'Content-Type': 'application/octet-stream',
-      'Content-Length': testData.length.toString()
     };
     if (_authToken != null && _authToken!.isNotEmpty) {
       headers['Authorization'] = 'Bearer $_authToken';
@@ -323,65 +303,190 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
 
     try {
       double instantSpeed = 0;
+      final List<double> samples = [];
       int totalBytes = 0;
+      int bytesSinceLastSample = 0;
       final sw = Stopwatch()..start();
+      var lastSampleAtMs = 0;
 
-      _uploadUpdateTimer =
-          Timer.periodic(const Duration(milliseconds: 150), (t) {
+      _uploadUpdateTimer = Timer.periodic(_speedSampleInterval, (t) {
         if (!mounted || _isCancelled) {
           t.cancel();
           return;
         }
-        final elapsed = sw.elapsedMilliseconds / 1000;
-        if (elapsed > 0 && totalBytes > 0) {
-          final avg = (totalBytes * 8) / (elapsed * 1000000);
-          instantSpeed =
-              instantSpeed == 0 ? avg : instantSpeed * 0.7 + avg * 0.3;
-          setState(() {
-            _uploadSpeed = instantSpeed;
-            _currentSpeed = instantSpeed;
-            _testProgress =
-                (DateTime.now().difference(startTime).inMilliseconds /
-                        testDuration.inMilliseconds)
-                    .clamp(0.0, 1.0);
-          });
+        final nowMs = sw.elapsedMilliseconds;
+        final deltaMs = nowMs - lastSampleAtMs;
+        if (deltaMs > 0 && bytesSinceLastSample > 0) {
+          final intervalMbps =
+              (bytesSinceLastSample * 8) / ((deltaMs / 1000) * 1000000);
+          samples.add(intervalMbps);
+          instantSpeed = _smoothVisualValue(instantSpeed, intervalMbps);
+          bytesSinceLastSample = 0;
+          lastSampleAtMs = nowMs;
+          _updateLiveMetrics(
+            uploadSpeed: instantSpeed,
+            currentSpeed: instantSpeed,
+            progress: (DateTime.now().difference(startTime).inMilliseconds /
+                    testDuration.inMilliseconds)
+                .clamp(0.0, 1.0)
+                .toDouble(),
+          );
+        } else if (deltaMs > 0) {
+          lastSampleAtMs = nowMs;
         }
       });
 
-      while (DateTime.now().difference(startTime) < testDuration) {
-        if (!mounted || _isCancelled) break;
-        final upSw = Stopwatch()..start();
-        try {
-          final uri = Uri.parse('$_serverUrl/api/v1/speedtest/upload');
-          final r = await _httpClient
-              .post(uri, headers: headers, body: testData)
-              .timeout(const Duration(seconds: 60));
-          upSw.stop();
-          if (r.statusCode == 200) {
-            totalBytes += testData.length;
-            final e = upSw.elapsedMilliseconds / 1000;
-            if (e > 0) speeds.add((testData.length * 8) / (e * 1000000));
-          }
-        } catch (_) {}
+      Future<void> uploadWorker() async {
+        while (DateTime.now().isBefore(deadline)) {
+          if (!mounted || _isCancelled) break;
+          try {
+            final uri = Uri.parse('$_serverUrl/api/v1/speedtest/upload');
+            final request = http.StreamedRequest('POST', uri);
+            headers.forEach((key, value) {
+              request.headers[key] = value;
+            });
+            request.contentLength = testData.length;
+
+            final responseFuture = _httpClient.send(request);
+            var offset = 0;
+            while (offset < testData.length) {
+              if (!mounted || _isCancelled) {
+                break;
+              }
+
+              final end = math.min(
+                offset + _uploadStreamChunkSizeBytes,
+                testData.length,
+              );
+              final chunk = testData.sublist(offset, end);
+              request.sink.add(chunk);
+              final sentBytes = end - offset;
+              totalBytes += sentBytes;
+              bytesSinceLastSample += sentBytes;
+              offset = end;
+
+              if ((offset ~/ _uploadStreamChunkSizeBytes) % 4 == 0) {
+                await Future<void>.delayed(Duration.zero);
+              }
+            }
+
+            await request.sink.close();
+            final response =
+                await responseFuture.timeout(const Duration(seconds: 60));
+            await response.stream.drain<void>();
+            if (response.statusCode != 200) {
+              break;
+            }
+          } catch (_) {}
+        }
       }
+
+      await Future.wait(
+        List.generate(_uploadParallelRequests, (_) => uploadWorker()),
+      );
+
       _uploadUpdateTimer?.cancel();
       sw.stop();
-      if (speeds.isNotEmpty && mounted && !_isCancelled) {
-        speeds.sort();
-        final median = speeds[speeds.length ~/ 2];
-        setState(() {
-          _uploadSpeed = median;
-          _currentSpeed = median;
-        });
+      final elapsedSecs = sw.elapsedMilliseconds / 1000;
+      final fallback =
+          elapsedSecs > 0 ? (totalBytes * 8) / (elapsedSecs * 1000000) : 0.0;
+      final finalSpeed = _stableSpeedFromSamples(samples, fallback: fallback);
+      if (mounted && !_isCancelled) {
+        _updateLiveMetrics(
+          uploadSpeed: finalSpeed,
+          currentSpeed: finalSpeed,
+          progress: 1,
+          snap: true,
+        );
       }
     } finally {
       _uploadUpdateTimer?.cancel();
     }
   }
 
+  double _smoothVisualValue(double current, double next) {
+    if (!next.isFinite || next <= 0) {
+      return current;
+    }
+    if (current <= 0 || !current.isFinite) {
+      return next;
+    }
+    return current + ((next - current) * _speedSmoothingFactor);
+  }
+
+  void _updateLiveMetrics({
+    double? currentSpeed,
+    double? downloadSpeed,
+    double? uploadSpeed,
+    double? progress,
+    bool snap = false,
+  }) {
+    if (!mounted || _isCancelled) {
+      return;
+    }
+
+    final nextCurrent = currentSpeed == null
+        ? _currentSpeed
+        : (snap
+            ? currentSpeed
+            : _smoothVisualValue(_currentSpeed, currentSpeed));
+    final nextDownload = downloadSpeed == null
+        ? _downloadSpeed
+        : (snap
+            ? downloadSpeed
+            : _smoothVisualValue(_downloadSpeed, downloadSpeed));
+    final nextUpload = uploadSpeed == null
+        ? _uploadSpeed
+        : (snap ? uploadSpeed : _smoothVisualValue(_uploadSpeed, uploadSpeed));
+    final nextProgress = progress ?? _testProgress;
+
+    if (!snap &&
+        (nextCurrent - _currentSpeed).abs() < 0.05 &&
+        (nextDownload - _downloadSpeed).abs() < 0.05 &&
+        (nextUpload - _uploadSpeed).abs() < 0.05 &&
+        (nextProgress - _testProgress).abs() < 0.002) {
+      return;
+    }
+
+    setState(() {
+      _currentSpeed = nextCurrent;
+      _downloadSpeed = nextDownload;
+      _uploadSpeed = nextUpload;
+      _testProgress = nextProgress.clamp(0.0, 1.0).toDouble();
+    });
+  }
+
+  double _stableSpeedFromSamples(
+    List<double> samples, {
+    required double fallback,
+  }) {
+    final valid = samples.where((s) => s.isFinite && s > 0).toList();
+    if (valid.isEmpty) {
+      return fallback;
+    }
+
+    valid.sort();
+    if (valid.length <= 4) {
+      return valid.reduce((a, b) => a + b) / valid.length;
+    }
+
+    final trimStart = (valid.length * 0.15).floor();
+    final trimEnd = (valid.length * 0.90).ceil();
+    final trimmed = valid.sublist(
+      trimStart,
+      trimEnd.clamp(trimStart + 1, valid.length),
+    );
+
+    return trimmed[trimmed.length ~/ 2];
+  }
+
   double _convertSpeed(double mbps) =>
       _speedUnit == SpeedUnit.mbs ? mbps / 8 : mbps;
   String _unitStr() => _speedUnit == SpeedUnit.mbps ? 'Mbps' : 'MB/s';
+  AppLocalizations get _strings =>
+      AppLocalizations(WidgetsBinding.instance.platformDispatcher.locale);
+  String _tr(String key, [Map<String, String> args = const {}]) =>
+      _strings.tr(key, args);
 
   @override
   Widget build(BuildContext context) {
@@ -422,19 +527,14 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
-                // Device card
                 _buildDeviceCard(device, cs, tt),
                 const SizedBox(height: 24),
-                // Watch-style gauge
                 _buildWatchGauge(cs, tt, isRunning),
                 const SizedBox(height: 16),
-                // Sub-dials row
                 _buildSubDials(cs, tt),
                 const SizedBox(height: 24),
-                // Progress
                 if (isRunning) _buildProgress(cs, tt),
                 if (isRunning) const SizedBox(height: 16),
-                // Start button
                 _buildStartButton(cs, isRunning, device != null),
                 if (_error != null) ...[
                   const SizedBox(height: 12),
@@ -471,7 +571,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
             child: Row(children: [
               Icon(Icons.warning_rounded, color: cs.error),
               const SizedBox(width: 12),
-              Text('NAS Not Connected',
+              Text(_tr('speedtest.device.not_connected'),
                   style: tt.titleSmall?.copyWith(color: cs.error))
             ]),
           ));
@@ -509,7 +609,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               const Icon(Icons.check_circle, size: 14, color: Colors.green),
               const SizedBox(width: 4),
-              Text('Connected',
+              Text(_tr('speedtest.device.connected'),
                   style: tt.labelSmall?.copyWith(color: Colors.green)),
             ]),
           ),
@@ -523,96 +623,95 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     final maxSpeed = _speedUnit == SpeedUnit.mbps ? 10000.0 : 1250.0;
 
     return TweenAnimationBuilder<double>(
-      duration: const Duration(milliseconds: 600),
+      duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
-      tween: Tween(begin: 0, end: displaySpeed),
+      tween: Tween(end: displaySpeed),
       builder: (context, speed, _) {
         return Center(
-          child: SizedBox(
-            width: 320,
-            height: 320,
-            child: Stack(alignment: Alignment.center, children: [
-              // Outer bezel shadow
-              Container(
-                width: 310,
-                height: 310,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      cs.surfaceContainerHighest,
-                      cs.surfaceContainerLow
+          child: RepaintBoundary(
+            child: SizedBox(
+              width: 320,
+              height: 320,
+              child: Stack(alignment: Alignment.center, children: [
+                Container(
+                  width: 310,
+                  height: 310,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        cs.surfaceContainerHighest,
+                        cs.surfaceContainerLow
+                      ],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                          color: cs.shadow.withValues(alpha: 0.15),
+                          blurRadius: 24,
+                          offset: const Offset(0, 8)),
+                      BoxShadow(
+                          color: cs.shadow.withValues(alpha: 0.05),
+                          blurRadius: 4,
+                          spreadRadius: 1),
                     ],
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                        color: cs.shadow.withValues(alpha: 0.15),
-                        blurRadius: 24,
-                        offset: const Offset(0, 8)),
-                    BoxShadow(
-                        color: cs.shadow.withValues(alpha: 0.05),
-                        blurRadius: 4,
-                        spreadRadius: 1),
-                  ],
                 ),
-              ),
-              // Inner dial face
-              Container(
-                width: 280,
-                height: 280,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: RadialGradient(
-                    colors: [cs.surface, cs.surfaceContainerLow],
-                    stops: const [0.6, 1.0],
-                  ),
-                ),
-              ),
-              // Gauge painter
-              CustomPaint(
-                size: const Size(280, 280),
-                painter: _WatchGaugePainter(
-                  speed: speed,
-                  maxSpeed: maxSpeed,
-                  speedUnit: _speedUnit,
-                  accentColor: _speedColor(speed, maxSpeed),
-                  dialColor: cs.onSurface,
-                  tickColor: cs.onSurfaceVariant,
-                  isActive: isActive,
-                ),
-              ),
-              // Center display
-              Column(mainAxisSize: MainAxisSize.min, children: [
-                Text(
-                  speed < 100
-                      ? speed.toStringAsFixed(1)
-                      : speed.toStringAsFixed(0),
-                  style: tt.displayMedium?.copyWith(
-                    fontWeight: FontWeight.w300,
-                    letterSpacing: -2,
-                    color: cs.onSurface,
-                    height: 1,
-                  ),
-                ),
-                const SizedBox(height: 4),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+                  width: 280,
+                  height: 280,
                   decoration: BoxDecoration(
-                    color: _speedColor(speed, maxSpeed).withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(12),
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [cs.surface, cs.surfaceContainerLow],
+                      stops: const [0.6, 1.0],
+                    ),
                   ),
-                  child: Text(_unitStr(),
-                      style: tt.labelMedium?.copyWith(
-                        color: _speedColor(speed, maxSpeed),
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 1.5,
-                      )),
                 ),
+                CustomPaint(
+                  size: const Size(280, 280),
+                  painter: _WatchGaugePainter(
+                    speed: speed,
+                    maxSpeed: maxSpeed,
+                    speedUnit: _speedUnit,
+                    accentColor: _speedColor(speed, maxSpeed),
+                    dialColor: cs.onSurface,
+                    tickColor: cs.onSurfaceVariant,
+                    isActive: isActive,
+                  ),
+                ),
+                Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text(
+                    speed < 100
+                        ? speed.toStringAsFixed(1)
+                        : speed.toStringAsFixed(0),
+                    style: tt.displayMedium?.copyWith(
+                      fontWeight: FontWeight.w300,
+                      letterSpacing: -2,
+                      color: cs.onSurface,
+                      height: 1,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+                    decoration: BoxDecoration(
+                      color:
+                          _speedColor(speed, maxSpeed).withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(_unitStr(),
+                        style: tt.labelMedium?.copyWith(
+                          color: _speedColor(speed, maxSpeed),
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 1.5,
+                        )),
+                  ),
+                ]),
               ]),
-            ]),
+            ),
           ),
         );
       },
@@ -623,7 +722,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
     return Row(children: [
       Expanded(
           child: _SubDial(
-              label: 'DOWNLOAD',
+              label: _tr('speedtest.metric.download'),
               value: _convertSpeed(_downloadSpeed).toStringAsFixed(1),
               unit: _unitStr(),
               icon: Icons.arrow_downward_rounded,
@@ -631,7 +730,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       const SizedBox(width: 12),
       Expanded(
           child: _SubDial(
-              label: 'UPLOAD',
+              label: _tr('speedtest.metric.upload'),
               value: _convertSpeed(_uploadSpeed).toStringAsFixed(1),
               unit: _unitStr(),
               icon: Icons.arrow_upward_rounded,
@@ -639,7 +738,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       const SizedBox(width: 12),
       Expanded(
           child: _SubDial(
-              label: 'PING',
+              label: _tr('speedtest.metric.ping'),
               value: '$_ping',
               unit: 'ms',
               icon: Icons.network_ping_rounded,
@@ -647,7 +746,7 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
       const SizedBox(width: 12),
       Expanded(
           child: _SubDial(
-              label: 'JITTER',
+              label: _tr('speedtest.metric.jitter'),
               value: _jitter.toStringAsFixed(1),
               unit: 'ms',
               icon: Icons.swap_vert_rounded,
@@ -687,7 +786,10 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
           Icon(isRunning ? Icons.hourglass_top_rounded : Icons.speed_rounded,
               size: 24),
           const SizedBox(width: 10),
-          Text(isRunning ? 'Testing...' : 'Start Speed Test',
+          Text(
+              isRunning
+                  ? _tr('speedtest.action.testing')
+                  : _tr('speedtest.action.start'),
               style:
                   const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         ]),
@@ -706,7 +808,6 @@ class _SpeedTestPageState extends ConsumerState<SpeedTestPage>
   }
 }
 
-/// Luxury watch-style gauge painter inspired by Patek Philippe chronograph
 class _WatchGaugePainter extends CustomPainter {
   final double speed;
   final double maxSpeed;
@@ -742,13 +843,8 @@ class _WatchGaugePainter extends CustomPainter {
     const startAngle = 135 * math.pi / 180;
     const sweepAngle = 270 * math.pi / 180;
 
-    // Outer minute track (fine ticks like a watch chapter ring)
     _drawChapterRing(canvas, center, radius, startAngle, sweepAngle);
-
-    // Major indices (like hour markers on a luxury watch)
     _drawIndices(canvas, center, radius, startAngle, sweepAngle);
-
-    // Active arc (colored sweep)
     final progress = _toAngle(speed);
     if (progress > 0) {
       final arcPaint = Paint()
@@ -770,10 +866,7 @@ class _WatchGaugePainter extends CustomPainter {
       );
     }
 
-    // Needle
     _drawNeedle(canvas, center, radius, startAngle, sweepAngle, progress);
-
-    // Center cap (like a watch crown)
     final capGrad = RadialGradient(colors: [
       dialColor.withValues(alpha: 0.3),
       dialColor.withValues(alpha: 0.1),
@@ -838,7 +931,6 @@ class _WatchGaugePainter extends CustomPainter {
       final t = _toAngle(v);
       final angle = startAngle + sweepAngle * t;
 
-      // Major tick (applied index style)
       canvas.drawLine(
         Offset(center.dx + majorInnerR * math.cos(angle),
             center.dy + majorInnerR * math.sin(angle)),
@@ -847,7 +939,6 @@ class _WatchGaugePainter extends CustomPainter {
         majorPaint,
       );
 
-      // Label
       String label;
       if (speedUnit == SpeedUnit.mbps) {
         label = v >= 1000
@@ -874,7 +965,6 @@ class _WatchGaugePainter extends CustomPainter {
       final ly = center.dy + labelR * math.sin(angle) - tp.height / 2;
       tp.paint(canvas, Offset(lx, ly));
 
-      // Minor ticks between majors
       if (i < _majorValues.length - 1) {
         final nextT = _toAngle(_majorValues[i + 1]);
         if ((nextT - t) > 0.06) {
@@ -898,7 +988,6 @@ class _WatchGaugePainter extends CustomPainter {
     final needleLength = radius - 36;
     final tailLength = 18.0;
 
-    // Needle shadow
     final shadowPath = Path();
     final sx = center.dx + 1;
     final sy = center.dy + 2;
@@ -917,7 +1006,6 @@ class _WatchGaugePainter extends CustomPainter {
           ..color = Colors.black.withValues(alpha: 0.08)
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
 
-    // Needle body
     final needlePath = Path();
     needlePath.moveTo(center.dx + needleLength * math.cos(needleAngle),
         center.dy + needleLength * math.sin(needleAngle));
@@ -930,7 +1018,6 @@ class _WatchGaugePainter extends CustomPainter {
     needlePath.close();
     canvas.drawPath(needlePath, Paint()..color = accentColor);
 
-    // Needle tip highlight
     final tipX = center.dx + needleLength * math.cos(needleAngle);
     final tipY = center.dy + needleLength * math.sin(needleAngle);
     canvas.drawCircle(Offset(tipX, tipY), 2,
@@ -945,7 +1032,6 @@ class _WatchGaugePainter extends CustomPainter {
       old.speedUnit != speedUnit;
 }
 
-/// Sub-dial widget (like chronograph sub-dials on a luxury watch)
 class _SubDial extends StatelessWidget {
   final String label;
   final String value;

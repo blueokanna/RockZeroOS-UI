@@ -9,6 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
 
   # Material Design 3 & UI
   cupertino_icons: ^1.0.8
@@ -26,6 +28,7 @@ dependencies:
 
   # Cryptography
   pointycastle: ^3.9.1
+  cryptography: ^2.7.0
   crypto: ^3.0.6
   edwards25519: ^1.0.5
   hashlib: ^2.3.0
