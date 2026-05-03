@@ -14,7 +14,6 @@ import '../../../../core/services/audio_player_service.dart';
 import '../../../../core/widgets/md3_loading_indicator.dart';
 import '../../../../core/widgets/shell_scaffold.dart';
 
-/// Enhanced audio player with improved stability and seek support
 class EnhancedAudioPlayerPage extends ConsumerStatefulWidget {
   final String mediaUrl;
   final String fileName;
@@ -59,7 +58,6 @@ class _EnhancedAudioPlayerPageState
   final List<double> _audioLevels = List.filled(24, 0.1);
   Timer? _visualizationTimer;
 
-  // State captured from global AudioPlayerService when resuming from mini-player
   Duration? _resumePosition;
   double? _resumeVolume;
   double? _resumeSpeed;
@@ -86,8 +84,7 @@ class _EnhancedAudioPlayerPageState
 
   void _startVisualization() {
     _visualizationTimer?.cancel();
-    // 200ms interval (5 fps) — sufficient for visual feedback,
-    // avoids excessive rebuilds on Snapdragon 835 class SoCs.
+
     _visualizationTimer = Timer.periodic(
       const Duration(milliseconds: 200),
       (timer) {
@@ -134,9 +131,6 @@ class _EnhancedAudioPlayerPageState
   }
 
   Future<void> _loadTokenAndInitialize() async {
-    // If the global AudioPlayerService is already playing the same URL
-    // (i.e. user tapped the mini-player), capture its state and stop it
-    // to prevent dual playback.
     final globalState = ref.read(audioPlayerServiceProvider);
     if (globalState.hasAudio) {
       if (globalState.currentUrl == widget.mediaUrl) {
@@ -146,7 +140,7 @@ class _EnhancedAudioPlayerPageState
         _resumeSpeed = globalState.speed;
         _resumeLooping = globalState.isLooping;
       }
-      // 无论是否同一 URL，都先停掉全局小窗，避免双路音频重叠。
+
       await ref.read(audioPlayerServiceProvider.notifier).stop();
     }
 
@@ -161,19 +155,13 @@ class _EnhancedAudioPlayerPageState
       final uri = Uri.parse(widget.mediaUrl);
       final baseUrl = '${uri.scheme}://${uri.host}:${uri.port}';
 
-      // 从 stream URL 提取原始文件路径
-      // 支持两种 URL 格式：
-      // 1. /api/v1/streaming/play/{path}
-      // 2. /api/v1/filemanager/media/stream?path={encoded_path}
       String infoPath = '';
 
-      // 优先从 query 参数获取（filemanager 格式）
       final queryPath = uri.queryParameters['path'];
       if (queryPath != null && queryPath.isNotEmpty) {
         infoPath = queryPath;
         if (!infoPath.startsWith('/')) infoPath = '/$infoPath';
       } else {
-        // 从 URL 路径提取（streaming 格式）
         final pathSegments = uri.pathSegments;
         bool foundPlay = false;
         for (final segment in pathSegments) {
@@ -187,7 +175,6 @@ class _EnhancedAudioPlayerPageState
         return;
       }
 
-      // URI 编码路径用于 info 请求
       final encodedPath = Uri.encodeComponent(
           infoPath.startsWith('/') ? infoPath.substring(1) : infoPath);
       final infoUrl = '$baseUrl/api/v1/streaming/info/$encodedPath';
@@ -245,7 +232,6 @@ class _EnhancedAudioPlayerPageState
     });
 
     try {
-      // Dispose previous player if exists
       _cancelSubscriptions();
       await _audioPlayer?.dispose();
       _audioPlayer = AudioPlayer();
@@ -258,34 +244,8 @@ class _EnhancedAudioPlayerPageState
       final streamUrl = _getStreamUrl();
       debugPrint('[AudioPlayer] Using stream URL: $streamUrl');
 
-      // Try multiple audio source strategies in order of preference:
-      // 1. LockCachingAudioSource (supports seeking with caching)
-      // 2. AudioSource.uri with headers (basic URL streaming)
-      // 3. Plain setUrl fallback (simplest)
       bool sourceSet = false;
 
-      // Strategy 1: LockCachingAudioSource — best for seek support
-      if (!sourceSet) {
-        try {
-          // ignore: experimental_member_use
-          final audioSource = LockCachingAudioSource(
-            Uri.parse(streamUrl),
-            headers: headers,
-          );
-          await _audioPlayer!.setAudioSource(audioSource).timeout(
-            const Duration(seconds: 20),
-            onTimeout: () {
-              throw TimeoutException('LockCaching audio source timed out');
-            },
-          );
-          sourceSet = true;
-          debugPrint('[AudioPlayer] LockCachingAudioSource succeeded');
-        } catch (e) {
-          debugPrint('[AudioPlayer] LockCachingAudioSource failed: $e');
-        }
-      }
-
-      // Strategy 2: AudioSource.uri with headers
       if (!sourceSet) {
         try {
           await _audioPlayer!
@@ -308,7 +268,6 @@ class _EnhancedAudioPlayerPageState
         }
       }
 
-      // Strategy 3: setUrl (simplest, works for most straightforward streams)
       if (!sourceSet) {
         try {
           await _audioPlayer!.setUrl(streamUrl, headers: headers).timeout(
@@ -336,7 +295,6 @@ class _EnhancedAudioPlayerPageState
         setState(() => _isInitialized = true);
       }
 
-      // Restore state from global service if resuming from mini-player
       if (_resumeFromGlobalService) {
         if (_resumeVolume != null && _resumeVolume != 1.0) {
           _volume = _resumeVolume!;
@@ -350,14 +308,13 @@ class _EnhancedAudioPlayerPageState
           _isLooping = true;
           await _audioPlayer!.setLoopMode(LoopMode.one);
         }
-        // Seek to the position the global service was at
+
         if (_resumePosition != null && _resumePosition! > Duration.zero) {
           await _audioPlayer!.seek(_resumePosition!);
         }
         _resumeFromGlobalService = false;
       }
 
-      // Start playing
       await _audioPlayer!.play();
     } catch (e) {
       debugPrint('[AudioPlayer] Error: $e');
@@ -371,7 +328,6 @@ class _EnhancedAudioPlayerPageState
         return;
       }
 
-      // Try transcoded stream if direct stream failed
       if (!_isTranscoding && _transcodeUrl != null) {
         debugPrint('[AudioPlayer] Retrying with transcoded stream...');
         _isTranscoding = true;
@@ -396,7 +352,6 @@ class _EnhancedAudioPlayerPageState
             processing == ProcessingState.loading;
       });
 
-      // Reset seeking state when buffering completes
       if (_isSeeking && !_isBuffering && processing == ProcessingState.ready) {
         setState(() => _isSeeking = false);
       }
@@ -407,7 +362,6 @@ class _EnhancedAudioPlayerPageState
         _rotationController.stop();
       }
 
-      // Handle completion
       if (processing == ProcessingState.completed) {
         if (_isLooping) {
           _audioPlayer?.seek(Duration.zero);
@@ -418,13 +372,9 @@ class _EnhancedAudioPlayerPageState
 
     _positionSubscription = _audioPlayer!.positionStream.listen((position) {
       if (mounted && !_disposed) {
-        // Always update position, even when seeking
-        // This ensures the progress bar moves correctly
         setState(() => _position = position);
 
-        // If we're seeking and position is close to target, reset seeking state
         if (_isSeeking) {
-          // Position is being updated, so seek is progressing
           debugPrint('[AudioPlayer] Position update during seek: $position');
         }
       }
@@ -469,7 +419,6 @@ class _EnhancedAudioPlayerPageState
   Future<void> _seekTo(Duration position) async {
     if (_audioPlayer == null || _disposed) return;
 
-    // If already seeking, just update the target position
     if (_isSeeking) {
       setState(() => _position = position);
       return;
@@ -491,17 +440,12 @@ class _EnhancedAudioPlayerPageState
     try {
       debugPrint('[AudioPlayer] Seeking to: $clampedPosition');
 
-      // Remember if we were playing
       final wasPlaying = _isPlaying;
 
-      // Perform the seek directly without pausing first
-      // This provides better UX for streaming audio
       await _audioPlayer!.seek(clampedPosition);
 
-      // Wait for the seek to complete and position to update
-      // Listen for position updates to confirm seek completed
       int attempts = 0;
-      const maxAttempts = 50; // 5 seconds max wait
+      const maxAttempts = 50;
 
       while (attempts < maxAttempts && mounted && !_disposed) {
         await Future.delayed(const Duration(milliseconds: 100));
@@ -510,7 +454,6 @@ class _EnhancedAudioPlayerPageState
         final diff =
             (currentPos.inMilliseconds - clampedPosition.inMilliseconds).abs();
 
-        // Consider seek complete if within 500ms of target
         if (diff < 500) {
           debugPrint('[AudioPlayer] Seek confirmed at: $currentPos');
           break;
@@ -519,7 +462,6 @@ class _EnhancedAudioPlayerPageState
         attempts++;
       }
 
-      // Resume playback if we were playing
       if (wasPlaying && mounted && !_disposed) {
         await _audioPlayer!.play();
       }
@@ -537,7 +479,6 @@ class _EnhancedAudioPlayerPageState
       }
     } finally {
       if (mounted && !_disposed) {
-        // Always reset seeking state
         setState(() => _isSeeking = false);
       }
     }
@@ -571,15 +512,12 @@ class _EnhancedAudioPlayerPageState
     _audioPlayer?.setSpeed(speed);
   }
 
-  /// 将当前播放转移到全局 AudioPlayerService（后台播放），然后关闭页面。
-  /// MiniAudioPlayer 会自动出现在底部导航栏上方，系统通知栏也会显示控制按钮。
   Future<void> _minimizeToBackground() async {
     if (_closing || _transferredToBackground) return;
     _closing = true;
 
     final service = ref.read(audioPlayerServiceProvider.notifier);
 
-    // 1. 先捕获当前状态快照
     final wasPlaying = _isPlaying;
     final localPosition = _position;
     final localVolume = _volume;
@@ -587,7 +525,6 @@ class _EnhancedAudioPlayerPageState
     final localLooping = _isLooping;
     final url = _getStreamUrl();
 
-    // 2. 停止本地播放器（加超时防止挂起导致 UI 卡死）
     _visualizationTimer?.cancel();
     _cancelSubscriptions();
     try {
@@ -597,14 +534,11 @@ class _EnhancedAudioPlayerPageState
       await _audioPlayer
           ?.stop()
           .timeout(const Duration(seconds: 2), onTimeout: () {});
-    } catch (_) {
-      // 忽略停止阶段的错误 — 重要的是继续 pop 页面
-    }
+    } catch (_) {}
 
     _transferredToBackground = true;
     _disposed = true;
 
-    // 异步释放本地播放器（不阻塞 UI 线程）
     final localPlayer = _audioPlayer;
     _audioPlayer = null;
     unawaited(Future(() async {
@@ -615,7 +549,6 @@ class _EnhancedAudioPlayerPageState
       } catch (_) {}
     }));
 
-    // 3. 恢复系统 UI（防止视频播放器遗留的 immersive 模式导致黑屏）
     SystemChrome.setEnabledSystemUIMode(
       SystemUiMode.edgeToEdge,
       overlays: SystemUiOverlay.values,
@@ -627,13 +560,11 @@ class _EnhancedAudioPlayerPageState
       DeviceOrientation.landscapeRight,
     ]);
 
-    // 4. 先关闭页面（立刻响应用户操作），再异步启动全局播放服务
     if (mounted) {
       ref.read(bottomNavVisibleProvider.notifier).show();
       Navigator.pop(context);
     }
 
-    // 5. 异步启动全局 AudioPlayerService（页面已关闭，不会阻塞 UI）
     unawaited(service.play(
       url,
       widget.fileName,
@@ -652,10 +583,7 @@ class _EnhancedAudioPlayerPageState
     try {
       _visualizationTimer?.cancel();
       _cancelSubscriptions();
-      // Wrap player stop/dispose in a timeout so we never get stuck on a
-      // hung audio device. 3 seconds is generous — if it hasn't stopped by
-      // then the underlying native player is likely deadlocked and we must
-      // navigate away regardless.
+
       await Future.wait<void>([
         if (_audioPlayer != null)
           _audioPlayer!.stop().timeout(
@@ -676,9 +604,7 @@ class _EnhancedAudioPlayerPageState
           .stop()
           .timeout(const Duration(seconds: 2), onTimeout: () {});
     } catch (_) {
-      // Swallow any remaining errors — the important thing is to pop.
     } finally {
-      // 恢复系统 UI（防止视频播放器遗留的 immersive 模式导致黑屏）
       SystemChrome.setEnabledSystemUIMode(
         SystemUiMode.edgeToEdge,
         overlays: SystemUiOverlay.values,
@@ -715,7 +641,6 @@ class _EnhancedAudioPlayerPageState
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (!didPop) {
-          // 返回键 = 最小化到后台播放，而非停止音频
           _minimizeToBackground();
         }
       },
@@ -726,17 +651,14 @@ class _EnhancedAudioPlayerPageState
           elevation: 0,
           leading: IconButton(
             icon: const Icon(Icons.arrow_back_rounded),
-            // 返回 = 最小化到后台，音频继续在 mini player 中播放
             onPressed: _minimizeToBackground,
           ),
           actions: [
-            // 最小化到后台按钮 — 转移播放到全局服务
             IconButton(
               icon: const Icon(Icons.picture_in_picture_alt_rounded),
               tooltip: '后台播放',
               onPressed: _minimizeToBackground,
             ),
-            // 停止播放并关闭页面
             IconButton(
               icon: const Icon(Icons.stop_circle_outlined),
               tooltip: '停止播放',
@@ -957,7 +879,6 @@ class _EnhancedAudioPlayerPageState
   }
 
   Widget _buildAlbumArt(ColorScheme colorScheme) {
-    // RepaintBoundary isolates the continuous rotation from the rest of the tree.
     return RepaintBoundary(
       child: AnimatedBuilder(
         animation: _rotationController,

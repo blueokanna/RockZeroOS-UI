@@ -8,7 +8,6 @@ import '../../../../core/widgets/wallpaper_background.dart';
 import '../../providers/auth_provider.dart';
 import 'register_page.dart';
 
-/// 增强的登录页面 - 支持密码、指纹和 FIDO2/Passkey 登录
 class EnhancedLoginPage extends ConsumerStatefulWidget {
   const EnhancedLoginPage({super.key});
 
@@ -22,7 +21,7 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
   bool _isLoading = false;
-  bool _useZkpAuth = false; // 是否使用 ZKP 零知识证明认证
+  bool _useZkpAuth = false;
 
   @override
   void dispose() {
@@ -40,10 +39,8 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
       bool success;
 
       if (_useZkpAuth) {
-        // 使用 ZKP 零知识证明认证
         success = await _handleZkpLogin();
       } else {
-        // 使用传统密码认证
         success = await ref.read(authStateProvider.notifier).login(
               email: _emailController.text.trim(),
               password: _passwordController.text,
@@ -64,12 +61,6 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
     }
   }
 
-  /// 使用 ZKP 零知识证明进行登录
-  ///
-  /// ZKP 认证的优势：
-  /// - 密码永远不会离开设备
-  /// - 服务器只验证证明，无法获取密码
-  /// - 防止中间人攻击和重放攻击
   Future<bool> _handleZkpLogin() async {
     final zkpService = ref.read(zkpAuthServiceProvider);
 
@@ -80,7 +71,6 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
       );
 
       if (result != null && result['success'] == true) {
-        // 保存 tokens
         final tokens = result['tokens'];
         if (tokens != null) {
           await ref.read(authStateProvider.notifier).saveTokens(
@@ -110,10 +100,9 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
     setState(() => _isLoading = true);
 
     try {
-      // 先进行生物识别认证
       final authenticated = await biometricService.authenticate(
         reason: 'Authenticate to login to RockZeroOS',
-        biometricOnly: true, // 只使用生物识别，不允许PIN/密码回退
+        biometricOnly: true,
       );
 
       if (!authenticated) {
@@ -123,13 +112,10 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
         return;
       }
 
-      // 生物识别成功后，使用存储的token登录
       final success =
           await ref.read(authStateProvider.notifier).loginWithBiometric();
 
       if (success && mounted) {
-        // Use addPostFrameCallback to ensure state updates are complete
-        // before navigation, preventing login loop issues
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
             Navigator.of(context).pushReplacementNamed('/dashboard');
@@ -161,7 +147,6 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
       final accessToken = await fido2Service.authenticate();
 
       if (accessToken != null && mounted) {
-        // Token 已经在 FIDO2 服务中保存，直接跳转
         Navigator.of(context).pushReplacementNamed('/dashboard');
       } else if (mounted) {
         _showError('Passkey authentication failed. Please try another method.');
@@ -211,7 +196,6 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Logo
                       Container(
                         width: 80,
                         height: 80,
@@ -237,8 +221,6 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
                         ),
                       ),
                       const SizedBox(height: 24),
-
-                      // Title
                       Text(
                         'Welcome Back',
                         style: textTheme.headlineMedium?.copyWith(
@@ -253,13 +235,10 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
                         ),
                       ),
                       const SizedBox(height: 32),
-
-                      // Login Form
                       Form(
                         key: _formKey,
                         child: Column(
                           children: [
-                            // Email Field
                             TextFormField(
                               controller: _emailController,
                               decoration: InputDecoration(
@@ -280,8 +259,6 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
                               },
                             ),
                             const SizedBox(height: 16),
-
-                            // Password Field
                             TextFormField(
                               controller: _passwordController,
                               decoration: InputDecoration(
@@ -315,8 +292,6 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
                               },
                             ),
                             const SizedBox(height: 16),
-
-                            // ZKP Authentication Toggle
                             Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 12,
@@ -380,8 +355,6 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
                               ),
                             ),
                             const SizedBox(height: 24),
-
-                            // Login Button
                             SizedBox(
                               width: double.infinity,
                               height: 50,
@@ -408,8 +381,6 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
                           ],
                         ),
                       ),
-
-                      // Alternative Login Methods
                       if (biometricAvailable.value == true ||
                           fido2Available.value == true) ...[
                         const SizedBox(height: 24),
@@ -432,12 +403,9 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
                           ],
                         ),
                         const SizedBox(height: 24),
-
-                        // Alternative Login Buttons
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            // Biometric Login
                             if (biometricAvailable.value == true)
                               _AlternativeLoginButton(
                                 icon: Icons.fingerprint_rounded,
@@ -446,12 +414,9 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
                                     _isLoading ? null : _handleBiometricLogin,
                                 color: Colors.green,
                               ),
-
                             if (biometricAvailable.value == true &&
                                 fido2Available.value == true)
                               const SizedBox(width: 16),
-
-                            // Passkey Login
                             if (fido2Available.value == true)
                               _AlternativeLoginButton(
                                 icon: Icons.key_rounded,
@@ -463,10 +428,7 @@ class _EnhancedLoginPageState extends ConsumerState<EnhancedLoginPage> {
                           ],
                         ),
                       ],
-
                       const SizedBox(height: 24),
-
-                      // Register Link
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [

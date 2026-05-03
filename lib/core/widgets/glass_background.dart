@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../services/wallpaper_service.dart';
 
-/// Aero Glass style background widget with blur effect
 class GlassBackground extends ConsumerWidget {
   final Widget child;
   final double blurAmount;
@@ -25,14 +24,12 @@ class GlassBackground extends ConsumerWidget {
     final wallpaperPath = ref.watch(customWallpaperPathProvider);
     final colorScheme = Theme.of(context).colorScheme;
 
-    // If custom wallpaper is set, show it with glass effect
     if (backgroundMode == BackgroundMode.customWallpaper &&
         wallpaperPath != null &&
         wallpaperPath.isNotEmpty) {
       return Stack(
         fit: StackFit.expand,
         children: [
-          // Wallpaper image
           Image.file(
             File(wallpaperPath),
             fit: BoxFit.cover,
@@ -40,7 +37,6 @@ class GlassBackground extends ConsumerWidget {
               return _buildDefaultBackground(colorScheme);
             },
           ),
-          // Glass overlay with blur
           ClipRect(
             child: BackdropFilter(
               filter: ImageFilter.blur(
@@ -59,7 +55,6 @@ class GlassBackground extends ConsumerWidget {
       );
     }
 
-    // Default background without wallpaper
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -91,7 +86,6 @@ class GlassBackground extends ConsumerWidget {
   }
 }
 
-/// Glass card with frosted effect
 class GlassCard extends StatelessWidget {
   final Widget child;
   final double blurAmount;
@@ -141,7 +135,6 @@ class GlassCard extends StatelessWidget {
   }
 }
 
-/// Glass container for pages
 class GlassScaffold extends ConsumerWidget {
   final PreferredSizeWidget? appBar;
   final Widget body;
@@ -185,7 +178,6 @@ class GlassScaffold extends ConsumerWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Wallpaper
         Image.file(
           File(wallpaperPath),
           fit: BoxFit.cover,
@@ -193,7 +185,6 @@ class GlassScaffold extends ConsumerWidget {
             return Container(color: colorScheme.surface);
           },
         ),
-        // Glass overlay
         ClipRect(
           child: BackdropFilter(
             filter: ImageFilter.blur(
@@ -205,7 +196,6 @@ class GlassScaffold extends ConsumerWidget {
             ),
           ),
         ),
-        // Scaffold content
         Scaffold(
           backgroundColor: Colors.transparent,
           appBar: appBar,

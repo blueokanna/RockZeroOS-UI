@@ -61,11 +61,10 @@ class DiskPlatformCapabilities {
     return DiskPlatformCapabilities(
       platform: ((json['platform'] as String?) ?? 'unknown').toLowerCase(),
       architecture:
-        ((json['architecture'] as String?) ?? 'unknown').toLowerCase(),
-      environmentProfile:
-        (json['environment_profile'] as String?) ?? 'generic',
+          ((json['architecture'] as String?) ?? 'unknown').toLowerCase(),
+      environmentProfile: (json['environment_profile'] as String?) ?? 'generic',
       environmentLabel:
-        (json['environment_label'] as String?) ?? 'Unknown backend',
+          (json['environment_label'] as String?) ?? 'Unknown backend',
       deviceModel: json['device_model'] as String?,
       supportsDiskListing:
           readBool('supports_disk_listing', defaultValue: true),

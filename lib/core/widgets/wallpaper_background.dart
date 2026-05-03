@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../services/wallpaper_service.dart';
 
-/// 壁纸背景组件 - 支持自定义壁纸和 Material You 动态配色
 class WallpaperBackground extends ConsumerWidget {
   final Widget child;
   final double opacity;
@@ -28,7 +27,6 @@ class WallpaperBackground extends ConsumerWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // 基础背景色
         Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -41,8 +39,6 @@ class WallpaperBackground extends ConsumerWidget {
             ),
           ),
         ),
-
-        // 壁纸层
         if (backgroundMode == BackgroundMode.customWallpaper &&
             wallpaperPath != null)
           _WallpaperLayer(
@@ -50,19 +46,14 @@ class WallpaperBackground extends ConsumerWidget {
             opacity: opacity,
             blendMode: blendMode,
           ),
-
-        // Material You 渐变层
         if (backgroundMode == BackgroundMode.customWallpaper)
           _MaterialYouGradient(opacity: opacity * 0.5),
-
-        // 内容层
         child,
       ],
     );
   }
 }
 
-/// 壁纸图层
 class _WallpaperLayer extends StatelessWidget {
   final String imagePath;
   final double opacity;
@@ -90,7 +81,6 @@ class _WallpaperLayer extends StatelessWidget {
   }
 }
 
-/// Material You 渐变层
 class _MaterialYouGradient extends ConsumerWidget {
   final double opacity;
 
@@ -125,7 +115,6 @@ class _MaterialYouGradient extends ConsumerWidget {
   }
 }
 
-/// 毛玻璃效果背景
 class GlassmorphicBackground extends StatelessWidget {
   final Widget child;
   final double blur;
@@ -171,9 +160,6 @@ class GlassmorphicBackground extends StatelessWidget {
   }
 }
 
-/// 动态颜色卡片 - 根据壁纸颜色自动调整
-/// 壁纸模式下使用毛玻璃效果（高对比度模糊透明背景）
-/// 默认模式下使用普通 Card 样式
 class DynamicColorCard extends ConsumerWidget {
   final Widget child;
   final EdgeInsetsGeometry? padding;
@@ -201,7 +187,6 @@ class DynamicColorCard extends ConsumerWidget {
     final isWallpaperMode = backgroundMode == BackgroundMode.customWallpaper;
 
     if (isWallpaperMode) {
-      // 壁纸模式 — 毛玻璃效果：透明背景 + 高对比度模糊
       final isDark = Theme.of(context).brightness == Brightness.dark;
       final baseColor = isDark
           ? Colors.black.withValues(alpha: 0.35)
@@ -243,7 +228,6 @@ class DynamicColorCard extends ConsumerWidget {
       );
     }
 
-    // 默认模式 — 普通 Card 样式
     return Card(
       margin: margin,
       elevation: elevation,
@@ -269,7 +253,6 @@ class DynamicColorCard extends ConsumerWidget {
   }
 }
 
-/// 壁纸预览组件
 class WallpaperPreview extends StatelessWidget {
   final String imagePath;
   final VoidCallback? onTap;

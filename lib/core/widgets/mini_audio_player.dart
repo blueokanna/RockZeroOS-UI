@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../features/files/presentation/pages/enhanced_audio_player_page.dart';
 import '../services/audio_player_service.dart';
 
-/// 迷你音频播放器 - 显示在底部导航栏上方
 class MiniAudioPlayer extends ConsumerWidget {
   const MiniAudioPlayer({super.key});
 
@@ -24,7 +23,6 @@ class MiniAudioPlayer extends ConsumerWidget {
 
     return GestureDetector(
       onTap: () {
-        // 打开完整播放器页面（使用全局服务的 URL 和文件名）
         if (audioState.currentUrl != null) {
           Navigator.push(
             context,
@@ -72,7 +70,6 @@ class MiniAudioPlayer extends ConsumerWidget {
         ),
         child: Column(
           children: [
-            // 进度条
             ClipRRect(
               borderRadius:
                   const BorderRadius.vertical(top: Radius.circular(12)),
@@ -88,7 +85,6 @@ class MiniAudioPlayer extends ConsumerWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Row(
                   children: [
-                    // 专辑封面/图标
                     Container(
                       width: 44,
                       height: 44,
@@ -105,7 +101,6 @@ class MiniAudioPlayer extends ConsumerWidget {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    // 文件名
                     Expanded(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -132,7 +127,6 @@ class MiniAudioPlayer extends ConsumerWidget {
                         ],
                       ),
                     ),
-                    // 控制按钮
                     if (audioState.isBuffering)
                       SizedBox(
                         width: 24,

@@ -71,7 +71,6 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Logo and Title
                     Icon(
                       Icons.person_add,
                       size: 56,
@@ -98,8 +97,6 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                         textAlign: TextAlign.center,
                       ).animate().fadeIn(delay: 80.ms, duration: 200.ms),
                     const SizedBox(height: 24),
-
-                    // Glass card wrapping the register form
                     DynamicColorCard(
                       padding: const EdgeInsets.all(24),
                       borderRadius: BorderRadius.circular(24),
@@ -231,8 +228,6 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                               ),
                             ).animate().fadeIn(delay: 180.ms, duration: 200.ms),
                             const SizedBox(height: 24),
-
-                            // Error Message
                             if (authState.error != null)
                               Container(
                                 padding: const EdgeInsets.all(12),
@@ -258,11 +253,8 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                                   ],
                                 ),
                               ).animate().shake(),
-
                             if (authState.error != null)
                               const SizedBox(height: 16),
-
-                            // Register Button
                             FilledButton(
                               onPressed:
                                   authState.isLoading ? null : _handleRegister,
@@ -281,8 +273,6 @@ class _RegisterPageState extends ConsumerState<RegisterPage> {
                       ),
                     ),
                     const SizedBox(height: 16),
-
-                    // Login Link (outside the glass card)
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [

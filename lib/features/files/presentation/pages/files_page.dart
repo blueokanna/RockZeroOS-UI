@@ -54,6 +54,41 @@ String safeDisplayName(String name) {
   }
 }
 
+bool isWindowsDriveRootPath(String path) {
+  if (path.isEmpty) return false;
+  var normalized = path.replaceAll('/', r'\').trim();
+  if (normalized.startsWith(r'\\?\')) {
+    normalized = normalized.substring(4);
+  }
+  if (normalized.length == 2) {
+    normalized = '$normalized\\';
+  }
+  return RegExp(r'^[a-zA-Z]:\\$').hasMatch(normalized);
+}
+
+String operatingSystemLabel(String platform) {
+  switch (platform.toLowerCase()) {
+    case 'windows':
+      return 'Windows';
+    case 'linux':
+      return 'Linux';
+    case 'macos':
+      return 'macOS';
+    case 'android':
+      return 'Android';
+    case 'ios':
+      return 'iOS';
+    case 'web':
+      return 'Web';
+    default:
+      return platform.isEmpty ? 'Unknown OS' : platform.toUpperCase();
+  }
+}
+
+String operatingSystemPrefix(String platform) {
+  return '[${operatingSystemLabel(platform)}]';
+}
+
 const _editableTextExtensions = <String>{
   'txt',
   'md',
@@ -107,7 +142,6 @@ bool isInlineTextEditable(FileEntry entry) {
   return _editableTextExtensions.contains(extension);
 }
 
-// ============ Providers ============
 class FilesViewModeNotifier extends Notifier<bool> {
   @override
   bool build() {
@@ -185,7 +219,6 @@ final directoryListingProvider =
 
   try {
     final api = ref.read(apiServiceProvider);
-    // Pass path directly - the API service handles encoding
     final result = await api.listDirectory(
       path: path.isEmpty ? null : path,
     );
@@ -221,8 +254,6 @@ final diskInfoProvider = FutureProvider<List<DiskInfo>>((ref) async {
     return hasMountPoint || hasCapacity;
   }).toList();
 });
-
-// ============ Main Page ============
 
 class FilesPage extends ConsumerStatefulWidget {
   const FilesPage({super.key});
@@ -261,7 +292,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
     );
     _scrollController.addListener(_onScroll);
 
-    // 自动刷新：每3秒刷新一次文件列表和磁盘信息
     _autoRefreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       if (mounted) {
         final currentPath = ref.read(currentPathProvider);
@@ -273,16 +303,13 @@ class _FilesPageState extends ConsumerState<FilesPage>
           ref.invalidate(storageScopeStatusProvider);
           ref.invalidate(storageScopeBrowseProvider(_storageScopeBrowsePath));
         } else if (_showDisks && currentPath.isEmpty && !scopedMode) {
-          // 刷新磁盘信息
           ref.invalidate(diskInfoProvider);
         } else {
-          // 刷新文件列表
           ref.invalidate(directoryListingProvider(currentPath));
         }
       }
     });
 
-    // 监听文件系统事件
     final monitor = ref.read(fileSystemMonitorProvider);
     _fsEventSubscription = monitor.eventStream.listen((event) {
       debugPrint('[FilesPage] Received FS event: $event');
@@ -292,23 +319,18 @@ class _FilesPageState extends ConsumerState<FilesPage>
         final scopedMode = scopeStatus?.scopedMode == true;
         final showDiskView = _showDisks && currentPath.isEmpty && !scopedMode;
 
-        // 判断事件是否影响当前视图
         bool shouldRefresh = false;
         bool shouldResetPath = false;
 
-        // 磁盘格式化事件：无论当前在哪个视图都需要刷新
         if (event.type == FileSystemEventType.diskFormatted) {
           debugPrint(
               '[FilesPage] Disk formatted event received: ${event.diskName}');
           shouldRefresh = true;
 
-          // 如果当前在被格式化的磁盘上，需要返回磁盘列表
           if (currentPath.isNotEmpty && event.diskName != null) {
-            // 检查当前路径是否在被格式化的磁盘上
             final diskName = event.diskName!.toLowerCase();
             final pathLower = currentPath.toLowerCase();
 
-            // 检查路径是否包含磁盘名称或在/mnt/目录下
             if (pathLower.contains(diskName) || pathLower.startsWith('/mnt/')) {
               debugPrint(
                   '[FilesPage] Current path is on formatted disk, resetting to disk list');
@@ -316,21 +338,17 @@ class _FilesPageState extends ConsumerState<FilesPage>
             }
           }
 
-          // 无论如何都要刷新磁盘列表
           if (showDiskView || shouldResetPath) {
             debugPrint('[FilesPage] Invalidating disk info provider');
             ref.invalidate(diskInfoProvider);
           }
         } else if (showDiskView) {
-          // 在磁盘视图，监听磁盘事件
           if (event.type == FileSystemEventType.diskMounted ||
               event.type == FileSystemEventType.diskUnmounted) {
             shouldRefresh = true;
           }
         } else {
-          // 在文件视图，监听文件/目录事件
           if (event.path != null && event.path!.isNotEmpty) {
-            // 检查事件路径是否在当前目录下
             final lastSlash = event.path!.lastIndexOf('/');
             if (lastSlash > 0) {
               final eventDir = event.path!.substring(0, lastSlash);
@@ -340,7 +358,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
             }
           }
 
-          // 也监听重命名、移动等操作
           if (event.oldPath != null && event.oldPath!.isNotEmpty) {
             final lastSlash = event.oldPath!.lastIndexOf('/');
             if (lastSlash > 0) {
@@ -353,12 +370,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
         }
 
         if (shouldResetPath) {
-          // 格式化后返回磁盘列表视图
           ref.read(currentPathProvider.notifier).setPath('');
           setState(() => _showDisks = true);
           ref.invalidate(diskInfoProvider);
         } else if (shouldRefresh) {
-          // 立即刷新
           if (showDiskView) {
             ref.invalidate(diskInfoProvider);
           } else {
@@ -373,7 +388,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
     if (!_scrollController.hasClients) return;
 
     final direction = _scrollController.position.userScrollDirection;
-    // 向下滚动时隐藏，向上滚动时显示
     if (direction == ScrollDirection.reverse && _showFab) {
       setState(() => _showFab = false);
     } else if (direction == ScrollDirection.forward && !_showFab) {
@@ -413,22 +427,18 @@ class _FilesPageState extends ConsumerState<FilesPage>
       return;
     }
 
-    // 获取已挂载的磁盘列表
     final disksAsync = ref.read(diskInfoProvider);
     final disks = disksAsync.asData?.value ?? [];
     final mountedDisks =
         disks.where((d) => d.mountPoint != 'Not mounted').toList();
 
-    // 检查是否在某个磁盘的挂载点根目录
     final isAtDiskRoot = mountedDisks.any((d) => currentPath == d.mountPoint);
     if (isAtDiskRoot) {
-      // 从磁盘根目录 → 直接返回 Storage 视图
       ref.read(currentPathProvider.notifier).setPath('');
       setState(() => _showDisks = true);
       return;
     }
 
-    // 检查是否在某个磁盘内部的子目录
     DiskInfo? currentDisk;
     for (final disk in mountedDisks) {
       if (currentPath.startsWith('${disk.mountPoint}/')) {
@@ -438,11 +448,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
     }
 
     if (currentDisk != null) {
-      // 在磁盘内部 → 导航到上级目录（但不超过磁盘根目录）
       final relativePath = currentPath.substring(currentDisk.mountPoint.length);
       final parts = relativePath.split('/').where((p) => p.isNotEmpty).toList();
       if (parts.length <= 1) {
-        // 回到磁盘根目录
         ref.read(currentPathProvider.notifier).setPath(currentDisk.mountPoint);
       } else {
         final parentRelative = parts.sublist(0, parts.length - 1).join('/');
@@ -451,7 +459,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
             .setPath('${currentDisk.mountPoint}/$parentRelative');
       }
     } else {
-      // 不在已知磁盘内 → 直接返回 Storage 视图
       ref.read(currentPathProvider.notifier).setPath('');
       setState(() => _showDisks = true);
     }
@@ -540,9 +547,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
         if (!didPop) _handleBackNavigation();
       },
       child: GestureDetector(
-        // Add swipe-from-edge gesture for back navigation
         onHorizontalDragEnd: (details) {
-          // Detect swipe from left edge (back gesture)
           if (details.primaryVelocity != null &&
               details.primaryVelocity! > 500) {
             _handleBackNavigation();
@@ -570,7 +575,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
                 )
               else if (showDiskView)
                 disks!.when(
-                  data: (diskList) => _buildDiskGrid(diskList),
+                  data: (diskList) => _buildDiskGrid(
+                    diskList,
+                    storageScopeStatus.platform,
+                  ),
                   loading: () => _buildLoadingState(),
                   error: (e, s) => _buildDiskErrorState(e.toString()),
                 )
@@ -630,7 +638,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
       title: InkWell(
         onTap: showDiskView && !requiresStorageSelection
             ? () {
-                // 点击 Storage 标题时，导航到存储管理页面
                 Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (context) => const DiskManagementPage(),
@@ -677,6 +684,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
       ),
       actions: [
         if (!showDiskView && !requiresStorageSelection) ...[
+          IconButton(
+            icon: const Icon(Icons.enhanced_encryption_rounded),
+            onPressed: _showPrivateSpaceDialog,
+            tooltip: 'Private space',
+          ),
           IconButton(
             icon: AnimatedSwitcher(
               duration: M3Durations.short4,
@@ -769,11 +781,12 @@ class _FilesPageState extends ConsumerState<FilesPage>
   Widget _buildScopedStorageBanner(StorageRootBindingStatus status) {
     final colorScheme = Theme.of(context).colorScheme;
     final selectedRoot = status.selectedRoot;
+    final osPrefix = operatingSystemPrefix(status.platform);
     final message = status.requiresSelection
-        ? 'Windows backend requires a single storage folder before file access is enabled.'
+        ? '$osPrefix backend requires a single storage folder before file access is enabled.'
         : selectedRoot == null || selectedRoot.isEmpty
-            ? 'Windows backend is running in scoped storage mode.'
-            : 'Windows backend is limited to $selectedRoot';
+            ? '$osPrefix backend is running in scoped storage mode.'
+            : '$osPrefix backend is limited to $selectedRoot';
 
     return SliverToBoxAdapter(
       child: Container(
@@ -828,7 +841,12 @@ class _FilesPageState extends ConsumerState<FilesPage>
       data: (browse) {
         final colorScheme = Theme.of(context).colorScheme;
         final textTheme = Theme.of(context).textTheme;
-        final canUseCurrentFolder = browse.currentPath.isNotEmpty;
+        final osLabel = operatingSystemLabel(status.platform);
+        final osPrefix = operatingSystemPrefix(status.platform);
+        final browsingDriveList = browse.currentPath.isEmpty;
+        final browsingDriveRoot = isWindowsDriveRootPath(browse.currentPath);
+        final canUseCurrentFolder =
+            browse.currentPath.isNotEmpty && !browsingDriveRoot;
 
         return SliverToBoxAdapter(
           child: Padding(
@@ -875,14 +893,14 @@ class _FilesPageState extends ConsumerState<FilesPage>
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'Choose Windows Storage Root',
+                                    '$osPrefix Storage Root Setup',
                                     style: textTheme.titleLarge?.copyWith(
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
                                   const SizedBox(height: 6),
                                   Text(
-                                    'Select exactly one folder on one Windows disk. All file read, write, delete, copy, move, rename, upload, and download operations will stay inside that scope.',
+                                    'Select exactly one folder on one $osLabel disk. All file read, write, delete, copy, move, rename, upload, and download operations will stay inside that scope.',
                                     style: textTheme.bodyMedium?.copyWith(
                                       color: colorScheme.onSurfaceVariant,
                                     ),
@@ -913,7 +931,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
                               const SizedBox(height: 6),
                               Text(
                                 browse.currentPath.isEmpty
-                                    ? 'Drive list'
+                                    ? '$osPrefix Drive list'
                                     : browse.currentPath,
                                 style: textTheme.bodyMedium?.copyWith(
                                   fontWeight: FontWeight.w600,
@@ -959,7 +977,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
                               label: Text(
                                 canUseCurrentFolder
                                     ? 'Use This Folder'
-                                    : 'Choose a Drive or Folder',
+                                    : browsingDriveRoot
+                                        ? 'Choose a Folder Inside This Drive'
+                                        : 'Choose a Drive or Folder',
                               ),
                             ),
                           ],
@@ -988,9 +1008,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     child: Padding(
                       padding: const EdgeInsets.all(20),
                       child: Text(
-                        browse.currentPath.isEmpty
-                            ? 'No Windows drives were reported by the backend.'
-                            : 'This folder has no subdirectories. You can use the current folder directly.',
+                        browsingDriveList
+                            ? 'No $osLabel drives were reported by the backend.'
+                            : browsingDriveRoot
+                                ? 'This drive root has no subdirectories. Create or choose a folder inside the drive before binding storage.'
+                                : 'This folder has no subdirectories. You can use the current folder directly.',
                         style: textTheme.bodyMedium?.copyWith(
                           color: colorScheme.onSurfaceVariant,
                         ),
@@ -1018,6 +1040,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
                                 entry.availableSpace != null
                             ? '${_formatBytes(entry.availableSpace!)} free / ${_formatBytes(entry.totalSpace!)} total'
                             : entry.path;
+
+                        final entryIsDriveRoot = isWindowsDriveRootPath(
+                          entry.path,
+                        );
+                        final canUseEntry = !entryIsDriveRoot;
 
                         return ListTile(
                           contentPadding: const EdgeInsets.symmetric(
@@ -1048,18 +1075,30 @@ class _FilesPageState extends ConsumerState<FilesPage>
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          trailing: Wrap(
-                            spacing: 8,
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              TextButton(
+                              if (canUseEntry)
+                                TextButton(
+                                  onPressed: _isConfiguringStorageScope
+                                      ? null
+                                      : () =>
+                                          _configureStorageScope(entry.path),
+                                  child: const Text('Use'),
+                                ),
+                              IconButton(
                                 onPressed: _isConfiguringStorageScope
                                     ? null
-                                    : () => _configureStorageScope(entry.path),
-                                child: const Text('Use'),
-                              ),
-                              Icon(
-                                Icons.chevron_right_rounded,
-                                color: colorScheme.onSurfaceVariant,
+                                    : () {
+                                        setState(() {
+                                          _storageScopeBrowsePath = entry.path;
+                                        });
+                                      },
+                                icon: Icon(
+                                  Icons.chevron_right_rounded,
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                                tooltip: 'Open',
                               ),
                             ],
                           ),
@@ -1129,13 +1168,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
   Widget _buildBreadcrumb(String path) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    // 获取已挂载磁盘列表，用于简化路径显示
     final disksAsync = ref.read(diskInfoProvider);
     final disks = disksAsync.asData?.value ?? [];
     final mountedDisks =
         disks.where((d) => d.mountPoint != 'Not mounted').toList();
 
-    // 检测当前路径是否在某个磁盘内
     DiskInfo? currentDisk;
     for (final disk in mountedDisks) {
       if (path == disk.mountPoint || path.startsWith('${disk.mountPoint}/')) {
@@ -1144,12 +1181,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
       }
     }
 
-    // 构建面包屑片段
     List<_BreadcrumbEntry> crumbs = [];
 
     if (currentDisk != null) {
-      // 在磁盘内：显示 Storage > 磁盘名 > 相对路径
-      final diskLabel = currentDisk.name; // e.g. "sdb1"
+      final diskLabel = currentDisk.name;
       crumbs.add(_BreadcrumbEntry(
         label: diskLabel,
         icon: Icons.storage_rounded,
@@ -1157,7 +1192,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
         isActive: path == currentDisk.mountPoint,
       ));
 
-      // 获取相对于磁盘根目录的路径部分
       if (path != currentDisk.mountPoint) {
         final relativePath = path.substring(currentDisk.mountPoint.length);
         final relParts =
@@ -1173,7 +1207,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
         }
       }
     } else {
-      // 不在磁盘内的路径：显示 Storage > 完整路径
       final parts = path.isEmpty
           ? <String>[]
           : path.split('/').where((p) => p.isNotEmpty).toList();
@@ -1225,7 +1258,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     },
                   ),
                   if (crumbs.length > 3) ...[
-                    // 路径过长时使用省略菜单
                     Icon(
                       Icons.chevron_right_rounded,
                       size: 20,
@@ -1273,7 +1305,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
                         ),
                       ),
                     ),
-                    // 显示最后两个片段
                     ...crumbs.sublist(crumbs.length - 2).map((crumb) {
                       return Row(
                         mainAxisSize: MainAxisSize.min,
@@ -1298,7 +1329,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
                       );
                     }),
                   ] else ...[
-                    // 直接显示所有片段
                     ...crumbs.map((crumb) {
                       return Row(
                         mainAxisSize: MainAxisSize.min,
@@ -1336,14 +1366,12 @@ class _FilesPageState extends ConsumerState<FilesPage>
     final colorScheme = Theme.of(context).colorScheme;
     final transportState = ref.watch(downloadManagerProvider);
 
-    // Get active uploads from download manager
     final activeUploads = transportState.uploads
         .where((u) =>
             u.status == DownloadStatus.downloading ||
             u.status == DownloadStatus.pending)
         .toList();
 
-    // If no active uploads in download manager, fall back to simple progress
     if (activeUploads.isEmpty) {
       return Container(
         margin: const EdgeInsets.all(16),
@@ -1425,7 +1453,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
       );
     }
 
-    // Per-file upload tracking with details
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
@@ -1449,7 +1476,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Header
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
             child: Row(
@@ -1491,7 +1517,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
                     ],
                   ),
                 ),
-                // View details button
                 IconButton(
                   icon: Icon(
                     Icons.open_in_new_rounded,
@@ -1504,7 +1529,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
               ],
             ),
           ),
-          // Overall progress bar
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: ClipRRect(
@@ -1519,7 +1543,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
             ),
           ),
           const SizedBox(height: 12),
-          // Per-file list (max 3 visible, scrollable)
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 180),
             child: ListView.separated(
@@ -1539,7 +1562,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   padding: const EdgeInsets.symmetric(vertical: 8),
                   child: Row(
                     children: [
-                      // File type icon
                       Container(
                         width: 32,
                         height: 32,
@@ -1554,7 +1576,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
                         ),
                       ),
                       const SizedBox(width: 10),
-                      // File name & progress
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1586,7 +1607,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
                         ),
                       ),
                       const SizedBox(width: 8),
-                      // Progress percentage & speed
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
@@ -1702,29 +1722,24 @@ class _FilesPageState extends ConsumerState<FilesPage>
     }
   }
 
-  Widget _buildDiskGrid(List<DiskInfo> disks) {
-    // Filter out unwanted disks
+  Widget _buildDiskGrid(List<DiskInfo> disks, String platform) {
     final filteredDisks = disks.where((disk) {
       final fs = disk.fileSystem.toUpperCase();
       final mountPoint = disk.mountPoint.toLowerCase();
       final name = disk.name.toLowerCase();
 
-      // Skip VFAT/FAT formats (usually boot partitions)
       if (fs == 'VFAT' || fs == 'FAT32' || fs == 'FAT16' || fs == 'FAT') {
         return false;
       }
 
-      // Skip /boot partition
       if (mountPoint == '/boot' || mountPoint.startsWith('/boot/')) {
         return false;
       }
 
-      // Skip eMMC boot partitions (mmcblk*boot0, mmcblk*boot1, etc.)
       if (name.contains('boot0') || name.contains('boot1')) {
         return false;
       }
 
-      // Skip eMMC RPMB partition
       if (name.contains('rpmb')) {
         return false;
       }
@@ -1736,13 +1751,11 @@ class _FilesPageState extends ConsumerState<FilesPage>
       return SliverFillRemaining(child: _buildEmptyDiskState());
     }
 
-    // Separate mounted and unmounted disks
     final mountedDisks =
         filteredDisks.where((d) => d.mountPoint != 'Not mounted').toList();
     final unmountedDisks =
         filteredDisks.where((d) => d.mountPoint == 'Not mounted').toList();
 
-    // Use filtered disks for display
     final displayDisks = [...mountedDisks, ...unmountedDisks];
 
     final colorScheme = Theme.of(context).colorScheme;
@@ -1761,7 +1774,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
       padding: const EdgeInsets.all(16),
       sliver: SliverList(
         delegate: SliverChildListDelegate([
-          // Total storage summary card
           Card(
             elevation: 0,
             color: colorScheme.primaryContainer.withValues(alpha: 0.3),
@@ -1876,7 +1888,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   ),
                 ),
                 const Spacer(),
-                // Network shares button
                 TextButton.icon(
                   onPressed: () {
                     Navigator.push(
@@ -1909,6 +1920,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
               final disk = displayDisks[index];
               return _DiskCard(
                 disk: disk,
+                platform: platform,
                 onTap: () {
                   if (disk.mountPoint != 'Not mounted') {
                     ref
@@ -1916,7 +1928,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
                         .setPath(disk.mountPoint);
                     setState(() => _showDisks = false);
                   } else {
-                    // Show mount dialog for unmounted disks
                     _showMountDialog(disk);
                   }
                 },
@@ -1946,7 +1957,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
       return SliverFillRemaining(child: _buildEmptyFolderState());
     }
 
-    // Optimized animation with staggered effect
     if (_isGridView) {
       return SliverPadding(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 100),
@@ -2252,7 +2262,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
     final hasActiveDownloads = downloadManager.activeDownloads > 0;
     final hasAnyDownloads = downloadManager.downloads.isNotEmpty;
 
-    // 合并判断：有任何传输记录时显示
     final hasAnyTransports = hasAnyDownloads || hasAnyUploads;
     final hasActiveTransports = hasActiveDownloads || hasActiveUploads;
     final totalActiveTransports =
@@ -2262,7 +2271,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        // 传输管理器按钮（合并上传和下载）
         if (hasAnyTransports)
           Container(
             margin: const EdgeInsets.only(bottom: 12),
@@ -2290,7 +2298,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
                   : const Icon(Icons.sync_alt_rounded),
             ),
           ),
-        // 创建文件夹按钮 - Material Design 3 风格
         Container(
           margin: const EdgeInsets.only(bottom: 12),
           child: FloatingActionButton(
@@ -2302,7 +2309,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
             child: const Icon(Icons.create_new_folder_rounded, size: 28),
           ),
         ),
-        // 上传按钮 - Material Design 3 风格
         FloatingActionButton.extended(
           heroTag: 'upload',
           onPressed: _pickAndUploadFiles,
@@ -2345,7 +2351,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
     if (_selectedFiles.isNotEmpty) {
       _toggleSelection(entry.path);
     } else if (entry.isDirectory) {
-      // Use the entry's full path directly - it's already correctly formatted
       ref.read(currentPathProvider.notifier).setPath(entry.path);
     } else {
       _showFileActions(entry);
@@ -2511,6 +2516,18 @@ class _FilesPageState extends ConsumerState<FilesPage>
                 onTap: () {
                   Navigator.pop(context);
                   _showFileDetails(entry);
+                },
+              ),
+              ListTile(
+                leading: _buildActionIcon(
+                  Icons.enhanced_encryption_rounded,
+                  colorScheme.tertiaryContainer,
+                  colorScheme.onTertiaryContainer,
+                ),
+                title: const Text('Encrypt to Private Space'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showImportToPrivateSpaceDialog([entry.path]);
                 },
               ),
               ListTile(
@@ -2708,6 +2725,18 @@ class _FilesPageState extends ConsumerState<FilesPage>
               ),
               ListTile(
                 leading: _buildActionIcon(
+                  Icons.enhanced_encryption_rounded,
+                  colorScheme.tertiaryContainer,
+                  colorScheme.onTertiaryContainer,
+                ),
+                title: const Text('Encrypt to Private Space'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showImportToPrivateSpaceDialog([entry.path]);
+                },
+              ),
+              ListTile(
+                leading: _buildActionIcon(
                   Icons.delete_rounded,
                   colorScheme.errorContainer,
                   colorScheme.error,
@@ -2727,6 +2756,283 @@ class _FilesPageState extends ConsumerState<FilesPage>
         ),
       ),
     );
+  }
+
+  String _extractDioMessage(DioException error) {
+    final data = error.response?.data;
+    if (data is Map<String, dynamic>) {
+      final message = data['message'] ?? data['error'];
+      if (message is String && message.isNotEmpty) return message;
+    }
+    return error.message ?? 'Request failed';
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Theme.of(context).colorScheme.error,
+      ),
+    );
+  }
+
+  Future<void> _showImportToPrivateSpaceDialog(List<String> paths) async {
+    final passwordController = TextEditingController();
+    var deleteOriginal = false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Private Space'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: passwordController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Second password',
+                  prefixIcon: Icon(Icons.password_rounded),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                value: deleteOriginal,
+                onChanged: (value) =>
+                    setDialogState(() => deleteOriginal = value),
+                title: const Text('Remove original after encryption'),
+                contentPadding: EdgeInsets.zero,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              icon: const Icon(Icons.lock_rounded),
+              label: const Text('Encrypt'),
+            ),
+          ],
+        ),
+      ),
+    );
+    final password = passwordController.text;
+    passwordController.dispose();
+    if (confirmed != true || password.isEmpty) return;
+
+    try {
+      final api = ref.read(apiServiceProvider);
+      final imported = await api.importPrivateSpaceItems(
+        masterPassword: password,
+        paths: paths,
+        deleteOriginal: deleteOriginal,
+      );
+      if (!mounted) return;
+      setState(_selectedFiles.clear);
+      ref.invalidate(directoryListingProvider(ref.read(currentPathProvider)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Encrypted ${imported.length} item(s)')),
+      );
+    } on DioException catch (error) {
+      if (!mounted) return;
+      _showErrorSnackBar(_extractDioMessage(error));
+    } catch (error) {
+      if (!mounted) return;
+      _showErrorSnackBar(error.toString());
+    }
+  }
+
+  Future<void> _showPrivateSpaceDialog() async {
+    final passwordController = TextEditingController();
+    final password = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Private Space'),
+        content: TextField(
+          controller: passwordController,
+          obscureText: true,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Second password',
+            prefixIcon: Icon(Icons.password_rounded),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () =>
+                Navigator.pop(dialogContext, passwordController.text),
+            icon: const Icon(Icons.lock_open_rounded),
+            label: const Text('Unlock'),
+          ),
+        ],
+      ),
+    );
+    passwordController.dispose();
+    if (password == null || password.isEmpty) return;
+
+    try {
+      final api = ref.read(apiServiceProvider);
+      final status = await api.getPrivateSpaceStatus();
+      final items = await api.listPrivateSpaceItems(masterPassword: password);
+      if (!mounted) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        isScrollControlled: true,
+        builder: (context) => SafeArea(
+          child: DraggableScrollableSheet(
+            expand: false,
+            initialChildSize: 0.7,
+            minChildSize: 0.4,
+            maxChildSize: 0.92,
+            builder: (context, controller) => Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.enhanced_encryption_rounded),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Private Space',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                            Text(
+                              '${status.itemCount} item(s), ${_formatFileSize(status.encryptedBytes)} encrypted',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (_selectedFiles.isNotEmpty)
+                        IconButton.filledTonal(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _showImportToPrivateSpaceDialog(
+                              _selectedFiles.toList(growable: false),
+                            );
+                          },
+                          icon: const Icon(Icons.add_rounded),
+                          tooltip: 'Encrypt selection',
+                        ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: items.isEmpty
+                      ? const Center(child: Text('No encrypted items'))
+                      : ListView.separated(
+                          controller: controller,
+                          itemCount: items.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final item = items[index];
+                            return ListTile(
+                              leading: const Icon(Icons.lock_rounded),
+                              title: Text(
+                                item.relativePath,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Text(_formatFileSize(item.size)),
+                              trailing: PopupMenuButton<String>(
+                                onSelected: (value) async {
+                                  if (value == 'export') {
+                                    Navigator.pop(context);
+                                    await _exportPrivateSpaceItem(
+                                        password, item);
+                                  } else if (value == 'delete') {
+                                    Navigator.pop(context);
+                                    await _deletePrivateSpaceItem(
+                                        password, item);
+                                  }
+                                },
+                                itemBuilder: (context) => const [
+                                  PopupMenuItem(
+                                    value: 'export',
+                                    child: ListTile(
+                                      leading: Icon(Icons.restore_rounded),
+                                      title: Text('Restore here'),
+                                    ),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'delete',
+                                    child: ListTile(
+                                      leading: Icon(Icons.delete_rounded),
+                                      title: Text('Delete'),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } on DioException catch (error) {
+      if (!mounted) return;
+      _showErrorSnackBar(_extractDioMessage(error));
+    } catch (error) {
+      if (!mounted) return;
+      _showErrorSnackBar(error.toString());
+    }
+  }
+
+  Future<void> _exportPrivateSpaceItem(
+    String password,
+    PrivateSpaceItem item,
+  ) async {
+    try {
+      final api = ref.read(apiServiceProvider);
+      await api.exportPrivateSpaceItem(
+        masterPassword: password,
+        id: item.id,
+        targetDirectory: ref.read(currentPathProvider),
+        overwrite: false,
+      );
+      if (!mounted) return;
+      ref.invalidate(directoryListingProvider(ref.read(currentPathProvider)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Restored ${item.relativePath}')),
+      );
+    } on DioException catch (error) {
+      if (!mounted) return;
+      _showErrorSnackBar(_extractDioMessage(error));
+    }
+  }
+
+  Future<void> _deletePrivateSpaceItem(
+    String password,
+    PrivateSpaceItem item,
+  ) async {
+    try {
+      final api = ref.read(apiServiceProvider);
+      await api.deletePrivateSpaceItem(masterPassword: password, id: item.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Deleted ${item.relativePath}')),
+      );
+    } on DioException catch (error) {
+      if (!mounted) return;
+      _showErrorSnackBar(_extractDioMessage(error));
+    }
   }
 
   void _copyFile(FileEntry entry) {
@@ -2919,7 +3225,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 
   Future<void> _pickAndUploadFiles() async {
-    // 选择上传类型：文件 or 文件夹
     final choice = await showModalBottomSheet<String>(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -2963,11 +3268,8 @@ class _FilesPageState extends ConsumerState<FilesPage>
       return;
     }
 
-    // 原有文件选择逻辑
-    // 获取当前路径
     final currentPath = ref.read(currentPathProvider);
 
-    // 如果路径为空，提示用户选择目录（但不阻止上传）
     if (currentPath.isEmpty) {
       if (!mounted) return;
       final shouldContinue = await showDialog<bool>(
@@ -3027,7 +3329,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
       return;
     }
 
-    // Register all files with the download manager for tracking
     final downloadManagerNotifier = ref.read(downloadManagerProvider.notifier);
     final uploadTaskIds = <String>[];
 
@@ -3046,7 +3347,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
     debugPrint(
         '[Upload] Uploading ${uploadFiles.length} files, total size: ${_formatBytes(totalSize)}');
 
-    // Show upload started notification
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -3138,7 +3438,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
       debugPrint('[Upload] Upload completed successfully');
 
-      // 发送文件上传完成事件
       final monitor = ref.read(fileSystemMonitorProvider);
       for (final file in uploadFiles) {
         final fileName = file.path.split(RegExp(r'[/\\]')).last;
@@ -3181,7 +3480,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
       debugPrint(
           '[Upload] DioException: ${e.type} - ${e.message} - ${e.error}');
 
-      // Mark unfinished upload tasks as failed
       for (final taskId in uploadTaskIds) {
         final task = ref
             .read(downloadManagerProvider)
@@ -3308,7 +3606,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
     );
   }
 
-  /// 选择文件夹并递归上传其中所有文件（保持目录结构）
   Future<void> _pickAndUploadFolder() async {
     final currentPath = ref.read(currentPathProvider);
 
@@ -3328,9 +3625,7 @@ class _FilesPageState extends ConsumerState<FilesPage>
       return;
     }
 
-    // 递归列出所有文件
     final allFiles = dir.listSync(recursive: true).whereType<File>().where((f) {
-      // 过滤隐藏文件和系统文件
       final name = f.path.split(RegExp(r'[/\\]')).last;
       return !name.startsWith('.');
     }).toList();
@@ -3344,7 +3639,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
       return;
     }
 
-    // 确认上传
     final folderName = folderPath.split(RegExp(r'[/\\]')).last;
     int totalSize = 0;
     for (final f in allFiles) {
@@ -3389,12 +3683,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
 
     if (confirmed != true) return;
 
-    // 注册上传任务
     final downloadManagerNotifier = ref.read(downloadManagerProvider.notifier);
     final uploadTaskIds = <String>[];
 
     for (final file in allFiles) {
-      // 计算相对路径以保持目录结构
       final relativePath =
           file.path.substring(folderPath.length).replaceAll('\\', '/');
       final uploadTarget = '$currentPath/$folderName$relativePath';
@@ -3409,7 +3701,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
     debugPrint(
         '[Upload] Uploading folder "$folderName": ${allFiles.length} files, total size: ${_formatBytes(totalSize)}');
 
-    // 显示上传进度面板
     if (mounted) {
       _showUploadProgressSheet();
     }
@@ -3422,7 +3713,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
     try {
       final api = ref.read(apiServiceProvider);
 
-      // 逐文件上传，保持目录结构
       int completedFiles = 0;
       int totalSent = 0;
 
@@ -3430,7 +3720,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
         final file = allFiles[i];
         final relativePath =
             file.path.substring(folderPath.length).replaceAll('\\', '/');
-        // 获取此文件应上传到的目录路径
         final targetDir =
             '$currentPath/$folderName${relativePath.substring(0, relativePath.lastIndexOf('/'))}';
 
@@ -3467,7 +3756,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
       debugPrint(
           '[Upload] Folder upload completed: $completedFiles/${allFiles.length} files');
 
-      // 发送事件
       final monitor = ref.read(fileSystemMonitorProvider);
       for (final file in allFiles) {
         final relativePath =
@@ -3622,12 +3910,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
-    // 检查磁盘是否需要初始化
     final fs = disk.fileSystem.trim().toLowerCase();
     final needsInitialization = fs.isEmpty || fs == 'unknown';
 
     if (needsInitialization) {
-      // 显示未初始化警告
       showDialog(
         context: context,
         builder: (dialogContext) => AlertDialog(
@@ -3799,11 +4085,9 @@ class _FilesPageState extends ConsumerState<FilesPage>
   Future<void> _mountDisk(DiskInfo disk) async {
     final colorScheme = Theme.of(context).colorScheme;
 
-    // Store references before async operations
     final scaffoldMessenger = ScaffoldMessenger.of(context);
     final rootNavigator = Navigator.of(context, rootNavigator: true);
 
-    // Show loading dialog
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -3866,12 +4150,10 @@ class _FilesPageState extends ConsumerState<FilesPage>
         );
       }
     } catch (e) {
-      // Close loading dialog
       if (mounted) {
         rootNavigator.pop();
       }
 
-      // Show error message
       if (mounted) {
         scaffoldMessenger.showSnackBar(
           SnackBar(
@@ -4553,9 +4835,6 @@ class _FilesPageState extends ConsumerState<FilesPage>
   }
 }
 
-// ============ Helper Classes ============
-
-/// 面包屑条目 — 描述路径中的一个片段
 class _BreadcrumbEntry {
   final String label;
   final IconData? icon;
@@ -4569,8 +4848,6 @@ class _BreadcrumbEntry {
     this.isActive = false,
   });
 }
-
-// ============ Helper Widgets ============
 
 class _BreadcrumbChip extends StatelessWidget {
   final IconData? icon;
@@ -4632,9 +4909,14 @@ class _BreadcrumbChip extends StatelessWidget {
 
 class _DiskCard extends StatelessWidget {
   final DiskInfo disk;
+  final String platform;
   final VoidCallback onTap;
 
-  const _DiskCard({required this.disk, required this.onTap});
+  const _DiskCard({
+    required this.disk,
+    required this.platform,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -4683,7 +4965,7 @@ class _DiskCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          disk.name.isNotEmpty ? disk.name : _getDisplayName(),
+                          '${operatingSystemPrefix(platform)} ${disk.name.isNotEmpty ? disk.name : _getDisplayName()}',
                           style: textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.bold,
                           ),
@@ -5156,8 +5438,6 @@ class _FileListItem extends StatelessWidget {
   }
 }
 
-// ============ Skeleton Loading Widgets ============
-
 class _SkeletonGridItem extends StatelessWidget {
   final ColorScheme colorScheme;
 
@@ -5277,8 +5557,6 @@ class _SkeletonListItem extends StatelessWidget {
     );
   }
 }
-
-// ============ Auth Widgets ============
 
 class _AuthOptionTile extends StatelessWidget {
   final IconData icon;
@@ -5459,8 +5737,6 @@ class _Fido2AuthDialogState extends State<_Fido2AuthDialog> {
     );
   }
 }
-
-// ============ File Details Dialog ============
 
 class _FileDetailsDialog extends ConsumerStatefulWidget {
   final FileEntry entry;
@@ -5701,7 +5977,6 @@ class _FileDetailsDialogState extends ConsumerState<_FileDetailsDialog> {
 
     if (mediaDetails.isEmpty) return const SizedBox.shrink();
 
-    // Remove last SizedBox
     if (mediaDetails.isNotEmpty && mediaDetails.last is SizedBox) {
       mediaDetails.removeLast();
     }

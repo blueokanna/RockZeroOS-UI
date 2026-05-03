@@ -1,10 +1,4 @@
-// GENERATED CODE - DO NOT MODIFY BY HAND
-
 part of 'api_models.dart';
-
-// **************************************************************************
-// JsonSerializableGenerator
-// **************************************************************************
 
 User _$UserFromJson(Map<String, dynamic> json) => User(
       id: json['id'] as String? ?? '',
@@ -745,7 +739,8 @@ StorageRootBrowseResponse _$StorageRootBrowseResponseFromJson(
       currentPath: json['current_path'] as String,
       parentPath: json['parent_path'] as String?,
       entries: (json['entries'] as List<dynamic>)
-          .map((e) => StorageRootBrowseEntry.fromJson(e as Map<String, dynamic>))
+          .map(
+              (e) => StorageRootBrowseEntry.fromJson(e as Map<String, dynamic>))
           .toList(),
     );
 

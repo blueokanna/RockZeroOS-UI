@@ -301,7 +301,6 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
       debugPrint('[VideoPlayerService] Seek error: $e');
     }
 
-    // Listen for buffering to end, then clear seeking state
     StreamSubscription<bool>? seekBufferSub;
     seekBufferSub = _player!.stream.buffering.listen((buffering) {
       if (!buffering && state.isSeeking) {
@@ -310,7 +309,6 @@ class VideoPlayerService extends Notifier<VideoPlayerState> {
       }
     });
 
-    // Safety timeout: 30 seconds max wait (server may need time to transcode)
     Future.delayed(const Duration(seconds: 30), () {
       if (state.isSeeking) {
         state = state.copyWith(isSeeking: false, isBuffering: false);

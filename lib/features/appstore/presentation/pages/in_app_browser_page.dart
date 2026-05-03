@@ -6,17 +6,12 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-/// 通用内置浏览器页面 —— 用于在应用内打开外部 URL（Steam / Epic / WASM 等）
-///
-/// 支持 Android / iOS / macOS / Windows / Linux 的 WebView。
-/// Web 平台自动回退到 url_launcher。
 class InAppBrowserPage extends StatefulWidget {
   final String url;
   final String? initialUrl;
   final String title;
   final String? iconUrl;
 
-  /// 嵌入模式：不显示 Scaffold / AppBar，仅显示 WebView 内容
   final bool embedded;
 
   const InAppBrowserPage({
@@ -28,7 +23,6 @@ class InAppBrowserPage extends StatefulWidget {
     this.embedded = false,
   });
 
-  /// 便捷方法：push 一个 InAppBrowserPage
   static Future<void> open(
     BuildContext context, {
     required String url,
@@ -36,7 +30,6 @@ class InAppBrowserPage extends StatefulWidget {
     String? iconUrl,
   }) async {
     if (kIsWeb) {
-      // Web 平台直接用 url_launcher
       final uri = Uri.tryParse(url);
       if (uri != null) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -129,7 +122,7 @@ class _InAppBrowserPageState extends State<InAppBrowserPage> {
                   _currentUrl = url;
                 });
                 _updateNavigationState();
-                // 获取页面标题
+
                 try {
                   final title = await _controller?.getTitle();
                   if (mounted && title != null && title.isNotEmpty) {
@@ -157,12 +150,10 @@ class _InAppBrowserPageState extends State<InAppBrowserPage> {
               }
             },
             onNavigationRequest: (request) {
-              // 拦截 steam:// 或 com.epicgames.launcher:// 等 scheme
               final uri = Uri.tryParse(request.url);
               if (uri != null &&
                   !['http', 'https', 'about', 'data']
                       .contains(uri.scheme.toLowerCase())) {
-                // 用 url_launcher 处理自定义 scheme
                 launchUrl(uri, mode: LaunchMode.externalApplication);
                 return NavigationDecision.prevent;
               }
@@ -171,7 +162,6 @@ class _InAppBrowserPageState extends State<InAppBrowserPage> {
           ),
         );
 
-      // Mobile-friendly user agent
       controller.setUserAgent(
         'Mozilla/5.0 (Linux; Android 14) '
         'AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -250,11 +240,9 @@ class _InAppBrowserPageState extends State<InAppBrowserPage> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    // 嵌入模式：只显示 WebView 内容 + 底部导航栏（不含 Scaffold / AppBar）
     if (widget.embedded) {
       return Column(
         children: [
-          // 加载进度条
           if (_isLoading)
             LinearProgressIndicator(
               value: _loadingProgress > 0 ? _loadingProgress : null,
@@ -262,9 +250,7 @@ class _InAppBrowserPageState extends State<InAppBrowserPage> {
               valueColor: AlwaysStoppedAnimation(colorScheme.primary),
               minHeight: 2,
             ),
-          // 主体内容
           Expanded(child: _buildBody()),
-          // 底部导航栏
           _buildBottomBar(colorScheme),
         ],
       );

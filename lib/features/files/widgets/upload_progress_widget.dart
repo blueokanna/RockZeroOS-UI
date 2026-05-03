@@ -38,7 +38,6 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
       duration: const Duration(milliseconds: 300),
     );
 
-    // If filename is too long, start scrolling
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _startScrollingIfNeeded();
     });
@@ -53,7 +52,6 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
   }
 
   void _startScrollingIfNeeded() {
-    // Check if text overflows
     final textPainter = TextPainter(
       text: TextSpan(
         text: widget.filename,
@@ -63,7 +61,6 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
       textDirection: TextDirection.ltr,
     )..layout(maxWidth: double.infinity);
 
-    // If text width exceeds container width, start scrolling
     if (textPainter.width > 200) {
       _isScrolling = true;
       _startAutoScroll();
@@ -82,14 +79,12 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
       final currentScroll = _scrollController.offset;
 
       if (currentScroll < maxScroll) {
-        // Scroll right
         _scrollController.animateTo(
           maxScroll,
           duration: const Duration(milliseconds: 2000),
           curve: Curves.easeInOut,
         );
       } else {
-        // Return to start
         Future.delayed(const Duration(milliseconds: 1000), () {
           if (mounted) {
             _scrollController.animateTo(
@@ -140,7 +135,6 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Filename (scrolling display)
           Row(
             children: [
               Icon(
@@ -178,8 +172,6 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
             ],
           ),
           const SizedBox(height: 12),
-
-          // Progress bar
           TweenAnimationBuilder<double>(
             tween: Tween(begin: 0, end: percentage / 100),
             duration: const Duration(milliseconds: 300),
@@ -197,12 +189,9 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
             },
           ),
           const SizedBox(height: 12),
-
-          // Statistics
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // Progress percentage
               Text(
                 '${percentage.toStringAsFixed(1)}%',
                 style: textTheme.titleMedium?.copyWith(
@@ -210,8 +199,6 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
                   color: colorScheme.primary,
                 ),
               ),
-
-              // Upload speed
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
@@ -240,8 +227,6 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
                   ],
                 ),
               ),
-
-              // File size
               Text(
                 '${_formatBytes(widget.uploadedBytes)} / ${_formatBytes(widget.totalBytes)}',
                 style: textTheme.bodySmall?.copyWith(
@@ -256,7 +241,6 @@ class _UploadProgressWidgetState extends State<UploadProgressWidget>
   }
 }
 
-/// Multi-file upload progress list
 class UploadProgressList extends StatelessWidget {
   final List<UploadProgressData> uploads;
   final Function(String)? onCancelUpload;
@@ -296,7 +280,6 @@ class UploadProgressList extends StatelessWidget {
   }
 }
 
-/// Upload progress data model
 class UploadProgressData {
   final String id;
   final String filename;

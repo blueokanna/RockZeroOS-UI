@@ -6,7 +6,6 @@ import 'package:open_file/open_file.dart';
 
 import '../../../../core/services/download_manager.dart';
 
-/// Transport manager page - unified display of upload and download tasks
 class TransportManagerPage extends ConsumerStatefulWidget {
   const TransportManagerPage({super.key});
 
@@ -24,7 +23,7 @@ class _TransportManagerPageState extends ConsumerState<TransportManagerPage>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    // Update UI every second to show real-time progress
+
     _updateTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (mounted) {
         setState(() {});
@@ -448,8 +447,6 @@ class _TransportManagerPageState extends ConsumerState<TransportManagerPage>
   }
 }
 
-// ============ Section Header Widget ============
-
 class _SectionHeader extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -488,8 +485,6 @@ class _SectionHeader extends StatelessWidget {
     );
   }
 }
-
-// ============ Transport Card Widget ============
 
 class _TransportCard extends StatelessWidget {
   final String fileName;
@@ -537,7 +532,6 @@ class _TransportCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 文件名和图标
             Row(
               children: [
                 Container(
@@ -591,7 +585,6 @@ class _TransportCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                // 状态标签
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 8,
@@ -623,7 +616,6 @@ class _TransportCard extends StatelessWidget {
                 ),
               ],
             ),
-            // 进度条（仅活动任务显示）
             if (status == DownloadStatus.downloading ||
                 status == DownloadStatus.paused ||
                 status == DownloadStatus.pending) ...[
@@ -652,7 +644,6 @@ class _TransportCard extends StatelessWidget {
                 ],
               ),
             ],
-            // 操作按钮
             const SizedBox(height: 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,

@@ -11,7 +11,6 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../storage/presentation/pages/disk_management_page.dart';
 import '../../../storage/presentation/providers/disk_platform_capabilities_provider.dart';
 
-// System info providers with auto-refresh
 final systemInfoProvider = FutureProvider.autoDispose<SystemInfo?>((ref) async {
   try {
     final api = ref.read(apiServiceProvider);
@@ -118,31 +117,21 @@ class SystemPage extends ConsumerWidget {
             padding: const EdgeInsets.all(16),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
-                // System Info Card
                 _SystemInfoCard(
                   systemInfo: systemInfo,
                   hardwareInfo: hardwareInfo,
                   diskCapabilities: diskCapabilities,
                 ),
                 const SizedBox(height: 20),
-
-                // CPU Card with per-core usage — no .animate() since
-                // StreamProvider rebuilds every 2s, re-triggering animations.
                 _CpuCard(cpuInfo: cpuInfo),
                 const SizedBox(height: 20),
-
-                // Memory Card — same: avoid re-animation on stream updates
                 _MemoryCard(memoryInfo: memoryInfo),
                 const SizedBox(height: 20),
-
-                // Disks Card — FutureProvider, only loads once
                 _DisksCard(
                   diskInfo: diskInfo,
                 ).animate().fadeIn(
                     delay: 100.ms, curve: M3Curves.emphasizedDecelerate),
                 const SizedBox(height: 20),
-
-                // USB Devices Card — FutureProvider, only loads once
                 _UsbDevicesCard(
                   usbDevices: usbDevices,
                 ).animate().fadeIn(
@@ -319,7 +308,6 @@ class _SystemInfoCard extends StatelessWidget {
                 }
                 return Column(
                   children: [
-                    // OS & Architecture row
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
@@ -366,10 +354,8 @@ class _SystemInfoCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    // Kernel & Uptime row — compact side-by-side layout
                     Row(
                       children: [
-                        // Kernel (takes remaining space)
                         Expanded(
                           child: Container(
                             padding: const EdgeInsets.all(14),
@@ -423,7 +409,6 @@ class _SystemInfoCard extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 10),
-                        // Uptime (compact pill)
                         Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 14, vertical: 14),
@@ -490,10 +475,10 @@ class _SystemInfoCard extends StatelessWidget {
   }
 
   Color _getUptimeColor(int seconds) {
-    if (seconds >= 30 * 86400) return Colors.green; // 30+ days
-    if (seconds >= 7 * 86400) return Colors.blue; // 7+ days
-    if (seconds >= 86400) return Colors.orange; // 1+ day
-    return Colors.grey; // < 1 day
+    if (seconds >= 30 * 86400) return Colors.green;
+    if (seconds >= 7 * 86400) return Colors.blue;
+    if (seconds >= 86400) return Colors.orange;
+    return Colors.grey;
   }
 
   String _formatUptime(int seconds) {
@@ -510,7 +495,6 @@ class _SystemInfoCard extends StatelessWidget {
   }
 }
 
-/// Structured tile for system info display
 class _SystemInfoTile extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -647,7 +631,6 @@ class _CpuCard extends StatelessWidget {
 
     return Column(
       children: [
-        // Overall stats row
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -691,8 +674,6 @@ class _CpuCard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 20),
-
-        // Per-core usage section
         if (info.perCoreUsage != null && info.perCoreUsage!.isNotEmpty) ...[
           Row(
             children: [
@@ -725,7 +706,6 @@ class _CpuCard extends StatelessWidget {
       List<CpuCoreArchInfo>? coreTypes) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Calculate columns based on width
         final crossAxisCount = constraints.maxWidth > 600
             ? 4
             : (constraints.maxWidth > 400 ? 3 : 2);
@@ -741,12 +721,9 @@ class _CpuCard extends StatelessWidget {
           ),
           itemCount: cores.length,
           itemBuilder: (context, index) {
-            // Determine architecture for this core based on coreTypes
             String? archName;
             String? coreLabel;
             if (coreTypes != null && coreTypes.isNotEmpty) {
-              // Map core index to architecture type
-              // Typically big.LITTLE: first N cores are big (A73), rest are little (A53)
               int cumulativeCount = 0;
               var typeIndex = 0;
               for (final coreType in coreTypes) {
@@ -1165,7 +1142,6 @@ class _MemoryCard extends StatelessWidget {
 
     return Column(
       children: [
-        // Main memory bar
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -1240,8 +1216,6 @@ class _MemoryCard extends StatelessWidget {
             ],
           ),
         ),
-
-        // Swap section
         if (info.swapTotal > 0) ...[
           const SizedBox(height: 16),
           Container(
@@ -1398,7 +1372,6 @@ class _DisksCard extends StatelessWidget {
                   children: [
                     ...disks.map((disk) => _DiskItem(disk: disk)),
                     const SizedBox(height: 16),
-                    // Storage Manager button
                     FilledButton.tonalIcon(
                       onPressed: () {
                         Navigator.of(context).push(
@@ -1439,7 +1412,6 @@ class _DiskItem extends ConsumerWidget {
 
     return InkWell(
       onTap: () {
-        // Navigate to storage management page
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (context) => const DiskManagementPage(),

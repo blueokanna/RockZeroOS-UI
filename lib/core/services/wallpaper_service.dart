@@ -24,7 +24,6 @@ class WallpaperService {
     return Platform.isAndroid || Platform.isIOS;
   }
 
-  /// 获取系统壁纸的主色调
   static Future<Color?> getSystemWallpaperColor() async {
     if (!isPlatformSupported) return null;
 
@@ -41,25 +40,22 @@ class WallpaperService {
     return null;
   }
 
-  /// 从图片提取主色调 (使用 Flutter 内置方法)
   static Future<Color?> extractDominantColor(Uint8List imageBytes) async {
     try {
       final codec = await ui.instantiateImageCodec(
         imageBytes,
-        targetWidth: 100, // 缩小图片加快处理
+        targetWidth: 100,
         targetHeight: 100,
       );
       final frame = await codec.getNextFrame();
       final image = frame.image;
 
-      // 获取像素数据
       final byteData =
           await image.toByteData(format: ui.ImageByteFormat.rawRgba);
       if (byteData == null) return null;
 
       final pixels = byteData.buffer.asUint8List();
 
-      // 统计颜色频率
       final colorCounts = <int, int>{};
       for (var i = 0; i < pixels.length; i += 4) {
         final r = pixels[i];
@@ -67,13 +63,11 @@ class WallpaperService {
         final b = pixels[i + 2];
         final a = pixels[i + 3];
 
-        // 跳过透明像素和接近白色/黑色的像素
         if (a < 128) continue;
         if ((r > 240 && g > 240 && b > 240) || (r < 15 && g < 15 && b < 15)) {
           continue;
         }
 
-        // 量化颜色以减少变体
         final quantizedR = (r ~/ 32) * 32;
         final quantizedG = (g ~/ 32) * 32;
         final quantizedB = (b ~/ 32) * 32;
@@ -84,7 +78,6 @@ class WallpaperService {
 
       if (colorCounts.isEmpty) return null;
 
-      // 找出最常见的颜色，优先选择饱和度较高的
       int? bestColor;
       double bestScore = 0;
 
@@ -93,12 +86,10 @@ class WallpaperService {
         final g = (entry.key >> 8) & 0xFF;
         final b = entry.key & 0xFF;
 
-        // 计算饱和度
         final maxC = [r, g, b].reduce((a, b) => a > b ? a : b);
         final minC = [r, g, b].reduce((a, b) => a < b ? a : b);
         final saturation = maxC > 0 ? (maxC - minC) / maxC.toDouble() : 0.0;
 
-        // 分数 = 频率 * (1 + 饱和度)
         final score = entry.value * (1 + saturation);
 
         if (score > bestScore) {
@@ -121,7 +112,6 @@ class WallpaperService {
     }
   }
 
-  /// 从图片文件提取主色调
   static Future<Color?> extractColorFromFile(String filePath) async {
     try {
       final file = File(filePath);
@@ -135,7 +125,6 @@ class WallpaperService {
     }
   }
 
-  /// 混合两种颜色
   static Color blendColors(Color color1, Color color2, double ratio) {
     final r = (color1.r * ratio + color2.r * (1 - ratio)).round();
     final g = (color1.g * ratio + color2.g * (1 - ratio)).round();
@@ -144,7 +133,6 @@ class WallpaperService {
   }
 }
 
-/// 背景模式 Provider
 final backgroundModeProvider =
     NotifierProvider<BackgroundModeNotifier, BackgroundMode>(
   BackgroundModeNotifier.new,
@@ -168,7 +156,6 @@ class BackgroundModeNotifier extends Notifier<BackgroundMode> {
   }
 }
 
-/// 自定义壁纸路径 Provider
 final customWallpaperPathProvider =
     NotifierProvider<CustomWallpaperPathNotifier, String?>(
   CustomWallpaperPathNotifier.new,
@@ -191,7 +178,6 @@ class CustomWallpaperPathNotifier extends Notifier<String?> {
     }
   }
 
-  /// 选择并保存壁纸
   Future<String?> pickAndSaveWallpaper() async {
     try {
       final picker = ImagePicker();
@@ -204,7 +190,6 @@ class CustomWallpaperPathNotifier extends Notifier<String?> {
 
       if (image == null) return null;
 
-      // 保存到应用目录
       final appDir = await getApplicationDocumentsDirectory();
       final wallpaperDir = Directory('${appDir.path}/wallpapers');
       if (!await wallpaperDir.exists()) {
@@ -215,11 +200,9 @@ class CustomWallpaperPathNotifier extends Notifier<String?> {
           'custom_wallpaper_${DateTime.now().millisecondsSinceEpoch}.jpg';
       final savedPath = '${wallpaperDir.path}/$fileName';
 
-      // 复制文件
       final bytes = await image.readAsBytes();
       await File(savedPath).writeAsBytes(bytes);
 
-      // 删除旧壁纸
       if (state != null && state != savedPath) {
         try {
           await File(state!).delete();
@@ -234,7 +217,6 @@ class CustomWallpaperPathNotifier extends Notifier<String?> {
     }
   }
 
-  /// 清除自定义壁纸
   Future<void> clearWallpaper() async {
     if (state != null) {
       try {
@@ -245,7 +227,6 @@ class CustomWallpaperPathNotifier extends Notifier<String?> {
   }
 }
 
-/// 壁纸颜色 Provider - 从壁纸提取的颜色
 final wallpaperColorProvider = NotifierProvider<WallpaperColorNotifier, Color?>(
   WallpaperColorNotifier.new,
 );
@@ -253,7 +234,6 @@ final wallpaperColorProvider = NotifierProvider<WallpaperColorNotifier, Color?>(
 class WallpaperColorNotifier extends Notifier<Color?> {
   @override
   Color? build() {
-    // 同步加载颜色 - Hive 支持同步读取
     final box = Hive.box('settings');
     final colorValue = box.get('wallpaperColor');
     if (colorValue != null) {
@@ -272,18 +252,16 @@ class WallpaperColorNotifier extends Notifier<Color?> {
     }
   }
 
-  /// 从壁纸文件提取颜色并应用
   Future<void> extractFromWallpaper(String filePath) async {
     final color = await WallpaperService.extractColorFromFile(filePath);
     if (color != null) {
       await setColor(color);
-      // 立即刷新主题
+
       ref.invalidate(blendedThemeColorProvider);
     }
   }
 }
 
-/// 壁纸模糊程度 Provider (0.0 ~ 50.0)
 final wallpaperBlurAmountProvider =
     NotifierProvider<WallpaperBlurAmountNotifier, double>(
   WallpaperBlurAmountNotifier.new,
@@ -303,28 +281,20 @@ class WallpaperBlurAmountNotifier extends Notifier<double> {
   }
 }
 
-/// 混合后的主题色 Provider
-/// 自定义壁纸模式: 80% 自定义壁纸色 + 20% 系统色
-/// 默认模式: 不混合，返回null让系统使用种子颜色
 final blendedThemeColorProvider = Provider<Color?>((ref) {
   final backgroundMode = ref.watch(backgroundModeProvider);
-  final wallpaperColor = ref.watch(wallpaperColorProvider); // 自定义上传壁纸的颜色
-  final systemColor = ref.watch(systemAccentColorProvider); // 手机壁纸颜色
+  final wallpaperColor = ref.watch(wallpaperColorProvider);
+  final systemColor = ref.watch(systemAccentColorProvider);
 
-  // 只有在自定义壁纸模式下才混合颜色
   if (backgroundMode == BackgroundMode.customWallpaper) {
     if (wallpaperColor != null && systemColor != null) {
-      // 80% 自定义壁纸色 + 20% 系统色
       return WallpaperService.blendColors(wallpaperColor, systemColor, 0.8);
     } else if (wallpaperColor != null) {
-      // 没有系统颜色，使用100%自定义壁纸颜色
       return wallpaperColor;
     } else if (systemColor != null) {
-      // 没有自定义壁纸颜色，使用系统颜色
       return systemColor;
     }
   }
 
-  // 默认模式 - 返回null，让main.dart使用种子颜色或动态颜色
   return null;
 });

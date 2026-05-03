@@ -44,7 +44,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         pageBuilder: (context, state) =>
             _buildEntranceTransition(state, const DeviceDiscoveryPage()),
       ),
-
       GoRoute(
         path: '/login',
         name: 'login',
@@ -57,8 +56,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         pageBuilder: (context, state) =>
             _buildEntranceTransition(state, const RegisterPage()),
       ),
-
-      // Main App Shell
       ShellRoute(
         builder: (context, state, child) => ShellScaffold(child: child),
         routes: [

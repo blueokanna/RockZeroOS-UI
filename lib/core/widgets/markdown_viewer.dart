@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-/// Markdown查看器组件
-/// 支持完整的Markdown渲染，包括代码块、表格、链接等
 class MarkdownViewer extends StatelessWidget {
   final String data;
   final bool selectable;
@@ -188,7 +186,6 @@ class MarkdownViewer extends StatelessWidget {
       BuildContext context, Uri uri, String? title, String? alt) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    // 处理相对路径
     String imageUrl = uri.toString();
     if (baseUrl != null && !imageUrl.startsWith('http')) {
       imageUrl = '$baseUrl/$imageUrl';
@@ -202,7 +199,6 @@ class MarkdownViewer extends StatelessWidget {
           imageUrl,
           fit: BoxFit.contain,
           errorBuilder: (context, error, stackTrace) {
-            // 尝试加载本地资源
             if (uri.toString().contains('RockZero.png') ||
                 uri.toString().contains('assets/images')) {
               return Image.asset(
@@ -269,7 +265,6 @@ class MarkdownViewer extends StatelessWidget {
   }
 }
 
-/// Markdown文件查看页面
 class MarkdownViewerPage extends StatefulWidget {
   final String? filePath;
   final String? content;
@@ -311,17 +306,12 @@ class _MarkdownViewerPageState extends State<MarkdownViewerPage> {
 
     if (widget.filePath != null) {
       try {
-        // 如果是网络路径
         if (widget.filePath!.startsWith('http')) {
-          // 网络文件加载需要使用http包
-          // 简化处理，直接设置错误
           setState(() {
             _error = '网络文件加载暂不支持';
             _isLoading = false;
           });
         } else {
-          // 本地文件
-          // 在Flutter中读取本地文件需要使用path_provider
           setState(() {
             _error = '本地文件加载暂不支持';
             _isLoading = false;

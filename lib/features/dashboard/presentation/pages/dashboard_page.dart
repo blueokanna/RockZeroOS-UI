@@ -13,7 +13,6 @@ import '../widgets/system_status_card.dart';
 import '../widgets/storage_card.dart';
 import '../widgets/network_status_card.dart';
 
-// Auto-refresh providers with timers
 final hardwareInfoProvider = FutureProvider.autoDispose<HardwareInfo?>((
   ref,
 ) async {
@@ -24,7 +23,7 @@ final hardwareInfoProvider = FutureProvider.autoDispose<HardwareInfo?>((
   } catch (e, stackTrace) {
     debugPrint('❌ [Dashboard] Hardware info error: $e');
     debugPrint('📚 [Dashboard] Stack trace: $stackTrace');
-    // 返回 null 而不是抛出异常，让 UI 显示错误状态
+
     return null;
   }
 });
@@ -36,7 +35,6 @@ final totalStorageInfoProvider = FutureProvider.autoDispose<TotalStorageInfo?>((
     final api = ref.read(apiServiceProvider);
     final disks = await api.getDiskInfo();
 
-    // Calculate total storage from ALL disks
     int totalSpace = 0;
     int usedSpace = 0;
     int availableSpace = 0;
@@ -92,7 +90,7 @@ final networkInfoProvider = FutureProvider.autoDispose<NetworkInfo?>((
   } catch (e, stackTrace) {
     debugPrint('❌ [Dashboard] Network info error: $e');
     debugPrint('📚 [Dashboard] Stack trace: $stackTrace');
-    // 返回空的网络信息而不是 null
+
     return NetworkInfo(
       interfaces: [],
       totalRxBytes: 0,
@@ -101,7 +99,6 @@ final networkInfoProvider = FutureProvider.autoDispose<NetworkInfo?>((
   }
 });
 
-/// 服务器公网 IP（缓存 5 分钟）
 final publicIpProvider = FutureProvider.autoDispose<String?>((ref) async {
   try {
     final api = ref.read(apiServiceProvider);
@@ -111,7 +108,6 @@ final publicIpProvider = FutureProvider.autoDispose<String?>((ref) async {
   }
 });
 
-// Total storage info model
 class TotalStorageInfo {
   final int totalSpace;
   final int usedSpace;
@@ -130,13 +126,12 @@ class TotalStorageInfo {
   });
 }
 
-// Network info model with speed calculation
 class NetworkInfo {
   final List<NetworkInterfaceInfo> interfaces;
   final int totalRxBytes;
   final int totalTxBytes;
-  final int rxSpeed; // bytes per second
-  final int txSpeed; // bytes per second
+  final int rxSpeed;
+  final int txSpeed;
 
   NetworkInfo({
     required this.interfaces,
@@ -157,7 +152,6 @@ class NetworkInfo {
   }
 }
 
-// Network speed tracker
 class NetworkSpeedNotifier extends Notifier<NetworkInfo?> {
   int _lastRxBytes = 0;
   int _lastTxBytes = 0;
@@ -179,7 +173,6 @@ class NetworkSpeedNotifier extends Notifier<NetworkInfo?> {
       final rxDiff = info.totalRxBytes - _lastRxBytes;
       final txDiff = info.totalTxBytes - _lastTxBytes;
 
-      // Calculate speed in bytes per second
       final rxSpeed = (rxDiff * 1000 / elapsed).round();
       final txSpeed = (txDiff * 1000 / elapsed).round();
 
@@ -227,7 +220,6 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
   }
 
   void _startAutoRefresh() {
-    // System status & storage refresh every 3 seconds
     _systemTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       if (mounted) {
         ref.invalidate(hardwareInfoProvider);
@@ -235,7 +227,6 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
       }
     });
 
-    // Network status refresh every 1 second for real-time speed
     _networkTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
       if (mounted) {
         try {
@@ -252,9 +243,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
           ref
               .read(networkSpeedProvider.notifier)
               .updateFromHardware(networkInfo);
-        } catch (_) {
-          // Ignore errors during refresh
-        }
+        } catch (_) {}
       }
     });
   }
@@ -266,7 +255,6 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
     final networkInfo = ref.watch(networkSpeedProvider);
     final diskCapabilities = ref.watch(diskPlatformCapabilitiesProvider);
 
-    // Convert NetworkInfo? to AsyncValue for compatibility
     final networkInfoAsync = networkInfo != null
         ? AsyncValue.data(networkInfo)
         : const AsyncValue<NetworkInfo?>.loading();
@@ -281,7 +269,7 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         onRefresh: () async {
           ref.invalidate(hardwareInfoProvider);
           ref.invalidate(totalStorageInfoProvider);
-          // Trigger network refresh
+
           try {
             final api = ref.read(apiServiceProvider);
             final hardware = await api.getHardwareInfo();
@@ -302,7 +290,6 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
         },
         child: CustomScrollView(
           slivers: [
-            // App Bar - use medium on narrow screens to save space
             SliverAppBar(
               expandedHeight:
                   MediaQuery.of(context).size.width <= 600 ? 80 : 120,
@@ -328,8 +315,6 @@ class _DashboardPageState extends ConsumerState<DashboardPage> {
                 ),
               ),
             ),
-
-            // Content
             SliverPadding(
               padding: const EdgeInsets.all(16),
               sliver: SliverToBoxAdapter(

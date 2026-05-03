@@ -25,7 +25,6 @@ String _formatStorageBytes(int bytes) {
   return '${value.toStringAsFixed(value >= 100 || index == 0 ? 0 : 1)} ${units[index]}';
 }
 
-/// Supported file systems for formatting
 const List<Map<String, dynamic>> supportedFileSystems = [
   {
     'name': 'ext4',
@@ -85,7 +84,6 @@ const List<Map<String, dynamic>> supportedFileSystems = [
   },
 ];
 
-/// Disk detail model
 class DiskDetail {
   final String name;
   final String devicePath;
@@ -173,22 +171,18 @@ class _DiskManagementPageState extends ConsumerState<DiskManagementPage> {
   void initState() {
     super.initState();
 
-    // Auto refresh: refresh disk status every 5 seconds
     _autoRefreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (mounted) {
         ref.invalidate(allDisksDetailProvider);
       }
     });
 
-    // Listen to filesystem events (disk related)
     final monitor = ref.read(fileSystemMonitorProvider);
     _fsEventSubscription = monitor.listenToDiskEvents().listen((event) {
       debugPrint('[DiskManagement] Received FS event: $event');
       if (mounted) {
-        // Immediately refresh disk info
         ref.invalidate(allDisksDetailProvider);
 
-        // Show notification
         String message = '';
         switch (event.type) {
           case FileSystemEventType.diskFormatted:
@@ -487,7 +481,8 @@ class _DiskManagementPageState extends ConsumerState<DiskManagementPage> {
                     runSpacing: 12,
                     children: [
                       FilledButton.icon(
-                        onPressed: () => _openWindowsRootBindingDialog(capabilities),
+                        onPressed: () =>
+                            _openWindowsRootBindingDialog(capabilities),
                         icon: Icon(
                           capabilities.scopedStorageConfigured
                               ? Icons.drive_file_rename_outline_rounded
@@ -701,7 +696,8 @@ class _WindowsRootBindingDialogState
 
   Future<StorageRootBrowseResponse> _loadBrowse() {
     final api = ref.read(apiServiceProvider);
-    return api.browseStorageScope(path: _browsePath.isEmpty ? null : _browsePath);
+    return api.browseStorageScope(
+        path: _browsePath.isEmpty ? null : _browsePath);
   }
 
   Future<void> _setBrowsePath(String path) async {
@@ -815,8 +811,26 @@ class _WindowsRootBindingDialogState
               );
             }
 
+            bool isWindowsDriveRootBindingPath(String path) {
+              if (path.isEmpty) return false;
+
+              var normalized = path.replaceAll('/', r'\').trim();
+              if (normalized.startsWith(r'\\?\')) {
+                normalized = normalized.substring(4);
+              }
+              if (normalized.length == 2) {
+                normalized = '$normalized\\';
+              }
+
+              return RegExp(r'^[a-zA-Z]:\\$').hasMatch(normalized);
+            }
+
             final browse = snapshot.data!;
-            final canUseCurrentFolder = browse.currentPath.isNotEmpty;
+            final browsingDriveList = browse.currentPath.isEmpty;
+            final browsingDriveRoot =
+                isWindowsDriveRootBindingPath(browse.currentPath);
+            final canUseCurrentFolder =
+                browse.currentPath.isNotEmpty && !browsingDriveRoot;
 
             return ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 520),
@@ -860,7 +874,9 @@ class _WindowsRootBindingDialogState
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          browse.currentPath.isEmpty ? 'Drive list' : browse.currentPath,
+                          browse.currentPath.isEmpty
+                              ? 'Drive list'
+                              : browse.currentPath,
                           style: textTheme.bodyMedium?.copyWith(
                             fontWeight: FontWeight.w600,
                           ),
@@ -898,13 +914,16 @@ class _WindowsRootBindingDialogState
                             ? const SizedBox(
                                 width: 16,
                                 height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.check_circle_rounded),
                         label: Text(
                           canUseCurrentFolder
                               ? 'Use This Folder'
-                              : 'Choose a Drive or Folder',
+                              : browsingDriveRoot
+                                  ? 'Choose a Folder Inside This Drive'
+                                  : 'Choose a Drive or Folder',
                         ),
                       ),
                     ],
@@ -914,9 +933,11 @@ class _WindowsRootBindingDialogState
                     child: browse.entries.isEmpty
                         ? Center(
                             child: Text(
-                              browse.currentPath.isEmpty
+                              browsingDriveList
                                   ? 'No Windows drives were reported by the backend.'
-                                  : 'This folder has no subdirectories. You can bind the current folder directly.',
+                                  : browsingDriveRoot
+                                      ? 'This drive root has no subdirectories. Create or choose a folder inside the drive before binding storage.'
+                                      : 'This folder has no subdirectories. You can bind the current folder directly.',
                               style: textTheme.bodyMedium?.copyWith(
                                 color: colorScheme.onSurfaceVariant,
                               ),
@@ -925,13 +946,18 @@ class _WindowsRootBindingDialogState
                           )
                         : ListView.separated(
                             itemCount: browse.entries.length,
-                            separatorBuilder: (_, __) => const Divider(height: 1),
+                            separatorBuilder: (_, __) =>
+                                const Divider(height: 1),
                             itemBuilder: (context, index) {
                               final entry = browse.entries[index];
                               final subtitle = entry.totalSpace != null &&
                                       entry.availableSpace != null
                                   ? '${_formatStorageBytes(entry.availableSpace!)} free / ${_formatStorageBytes(entry.totalSpace!)} total'
                                   : entry.path;
+
+                              final entryIsDriveRoot =
+                                  isWindowsDriveRootBindingPath(entry.path);
+                              final canUseEntry = !entryIsDriveRoot;
 
                               return ListTile(
                                 contentPadding: const EdgeInsets.symmetric(
@@ -954,17 +980,25 @@ class _WindowsRootBindingDialogState
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                 ),
-                                trailing: Wrap(
-                                  spacing: 8,
-                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    TextButton(
+                                    if (canUseEntry)
+                                      TextButton(
+                                        onPressed: _isSubmitting
+                                            ? null
+                                            : () => _configureRoot(entry.path),
+                                        child: const Text('Use'),
+                                      ),
+                                    IconButton(
                                       onPressed: _isSubmitting
                                           ? null
-                                          : () => _configureRoot(entry.path),
-                                      child: const Text('Use'),
+                                          : () => _setBrowsePath(entry.path),
+                                      icon: const Icon(
+                                        Icons.chevron_right_rounded,
+                                      ),
+                                      tooltip: 'Open',
                                     ),
-                                    const Icon(Icons.chevron_right_rounded),
                                   ],
                                 ),
                                 onTap: _isSubmitting
@@ -982,7 +1016,8 @@ class _WindowsRootBindingDialogState
       ),
       actions: [
         TextButton(
-          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(false),
+          onPressed:
+              _isSubmitting ? null : () => Navigator.of(context).pop(false),
           child: const Text('Close'),
         ),
       ],
@@ -1001,7 +1036,6 @@ class _DiskCard extends ConsumerWidget {
     required this.onRefresh,
   });
 
-  // Linux native filesystems
   static const Set<String> linuxNativeFileSystems = {
     'ext4',
     'ext3',
@@ -1016,22 +1050,19 @@ class _DiskCard extends ConsumerWidget {
     'bcachefs',
   };
 
-  // Linux fully compatible cross-platform filesystems (recommended)
   static const Set<String> crossPlatformFileSystems = {
-    'ntfs', // Windows native, fully supported on Linux (via ntfs-3g)
-    'exfat', // Cross-platform, Windows/Linux/Mac compatible
-    'fat32', // Maximum compatibility
-    'vfat', // FAT32 Linux name
+    'ntfs',
+    'exfat',
+    'fat32',
+    'vfat',
   };
 
-  // Other compatible filesystems
   static const Set<String> otherCompatibleFileSystems = {
     'fat16',
-    'hfsplus', // Mac filesystem
-    'udf', // Optical disc filesystem
+    'hfsplus',
+    'udf',
   };
 
-  // Get filesystem category and recommendation
   Map<String, dynamic> _getFileSystemInfo() {
     final fs = disk.fileSystem.toLowerCase();
 
@@ -1085,7 +1116,6 @@ class _DiskCard extends ConsumerWidget {
     };
   }
 
-  // Check if non-Linux native filesystem (but compatible)
   bool _isNonLinuxNativeFs() {
     final fs = disk.fileSystem.toLowerCase();
     if (fs.isEmpty || fs == 'unknown') return false;
@@ -1094,7 +1124,6 @@ class _DiskCard extends ConsumerWidget {
             otherCompatibleFileSystems.contains(fs));
   }
 
-  // Check if completely unsupported filesystem
   bool _isUnsupportedFs() {
     final fs = disk.fileSystem.toLowerCase();
     if (fs.isEmpty || fs == 'unknown') return false;
@@ -1208,13 +1237,11 @@ class _DiskCard extends ConsumerWidget {
                 const SizedBox(height: 12),
                 Text('Capacity: ${_formatBytes(disk.totalSpace)}',
                     style: textTheme.bodyMedium),
-                // Show filesystem info
                 () {
                   final fsInfo = _getFileSystemInfo();
                   final needsFormat = fsInfo['needsFormat'] as bool;
 
                   if (needsFormat) {
-                    // Unsupported filesystem
                     return Column(
                       children: [
                         const SizedBox(height: 8),
@@ -1244,7 +1271,6 @@ class _DiskCard extends ConsumerWidget {
                     );
                   } else if (fsInfo['category'] == 'Windows Compatible' ||
                       fsInfo['category'] == 'Cross-platform') {
-                    // Windows/cross-platform filesystem - show as usable
                     return Column(
                       children: [
                         const SizedBox(height: 8),
@@ -1477,7 +1503,6 @@ class _DiskCard extends ConsumerWidget {
       return;
     }
 
-    // If disk is mounted, show details page directly
     final isMounted = disk.isMounted &&
         disk.mountPoint.isNotEmpty &&
         disk.mountPoint != 'Not mounted';
@@ -1495,12 +1520,10 @@ class _DiskCard extends ConsumerWidget {
       return;
     }
 
-    // Check disk status
     final isRawDisk = _isRawDisk();
     final isNonLinuxNative = _isNonLinuxNativeFs();
     final isUnsupported = _isUnsupportedFs();
 
-    // If raw disk (no partition, no filesystem), show initialize dialog
     if (isRawDisk) {
       showModalBottomSheet(
         context: context,
@@ -1512,7 +1535,6 @@ class _DiskCard extends ConsumerWidget {
         ),
       );
     } else if (isUnsupported) {
-      // Unsupported filesystem, needs formatting
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
@@ -1523,7 +1545,6 @@ class _DiskCard extends ConsumerWidget {
         ),
       );
     } else if (isNonLinuxNative) {
-      // Non-Linux native filesystem, can mount or format
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
@@ -1533,7 +1554,6 @@ class _DiskCard extends ConsumerWidget {
         ),
       );
     } else {
-      // Normal Linux filesystem, unmounted, show details/mount page
       showModalBottomSheet(
         context: context,
         isScrollControlled: true,
@@ -1546,7 +1566,6 @@ class _DiskCard extends ConsumerWidget {
     }
   }
 
-  /// Check if raw disk (no partition, no filesystem)
   bool _isRawDisk() {
     final fs = disk.fileSystem.toLowerCase();
     return fs.isEmpty || fs == 'unknown';
@@ -1581,7 +1600,6 @@ class _InitializeDiskSheetState extends ConsumerState<_InitializeDiskSheet> {
   }
 
   Future<void> _initializeDisk() async {
-    // Biometric authentication first
     final biometricService = ref.read(biometricServiceProvider);
     final authenticated = await biometricService.authenticate(
       reason: 'Authentication required to initialize disk',
@@ -1604,13 +1622,10 @@ class _InitializeDiskSheetState extends ConsumerState<_InitializeDiskSheet> {
       final api = ref.read(apiServiceProvider);
 
       if (widget.isReformat) {
-        // If reformatting an existing partition
-        // First check if it's a whole disk device
         final devicePath = widget.disk.devicePath;
         final isWholeDisk = _isWholeDiskDevice(devicePath);
 
         if (isWholeDisk) {
-          // Whole disk device, use initialize
           await api.post('/api/v1/disk/initialize', data: {
             'device': widget.disk.devicePath,
             'file_system': _selectedFs,
@@ -1619,7 +1634,6 @@ class _InitializeDiskSheetState extends ConsumerState<_InitializeDiskSheet> {
             'partition_table': 'gpt',
           });
         } else {
-          // Partition device, use format
           await api.post('/api/v1/disk/format', data: {
             'device': widget.disk.devicePath,
             'file_system': _selectedFs,
@@ -1628,7 +1642,6 @@ class _InitializeDiskSheetState extends ConsumerState<_InitializeDiskSheet> {
           });
         }
       } else {
-        // New disk initialization
         await api.post('/api/v1/disk/initialize', data: {
           'device': widget.disk.devicePath,
           'file_system': _selectedFs,
@@ -1638,7 +1651,6 @@ class _InitializeDiskSheetState extends ConsumerState<_InitializeDiskSheet> {
       }
 
       if (mounted) {
-        // Emit filesystem event
         final monitor = ref.read(fileSystemMonitorProvider);
         monitor.emitDiskFormatted(
           widget.disk.name,
@@ -1659,7 +1671,7 @@ class _InitializeDiskSheetState extends ConsumerState<_InitializeDiskSheet> {
             duration: const Duration(seconds: 2),
           ),
         );
-        // Wait for filesystem info to update before refresh
+
         await Future.delayed(const Duration(milliseconds: 2000));
         widget.onComplete();
       }
@@ -1950,7 +1962,6 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
       return;
     }
 
-    // Check if unpartitioned whole disk device
     final devicePath = widget.disk.devicePath;
     final isWholeDisk = _isWholeDiskDevice(devicePath);
     final hasNoFileSystem = widget.disk.fileSystem.isEmpty ||
@@ -1958,10 +1969,9 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
         widget.disk.fileSystem == 'unknown';
 
     if (isWholeDisk && hasNoFileSystem) {
-      // Show initialize dialog
       if (mounted) {
-        Navigator.pop(context); // Close details page first
-        // Wait for animation to complete before showing dialog
+        Navigator.pop(context);
+
         await Future.delayed(const Duration(milliseconds: 300));
         if (mounted) {
           _showInitializeDialog();
@@ -1970,16 +1980,14 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
       return;
     }
 
-    // Show mount options dialog (don't close details page, show on top)
     if (mounted) {
       _showMountOptionsDialog();
     }
   }
 
   bool _isWholeDiskDevice(String devicePath) {
-    // Check if whole disk device (e.g. /dev/sdb) not partition (e.g. /dev/sdb1)
     final name = devicePath.split('/').last;
-    // sda, sdb, nvme0n1 are whole disks; sda1, sdb1, nvme0n1p1 are partitions
+
     if (name.startsWith('sd') && name.length == 3) return true;
     if (name.startsWith('vd') && name.length == 3) return true;
     if (name.startsWith('hd') && name.length == 3) return true;
@@ -2009,7 +2017,6 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
       return;
     }
 
-    // Use showModalBottomSheet instead of showDialog, better for mobile
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -2021,8 +2028,8 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
         child: _MountDiskDialog(
           disk: widget.disk,
           onComplete: () {
-            Navigator.pop(context); // Close mount dialog
-            Navigator.pop(context); // Close details sheet
+            Navigator.pop(context);
+            Navigator.pop(context);
             widget.onRefresh();
           },
         ),
@@ -2049,7 +2056,7 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
               backgroundColor: Colors.green,
               duration: Duration(seconds: 2)),
         );
-        // Wait for unmount to complete before refresh
+
         await Future.delayed(const Duration(milliseconds: 1000));
         widget.onRefresh();
       }
@@ -2106,17 +2113,16 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
       return;
     }
 
-    // Use showModalBottomSheet instead of showDialog
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      isDismissible: false, // Prevent accidental close
+      isDismissible: false,
       builder: (context) => _FormatDiskDialog(
         disk: widget.disk,
         onComplete: () {
-          Navigator.pop(context); // Close format dialog
-          Navigator.pop(context); // Close details sheet
+          Navigator.pop(context);
+          Navigator.pop(context);
           widget.onRefresh();
         },
       ),
@@ -2410,7 +2416,6 @@ class _DiskDetailsSheetState extends ConsumerState<_DiskDetailsSheet> {
   }
 }
 
-/// Mount disk dialog - supports filesystem type selection
 class _MountDiskDialog extends ConsumerStatefulWidget {
   final DiskDetail disk;
   final VoidCallback onComplete;
@@ -2429,13 +2434,13 @@ class _MountDiskDialogState extends ConsumerState<_MountDiskDialog> {
   @override
   void initState() {
     super.initState();
-    // Pre-fill filesystem type
+
     if (widget.disk.fileSystem.isNotEmpty &&
         widget.disk.fileSystem != 'Unknown' &&
         widget.disk.fileSystem != 'unknown') {
       _selectedFs = widget.disk.fileSystem.toLowerCase();
     }
-    // Pre-fill mount point
+
     _mountPointController.text =
         '/mnt/${widget.disk.label ?? widget.disk.name}';
   }
@@ -2467,7 +2472,7 @@ class _MountDiskDialogState extends ConsumerState<_MountDiskDialog> {
             duration: const Duration(seconds: 2),
           ),
         );
-        // Wait for mount to complete before refresh
+
         await Future.delayed(const Duration(milliseconds: 1000));
         widget.onComplete();
       }
@@ -2490,7 +2495,6 @@ class _MountDiskDialogState extends ConsumerState<_MountDiskDialog> {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
-    // Filesystem options
     final fsOptions = [
       {
         'name': 'auto',
@@ -2512,7 +2516,6 @@ class _MountDiskDialogState extends ConsumerState<_MountDiskDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Title
               Row(
                 children: [
                   Container(
@@ -2547,8 +2550,6 @@ class _MountDiskDialogState extends ConsumerState<_MountDiskDialog> {
                 ],
               ),
               const SizedBox(height: 24),
-
-              // Disk info
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -2584,8 +2585,6 @@ class _MountDiskDialogState extends ConsumerState<_MountDiskDialog> {
                 ),
               ),
               const SizedBox(height: 16),
-
-              // Filesystem selection
               Text('Filesystem Type',
                   style: textTheme.titleSmall
                       ?.copyWith(fontWeight: FontWeight.bold)),
@@ -2627,8 +2626,6 @@ class _MountDiskDialogState extends ConsumerState<_MountDiskDialog> {
                 },
               ),
               const SizedBox(height: 16),
-
-              // Mount point
               Text('Mount Point',
                   style: textTheme.titleSmall
                       ?.copyWith(fontWeight: FontWeight.bold)),
@@ -2643,8 +2640,6 @@ class _MountDiskDialogState extends ConsumerState<_MountDiskDialog> {
                 ),
               ),
               const SizedBox(height: 24),
-
-              // Action buttons
               Row(
                 children: [
                   Expanded(
@@ -2734,7 +2729,6 @@ class _FormatDiskDialogState extends ConsumerState<_FormatDiskDialog> {
         if (_labelController.text.isNotEmpty) 'label': _labelController.text,
       });
 
-      // Force cleanup all caches after format to ensure accurate storage calculation
       try {
         await api.post('/api/v1/storage-management/force-cleanup');
         debugPrint('[DiskFormat] Cache cleanup completed');
@@ -2743,7 +2737,6 @@ class _FormatDiskDialogState extends ConsumerState<_FormatDiskDialog> {
       }
 
       if (mounted) {
-        // Emit disk format event to notify all listeners (including FilesPage)
         final monitor = ref.read(fileSystemMonitorProvider);
         monitor.emitDiskFormatted(
           widget.disk.name,
@@ -2761,7 +2754,7 @@ class _FormatDiskDialogState extends ConsumerState<_FormatDiskDialog> {
             duration: Duration(seconds: 2),
           ),
         );
-        // Wait for filesystem info to update before refresh
+
         await Future.delayed(const Duration(milliseconds: 2000));
         widget.onComplete();
       }
@@ -2809,7 +2802,6 @@ class _FormatDiskDialogState extends ConsumerState<_FormatDiskDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Title
               Row(
                 children: [
                   Container(
@@ -2840,9 +2832,7 @@ class _FormatDiskDialogState extends ConsumerState<_FormatDiskDialog> {
                 ],
               ),
               const SizedBox(height: 24),
-
               if (!_confirmed) ...[
-                // Warning info
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -2918,7 +2908,6 @@ class _FormatDiskDialogState extends ConsumerState<_FormatDiskDialog> {
                   ),
                 ),
               ] else ...[
-                // Format options
                 Text('Select Filesystem',
                     style: textTheme.titleSmall
                         ?.copyWith(fontWeight: FontWeight.bold)),
@@ -2978,10 +2967,7 @@ class _FormatDiskDialogState extends ConsumerState<_FormatDiskDialog> {
                   ),
                 ),
               ],
-
               const SizedBox(height: 24),
-
-              // Action buttons
               Row(
                 children: [
                   if (_confirmed)
@@ -3179,7 +3165,6 @@ class _InfoRow extends StatelessWidget {
   }
 }
 
-/// Non-Linux native filesystem handling dialog
 class _NonLinuxFsSheet extends ConsumerStatefulWidget {
   final DiskDetail disk;
   final VoidCallback onRefresh;

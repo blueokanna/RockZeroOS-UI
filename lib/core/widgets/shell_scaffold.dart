@@ -117,7 +117,6 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
       bottom: false,
       child: Row(
         children: [
-          // Navigation Rail for medium/wide screens
           if ((isMediumScreen || isWideScreen) && bottomNavVisible)
             AnimatedSlide(
               duration: M3Durations.medium2,
@@ -130,8 +129,6 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
                 colorScheme,
               ),
             ),
-
-          // Vertical divider
           if ((isMediumScreen || isWideScreen) && bottomNavVisible)
             VerticalDivider(
               width: 1,
@@ -139,8 +136,6 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
               color: colorScheme.outlineVariant
                   .withValues(alpha: hasWallpaper ? 0.3 : 1.0),
             ),
-
-          // Main content
           Expanded(child: widget.child),
         ],
       ),
@@ -172,12 +167,10 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
       );
     }
 
-    // If wallpaper is set, wrap with glass effect
     if (hasWallpaper) {
       return Stack(
         fit: StackFit.expand,
         children: [
-          // Wallpaper image - 全屏显示，不加透明度
           Positioned.fill(
             child: Image.file(
               File(wallpaperPath),
@@ -189,14 +182,12 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
               },
             ),
           ),
-          // Glass overlay with blur - 极低遮罩让壁纸清晰可见
           Positioned.fill(
             child: ClipRect(
               child: BackdropFilter(
                 filter:
                     ImageFilter.blur(sigmaX: blurAmount, sigmaY: blurAmount),
                 child: Container(
-                  // blur=0 时几乎完全透明(0.02)，blur=50 时轻微遮罩(0.25)
                   color: colorScheme.surface.withValues(
                       alpha: (0.02 + (blurAmount / 50.0) * 0.23)
                           .clamp(0.02, 0.25)),
@@ -204,7 +195,6 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
               ),
             ),
           ),
-          // Scaffold — 覆盖主题使 Card/AppBar 等组件自动适配壁纸
           Theme(
             data: Theme.of(context).copyWith(
               cardTheme: CardThemeData(
@@ -214,7 +204,6 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
                 color: colorScheme.surfaceContainerLow.withValues(alpha: 0.55),
               ),
               appBarTheme: Theme.of(context).appBarTheme.copyWith(
-                    // 半透明背景让壁纸若隐若现，同时确保标题不与内容重叠
                     backgroundColor:
                         colorScheme.surface.withValues(alpha: 0.75),
                     surfaceTintColor: Colors.transparent,
@@ -235,7 +224,6 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
               bottomNavigationBar: bottomNav,
             ),
           ),
-          // 浮动小窗视频播放器
           const MiniVideoPlayer(),
         ],
       );
@@ -247,7 +235,6 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
           body: content,
           bottomNavigationBar: bottomNav,
         ),
-        // 浮动小窗视频播放器（非壁纸模式也需要）
         const MiniVideoPlayer(),
       ],
     );
@@ -288,7 +275,6 @@ class _ShellScaffoldState extends ConsumerState<ShellScaffold> {
     if (hasWallpaper) {
       return ClipRect(
         child: BackdropFilter(
-          // Reduced sigma for better performance on mid-range SoCs
           filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
           child: Container(
             decoration: BoxDecoration(

@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 
-// Discovered device model
 class DiscoveredDevice {
   final String id;
   final String name;
@@ -30,7 +29,6 @@ class DiscoveredDevice {
 
   String get baseUrl => isSecure ? 'https://$ip:$port' : 'http://$ip:$port';
 
-  /// 获取完整的图标URL
   String? get fullIconUrl {
     if (iconUrl == null) return null;
     if (iconUrl!.startsWith('http')) return iconUrl;
@@ -62,7 +60,6 @@ class DiscoveredDevice {
   int get hashCode => ip.hashCode ^ port.hashCode;
 }
 
-// Device discovery state
 class DeviceDiscoveryState {
   final List<DiscoveredDevice> devices;
   final bool isScanning;
@@ -91,17 +88,14 @@ class DeviceDiscoveryState {
   }
 }
 
-// Device discovery service provider
 final deviceDiscoveryServiceProvider = Provider<DeviceDiscoveryService>((ref) {
   return DeviceDiscoveryService(ref);
 });
 
-// Device discovery state provider (Riverpod 3.x Notifier API)
 final deviceDiscoveryStateProvider =
     NotifierProvider<DeviceDiscoveryNotifier, DeviceDiscoveryState>(
         DeviceDiscoveryNotifier.new);
 
-// Connected device provider
 final connectedDeviceProvider =
     NotifierProvider<ConnectedDeviceNotifier, DiscoveredDevice?>(
         ConnectedDeviceNotifier.new);
@@ -159,14 +153,13 @@ class DeviceDiscoveryService {
   static const int _defaultServicePort = 8080;
   static const Duration _scanInterval = Duration(seconds: 5);
   static const Duration _scanTimeout = Duration(seconds: 3);
-  static const Duration _ipCheckInterval = Duration(seconds: 3); // 更频繁检测IP变化
+  static const Duration _ipCheckInterval = Duration(seconds: 3);
 
   DeviceDiscoveryService(this._ref);
 
   DeviceDiscoveryNotifier get _notifier =>
       _ref.read(deviceDiscoveryStateProvider.notifier);
 
-  /// Get the configured service port from settings
   int get _servicePort {
     try {
       final box = Hive.box('settings');
@@ -176,7 +169,6 @@ class DeviceDiscoveryService {
     }
   }
 
-  /// Set the default service port
   void setDefaultPort(int port) {
     try {
       final box = Hive.box('settings');
@@ -192,7 +184,6 @@ class DeviceDiscoveryService {
     _startIpMonitoring();
   }
 
-  /// Periodically monitor IP changes and trigger rescan if IP changes
   void _startIpMonitoring() {
     _ipMonitorTimer?.cancel();
     _ipMonitorTimer = Timer.periodic(_ipCheckInterval, (_) async {
@@ -204,12 +195,10 @@ class DeviceDiscoveryService {
     try {
       String? currentIp;
 
-      // 尝试多种方式获取当前IP
       try {
         currentIp = await _networkInfo.getWifiIP();
       } catch (_) {}
 
-      // 如果WiFi IP获取失败，尝试枚举所有网络接口
       if (currentIp == null || currentIp.isEmpty) {
         try {
           final interfaces = await NetworkInterface.list(
@@ -217,10 +206,9 @@ class DeviceDiscoveryService {
             includeLinkLocal: false,
           );
 
-          // 优先选择非VPN、非虚拟的接口
           for (var interface in interfaces) {
             final name = interface.name.toLowerCase();
-            // 跳过VPN和虚拟接口
+
             if (name.contains('vpn') ||
                 name.contains('tun') ||
                 name.contains('tap') ||
@@ -232,7 +220,6 @@ class DeviceDiscoveryService {
 
             for (var addr in interface.addresses) {
               if (!addr.isLoopback && !addr.isLinkLocal) {
-                // 优先选择局域网IP
                 final ip = addr.address;
                 if (ip.startsWith('192.168.') ||
                     ip.startsWith('10.') ||
@@ -245,7 +232,6 @@ class DeviceDiscoveryService {
             if (currentIp != null) break;
           }
 
-          // 如果没有找到局域网IP，使用任何非回环IP
           if (currentIp == null) {
             for (var interface in interfaces) {
               for (var addr in interface.addresses) {
@@ -263,7 +249,7 @@ class DeviceDiscoveryService {
       if (currentIp != null && currentIp != _lastKnownIp) {
         _lastKnownIp = currentIp;
         _notifier.setLocalIp(currentIp);
-        // IP changed, clear old devices and rescan
+
         _notifier.clearDevices();
         await scanNetwork();
       }
@@ -285,7 +271,6 @@ class DeviceDiscoveryService {
       }
     } catch (_) {}
 
-    // Fallback: 枚举所有网络接口
     try {
       final interfaces = await NetworkInterface.list(
         type: InternetAddressType.IPv4,
@@ -294,10 +279,9 @@ class DeviceDiscoveryService {
 
       String? bestIp;
 
-      // 优先选择局域网IP，跳过VPN接口
       for (var interface in interfaces) {
         final name = interface.name.toLowerCase();
-        // 跳过VPN和虚拟接口
+
         if (name.contains('vpn') ||
             name.contains('tun') ||
             name.contains('tap') ||
@@ -310,14 +294,14 @@ class DeviceDiscoveryService {
         for (var addr in interface.addresses) {
           if (!addr.isLoopback && !addr.isLinkLocal) {
             final ip = addr.address;
-            // 优先选择局域网IP
+
             if (ip.startsWith('192.168.') ||
                 ip.startsWith('10.') ||
                 ip.startsWith('172.')) {
               bestIp = ip;
               break;
             }
-            // 记录第一个非回环IP作为备选
+
             bestIp ??= ip;
           }
         }
@@ -434,7 +418,6 @@ class DeviceDiscoveryService {
         ..connectionTimeout = const Duration(milliseconds: 500)
         ..badCertificateCallback = (cert, host, port) => true;
 
-      // 先尝试 HTTP（默认配置）
       try {
         final request = await client.getUrl(
           Uri.parse('http://$ip:$_servicePort/health'),
@@ -463,7 +446,6 @@ class DeviceDiscoveryService {
           }
         }
       } catch (_) {
-        // HTTP 失败，尝试 HTTPS
         try {
           final request = await client.getUrl(
             Uri.parse('https://$ip:$_servicePort/health'),
@@ -516,15 +498,12 @@ class DeviceDiscoveryService {
     }
   }
 
-  /// 自动探测设备，尝试 HTTP 和 HTTPS
-  /// 返回成功连接的设备，如果都失败则返回 null
   Future<DiscoveredDevice?> autoDetectDevice(String ip, {int? port}) async {
     final targetPort = port ?? _servicePort;
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 3)
       ..badCertificateCallback = (cert, host, port) => true;
 
-    // 先尝试 HTTP
     try {
       final request = await client.getUrl(
         Uri.parse('http://$ip:$targetPort/health'),
@@ -553,7 +532,6 @@ class DeviceDiscoveryService {
       }
     } catch (_) {}
 
-    // HTTP 失败，尝试 HTTPS
     try {
       final request = await client.getUrl(
         Uri.parse('https://$ip:$targetPort/health'),

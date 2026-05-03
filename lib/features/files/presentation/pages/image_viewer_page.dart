@@ -14,16 +14,14 @@ import 'package:photo_view/photo_view_gallery.dart';
 
 import '../../../../core/theme/app_theme.dart';
 
-/// 内存缓存 - 避免重复下载同一图片
 class _ImageMemoryCache {
   static final Map<String, Uint8List> _cache = {};
-  static const int _maxCacheSize = 50 * 1024 * 1024; // 50MB 缓存上限
+  static const int _maxCacheSize = 50 * 1024 * 1024;
   static int _currentSize = 0;
   static final List<String> _keys = [];
 
   static Uint8List? get(String key) {
     if (_cache.containsKey(key)) {
-      // LRU: 移到最后
       _keys.remove(key);
       _keys.add(key);
       return _cache[key];
@@ -32,13 +30,11 @@ class _ImageMemoryCache {
   }
 
   static void put(String key, Uint8List data) {
-    // 如果已存在，先移除旧数据
     if (_cache.containsKey(key)) {
       _currentSize -= _cache[key]!.length;
       _keys.remove(key);
     }
 
-    // 淘汰旧数据直到有足够空间
     while (_currentSize + data.length > _maxCacheSize && _keys.isNotEmpty) {
       final oldKey = _keys.removeAt(0);
       final oldData = _cache.remove(oldKey);
@@ -51,14 +47,6 @@ class _ImageMemoryCache {
   }
 }
 
-/// 支持认证头的网络图片加载器
-///
-/// 特性：
-/// - JWT Bearer Token 认证
-/// - 内存缓存（LRU，50MB 上限）
-/// - 超时重试（最多 2 次重试）
-/// - 流式下载（适合大图片）
-/// - ETag 条件请求支持
 class AuthenticatedNetworkImage
     extends ImageProvider<AuthenticatedNetworkImage> {
   final String url;
@@ -94,7 +82,6 @@ class AuthenticatedNetworkImage
     AuthenticatedNetworkImage key,
     ImageDecoderCallback decode,
   ) async {
-    // 1. 检查内存缓存
     final cacheKey = '${key.url}|${key.authToken?.hashCode}';
     final cached = _ImageMemoryCache.get(cacheKey);
     if (cached != null) {
@@ -103,7 +90,6 @@ class AuthenticatedNetworkImage
       return decode(buffer);
     }
 
-    // 2. 网络加载（带重试）
     const maxRetries = 2;
     Object? lastError;
 
@@ -116,7 +102,6 @@ class AuthenticatedNetworkImage
           headers['Authorization'] = 'Bearer ${key.authToken}';
         }
 
-        // 使用流式请求避免大图片内存峰值
         final request = http.Request('GET', Uri.parse(key.url));
         request.headers.addAll(headers);
 
@@ -126,7 +111,6 @@ class AuthenticatedNetworkImage
               await client.send(request).timeout(const Duration(seconds: 30));
 
           if (response.statusCode == 200) {
-            // 流式读取响应体
             final bytes = await response.stream.toBytes().timeout(
                   const Duration(seconds: 120),
                 );
@@ -138,13 +122,11 @@ class AuthenticatedNetworkImage
             debugPrint(
                 '[ImageLoader] Loaded ${bytes.length} bytes from ${key.url}');
 
-            // 写入缓存
             _ImageMemoryCache.put(cacheKey, bytes);
 
             final buffer = await ImmutableBuffer.fromUint8List(bytes);
             return decode(buffer);
           } else if (response.statusCode == 304) {
-            // 服务器返回 Not Modified - 使用缓存（如果存在）
             final cachedAgain = _ImageMemoryCache.get(cacheKey);
             if (cachedAgain != null) {
               final buffer = await ImmutableBuffer.fromUint8List(cachedAgain);
@@ -152,7 +134,6 @@ class AuthenticatedNetworkImage
             }
             throw Exception('304 Not Modified but no cache available');
           } else {
-            // 消费响应体以释放连接
             await response.stream.drain();
             throw Exception(
                 'HTTP ${response.statusCode}: Failed to load image');
@@ -165,7 +146,6 @@ class AuthenticatedNetworkImage
         debugPrint(
             '[ImageLoader] Attempt ${attempt + 1}/${maxRetries + 1} failed for ${key.url}: $e');
         if (attempt < maxRetries) {
-          // 指数退避重试
           await Future.delayed(Duration(milliseconds: 500 * (attempt + 1)));
         }
       }
@@ -191,7 +171,6 @@ class AuthenticatedNetworkImage
       '${objectRuntimeType(this, 'AuthenticatedNetworkImage')}("$url")';
 }
 
-/// Image viewer with pinch-to-zoom, pan, and download support
 class ImageViewerPage extends ConsumerStatefulWidget {
   final String imageUrl;
   final String fileName;
@@ -219,7 +198,6 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
   String? _authToken;
   bool _isLoading = true;
 
-  // Zoom state
   double _currentScale = 1.0;
   final double _minScale = 0.5;
   final double _maxScale = 5.0;
@@ -231,7 +209,6 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
     _pageController = PageController(initialPage: _currentIndex);
     _loadToken();
 
-    // Hide system UI for immersive experience
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
@@ -246,7 +223,7 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
   @override
   void dispose() {
     _pageController.dispose();
-    // Restore system UI
+
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
@@ -262,7 +239,6 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
   Future<void> _downloadImage() async {
     if (_isDownloading) return;
 
-    // Request storage permission
     if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
       final status = await Permission.storage.request();
       if (!status.isGranted) {
@@ -293,7 +269,6 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
     });
 
     try {
-      // Get download directory
       Directory? downloadDir;
       if (Platform.isAndroid) {
         downloadDir =
@@ -312,7 +287,6 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
         throw Exception('Could not find download directory');
       }
 
-      // Create directory if not exists
       if (!await downloadDir.exists()) {
         await downloadDir.create(recursive: true);
       }
@@ -327,7 +301,6 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
       final filePath = '${downloadDir.path}/$currentFileName';
       final file = File(filePath);
 
-      // Download file with auth header
       final request = http.Request('GET', Uri.parse(currentUrl));
       if (_authToken != null && _authToken!.isNotEmpty) {
         request.headers['Authorization'] = 'Bearer $_authToken';
@@ -404,7 +377,6 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
         onTap: _toggleControls,
         child: Stack(
           children: [
-            // Image viewer with pinch-to-zoom
             if (hasGallery)
               PhotoViewGallery.builder(
                 pageController: _pageController,
@@ -417,7 +389,6 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
                     maxScale: PhotoViewComputedScale.covered * _maxScale,
                     heroAttributes:
                         PhotoViewHeroAttributes(tag: 'image_$index'),
-                    // Enable gesture detection for zoom
                     gestureDetectorBehavior: HitTestBehavior.opaque,
                     onScaleEnd: (context, details, controllerValue) {
                       setState(() {
@@ -439,7 +410,6 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
                   return _buildLoadingWidget(colorScheme, event);
                 },
                 backgroundDecoration: const BoxDecoration(color: Colors.black),
-                // Enable scroll physics for smooth swiping
                 scrollPhysics: const BouncingScrollPhysics(),
               )
             else
@@ -449,7 +419,6 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
                 minScale: PhotoViewComputedScale.contained * _minScale,
                 maxScale: PhotoViewComputedScale.covered * _maxScale,
                 heroAttributes: const PhotoViewHeroAttributes(tag: 'image'),
-                // Enable gesture detection for zoom
                 gestureDetectorBehavior: HitTestBehavior.opaque,
                 onScaleEnd: (context, details, controllerValue) {
                   setState(() {
@@ -463,11 +432,8 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
                   return _buildErrorWidget(error);
                 },
                 backgroundDecoration: const BoxDecoration(color: Colors.black),
-                // Enable double tap to zoom
                 enableRotation: false,
               ),
-
-            // Controls overlay
             AnimatedOpacity(
               opacity: _showControls ? 1.0 : 0.0,
               duration: M3Durations.medium2,
@@ -490,10 +456,8 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
                   child: SafeArea(
                     child: Column(
                       children: [
-                        // Top bar
                         _buildTopBar(colorScheme, hasGallery),
                         const Spacer(),
-                        // Zoom indicator
                         if (_currentScale != 1.0)
                           Container(
                             padding: const EdgeInsets.symmetric(
@@ -513,9 +477,7 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
                             ),
                           ),
                         const SizedBox(height: 16),
-                        // Bottom controls
                         _buildBottomControls(colorScheme),
-                        // Page indicator
                         if (hasGallery) _buildPageIndicator(colorScheme),
                       ],
                     ),
@@ -523,8 +485,6 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
                 ),
               ),
             ),
-
-            // Download progress
             if (_isDownloading)
               Positioned(
                 top: MediaQuery.of(context).padding.top + 60,
@@ -624,7 +584,6 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
           const SizedBox(height: 16),
           FilledButton.icon(
             onPressed: () {
-              // 清除缓存并重建 ImageProvider 触发重新加载
               imageCache.clear();
               imageCache.clearLiveImages();
               setState(() {});
@@ -694,11 +653,9 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Zoom out
           IconButton(
             icon: const Icon(Icons.zoom_out_rounded, color: Colors.white),
             onPressed: () {
-              // Zoom out hint
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text('Pinch to zoom out'),
@@ -708,7 +665,6 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
             },
           ),
           const SizedBox(width: 16),
-          // Reset zoom
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             decoration: BoxDecoration(
@@ -724,11 +680,9 @@ class _ImageViewerPageState extends ConsumerState<ImageViewerPage> {
             ),
           ),
           const SizedBox(width: 16),
-          // Zoom in
           IconButton(
             icon: const Icon(Icons.zoom_in_rounded, color: Colors.white),
             onPressed: () {
-              // Zoom in hint
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text('Pinch to zoom in or double-tap'),

@@ -4,7 +4,6 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../services/video_player_service.dart';
 
-/// 迷你视频播放器 - 浮动小窗，类似网易云音乐的小窗播放
 class MiniVideoPlayer extends ConsumerStatefulWidget {
   const MiniVideoPlayer({super.key});
 
@@ -31,11 +30,9 @@ class _MiniVideoPlayerState extends ConsumerState<MiniVideoPlayer> {
     final screenSize = MediaQuery.of(context).size;
     final colorScheme = Theme.of(context).colorScheme;
 
-    // 小窗尺寸：16:9 比例
     const pipWidth = 200.0;
     const pipHeight = 112.0;
 
-    // 确保小窗不超出屏幕
     final clampedX = _position.dx.clamp(0.0, screenSize.width - pipWidth);
     final clampedY = _position.dy.clamp(
       MediaQuery.of(context).padding.top,
@@ -60,7 +57,7 @@ class _MiniVideoPlayerState extends ConsumerState<MiniVideoPlayer> {
         },
         onPanEnd: (_) {
           setState(() => _isDragging = false);
-          // 吸附到最近的边缘
+
           _snapToEdge(screenSize, pipWidth);
         },
         child: AnimatedScale(
@@ -72,7 +69,7 @@ class _MiniVideoPlayerState extends ConsumerState<MiniVideoPlayer> {
             shadowColor: Colors.black54,
             child: Container(
               width: pipWidth,
-              height: pipHeight + 40, // 额外空间给控制栏
+              height: pipHeight + 40,
               decoration: BoxDecoration(
                 color: colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(12),
@@ -82,7 +79,6 @@ class _MiniVideoPlayerState extends ConsumerState<MiniVideoPlayer> {
               ),
               child: Column(
                 children: [
-                  // 视频画面
                   ClipRRect(
                     borderRadius: const BorderRadius.vertical(
                       top: Radius.circular(12),
@@ -97,7 +93,6 @@ class _MiniVideoPlayerState extends ConsumerState<MiniVideoPlayer> {
                             controller: controller,
                             controls: NoVideoControls,
                           ),
-                          // 缓冲指示器
                           if (videoState.isBuffering)
                             Container(
                               color: Colors.black38,
@@ -112,7 +107,6 @@ class _MiniVideoPlayerState extends ConsumerState<MiniVideoPlayer> {
                                 ),
                               ),
                             ),
-                          // 点击展开全屏
                           Positioned.fill(
                             child: GestureDetector(
                               onTap: () {
@@ -126,14 +120,12 @@ class _MiniVideoPlayerState extends ConsumerState<MiniVideoPlayer> {
                       ),
                     ),
                   ),
-                  // 控制栏
                   SizedBox(
                     height: 40,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                       child: Row(
                         children: [
-                          // 文件名
                           Expanded(
                             child: Text(
                               videoState.currentFileName ?? '',
@@ -145,7 +137,6 @@ class _MiniVideoPlayerState extends ConsumerState<MiniVideoPlayer> {
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                          // 播放/暂停
                           SizedBox(
                             width: 32,
                             height: 32,
@@ -161,7 +152,6 @@ class _MiniVideoPlayerState extends ConsumerState<MiniVideoPlayer> {
                               onPressed: () => videoService.togglePlayPause(),
                             ),
                           ),
-                          // 关闭
                           SizedBox(
                             width: 32,
                             height: 32,

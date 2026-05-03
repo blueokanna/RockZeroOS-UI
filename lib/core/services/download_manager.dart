@@ -8,7 +8,6 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Download task status
 enum DownloadStatus {
   pending,
   downloading,
@@ -18,7 +17,6 @@ enum DownloadStatus {
   cancelled,
 }
 
-/// Download task model
 class DownloadTask {
   final String id;
   final String url;
@@ -98,7 +96,6 @@ class DownloadTask {
   }
 }
 
-/// Upload task model
 class UploadTask {
   final String id;
   final String filePath;
@@ -140,13 +137,11 @@ class UploadTask {
     return '${(progress * 100).toStringAsFixed(1)}%';
   }
 
-  /// 计算上传速度（字节/秒）
   int get uploadSpeed {
     if (currentSpeedBytesPerSec < 0) return 0;
     return currentSpeedBytesPerSec;
   }
 
-  /// 更新上传进度
   void updateProgress(int newUploadedBytes) {
     final now = DateTime.now();
     final previousUploaded = uploadedBytes;
@@ -186,7 +181,6 @@ class UploadTask {
   }
 }
 
-/// Download manager state
 class DownloadManagerState {
   final List<DownloadTask> downloads;
   final List<UploadTask> uploads;
@@ -224,7 +218,6 @@ class DownloadManagerState {
       downloads.where((d) => d.status == DownloadStatus.completed).toList();
 }
 
-/// Download manager notifier with resume support
 class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
   final Map<String, StreamSubscription> _downloadSubscriptions = {};
   final Map<String, http.Client> _httpClients = {};
@@ -252,7 +245,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
               Map<String, dynamic>.from(Uri.splitQueryString(json))))
           .toList();
 
-      // Resume incomplete downloads
       for (final task in tasks) {
         if (task.status == DownloadStatus.downloading) {
           task.status = DownloadStatus.paused;
@@ -280,7 +272,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     }
   }
 
-  /// Get download directory
   Future<Directory> getDownloadDirectory() async {
     Directory? downloadDir;
     if (Platform.isAndroid) {
@@ -304,7 +295,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     return downloadDir;
   }
 
-  /// Add a new download task
   Future<DownloadTask> addDownload({
     required String url,
     required String fileName,
@@ -323,7 +313,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     state = state.copyWith(downloads: [...state.downloads, task]);
     await _persistTasks();
 
-    // Start download if under limit
     if (state.activeDownloads < state.maxConcurrentDownloads) {
       _startDownload(task);
     }
@@ -331,7 +320,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     return task;
   }
 
-  /// Start or resume a download
   Future<void> _startDownload(DownloadTask task) async {
     final index = state.downloads.indexWhere((d) => d.id == task.id);
     if (index == -1) {
@@ -341,7 +329,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     final file = File(task.savePath);
     int startByte = 0;
 
-    // Check for existing partial download
     if (await file.exists()) {
       startByte = await file.length();
       task.downloadedBytes = startByte;
@@ -356,23 +343,19 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
 
       final request = http.Request('GET', Uri.parse(task.url));
 
-      // Add auth header
       if (_authToken != null && _authToken!.isNotEmpty) {
         request.headers['Authorization'] = 'Bearer $_authToken';
       }
 
-      // Add range header for resume support
       if (startByte > 0) {
         request.headers['Range'] = 'bytes=$startByte-';
       }
 
       final response = await client.send(request);
 
-      // Get total size
       if (task.totalBytes == 0) {
         final contentLength = response.contentLength ?? 0;
         if (response.statusCode == 206) {
-          // Partial content - parse Content-Range header
           final contentRange = response.headers['content-range'];
           if (contentRange != null) {
             final match =
@@ -387,11 +370,9 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
         _updateTask(task);
       }
 
-      // Open file for writing
       final sink = file.openWrite(
           mode: startByte > 0 ? FileMode.append : FileMode.write);
 
-      // Download with progress tracking
       _downloadSubscriptions[task.id] = response.stream.listen(
         (chunk) {
           sink.add(chunk);
@@ -425,7 +406,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     }
   }
 
-  /// Pause a download
   void pauseDownload(String taskId) {
     final index = state.downloads.indexWhere((d) => d.id == taskId);
     if (index == -1) {
@@ -446,7 +426,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     _startNextPendingDownload();
   }
 
-  /// Resume a paused download
   void resumeDownload(String taskId) {
     final index = state.downloads.indexWhere((d) => d.id == taskId);
     if (index == -1) {
@@ -467,7 +446,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     }
   }
 
-  /// Cancel a download
   void cancelDownload(String taskId) {
     final index = state.downloads.indexWhere((d) => d.id == taskId);
     if (index == -1) {
@@ -480,7 +458,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     _httpClients[taskId]?.close();
     _cleanup(taskId);
 
-    // Delete partial file
     final file = File(task.savePath);
     if (file.existsSync()) {
       file.deleteSync();
@@ -491,7 +468,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     _startNextPendingDownload();
   }
 
-  /// Remove a download from the list
   void removeDownload(String taskId) {
     cancelDownload(taskId);
     state = state.copyWith(
@@ -500,7 +476,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     _persistTasks();
   }
 
-  /// Clear completed downloads
   void clearCompleted() {
     state = state.copyWith(
       downloads: state.downloads
@@ -536,7 +511,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     }
   }
 
-  /// Add upload task
   Future<UploadTask> addUpload({
     required String filePath,
     required String uploadUrl,
@@ -579,7 +553,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     }
   }
 
-  /// Update upload progress
   void updateUploadProgress(String taskId, int uploadedBytes) {
     final uploads = List<UploadTask>.from(state.uploads);
     final index = uploads.indexWhere((u) => u.id == taskId);
@@ -595,7 +568,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     }
   }
 
-  /// Complete upload
   void completeUpload(String taskId) {
     final uploads = List<UploadTask>.from(state.uploads);
     final index = uploads.indexWhere((u) => u.id == taskId);
@@ -610,7 +582,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     }
   }
 
-  /// Fail upload
   void failUpload(String taskId, String error) {
     final uploads = List<UploadTask>.from(state.uploads);
     final index = uploads.indexWhere((u) => u.id == taskId);
@@ -627,7 +598,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
     }
   }
 
-  /// Remove upload
   void removeUpload(String taskId) {
     state = state.copyWith(
       uploads: state.uploads.where((u) => u.id != taskId).toList(),
@@ -635,7 +605,6 @@ class DownloadManagerNotifier extends Notifier<DownloadManagerState> {
   }
 }
 
-/// Provider for download manager
 final downloadManagerProvider =
     NotifierProvider<DownloadManagerNotifier, DownloadManagerState>(
   DownloadManagerNotifier.new,

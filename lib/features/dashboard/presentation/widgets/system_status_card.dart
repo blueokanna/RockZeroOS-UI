@@ -96,8 +96,6 @@ class SystemStatusCard extends StatelessWidget {
             .animate()
             .fadeIn(delay: 90.ms, curve: M3Curves.emphasizedDecelerate),
         const SizedBox(height: 12),
-
-        // System info row
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           decoration: BoxDecoration(
@@ -133,8 +131,6 @@ class SystemStatusCard extends StatelessWidget {
           ),
         ).animate().fadeIn(delay: 100.ms, curve: M3Curves.emphasizedDecelerate),
         const SizedBox(height: 16),
-
-        // CPU row
         _buildStatRow(
           context,
           icon: Icons.speed_rounded,
@@ -144,8 +140,6 @@ class SystemStatusCard extends StatelessWidget {
           color: _getUsageColor(info.cpu.usage),
         ).animate().fadeIn(delay: 150.ms, curve: M3Curves.emphasizedDecelerate),
         const SizedBox(height: 12),
-
-        // Memory row
         _buildStatRow(
           context,
           icon: Icons.memory_rounded,
@@ -155,8 +149,6 @@ class SystemStatusCard extends StatelessWidget {
               '${_formatBytes(info.memory.used)} / ${_formatBytes(info.memory.total)}',
           color: _getUsageColor(info.memory.usagePercentage),
         ).animate().fadeIn(delay: 200.ms, curve: M3Curves.emphasizedDecelerate),
-
-        // Temperature row
         if (hasTemp) ...[
           const SizedBox(height: 12),
           _buildTempRow(context, info.cpu.temperature!)
@@ -425,7 +417,6 @@ class SystemStatusCard extends StatelessWidget {
 
   String _buildCpuSubtitle(CpuInfo cpu) {
     if (cpu.coreTypes != null && cpu.coreTypes!.isNotEmpty) {
-      // 显示异构架构信息
       final coreTypesStr =
           cpu.coreTypes!.map((ct) => '${ct.count}x ${ct.coreName}').join(' + ');
       return '$coreTypesStr • ${cpu.frequency} MHz';

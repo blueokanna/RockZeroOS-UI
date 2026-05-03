@@ -82,7 +82,6 @@ class SaeHandshakeService {
         deviceIdPeer: deviceIdPeer,
       );
 
-      // Step 1: Initialize
       final initResponse = await _initSaeHandshake(
         filePath: filePath,
         fileId: fileId,
@@ -114,7 +113,6 @@ class SaeHandshakeService {
         throw Exception('SAE supported_groups missing or invalid');
       }
 
-      // Step 2: Commit
       final clientCommit = saeClient.generateCommit();
       final serverCommitResponse = await _sendClientCommit(
         tempSessionId: tempSessionId,
@@ -125,7 +123,6 @@ class SaeHandshakeService {
           serverCommitResponse['server_commit'] as Map<String, dynamic>;
       saeClient.processCommit(serverCommit);
 
-      // Step 3: Confirm
       final clientConfirm = saeClient.generateConfirm();
       final serverConfirmResponse = await _sendClientConfirm(
         tempSessionId: tempSessionId,
@@ -136,7 +133,6 @@ class SaeHandshakeService {
           serverConfirmResponse['server_confirm'] as Map<String, dynamic>;
       saeClient.verifyConfirm(serverConfirm);
 
-      // Step 4: Create session (server-side ZKP registration)
       final sessionResponse = await _createHlsSession(
         tempSessionId: tempSessionId,
         filePath: filePath,
@@ -147,7 +143,6 @@ class SaeHandshakeService {
       final sessionId = sessionResponse['session_id'] as String;
       final pmk = saeClient.getPmk();
 
-      // Step 5: Verify key
       final serverKeyVerification =
           sessionResponse['key_verification'] as String?;
       if (serverKeyVerification != null) {

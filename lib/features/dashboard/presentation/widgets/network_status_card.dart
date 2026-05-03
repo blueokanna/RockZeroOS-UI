@@ -75,7 +75,6 @@ class NetworkStatusCard extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  // Speed test button
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -131,7 +130,6 @@ class NetworkStatusCard extends ConsumerWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
-    // Get active interfaces
     final activeInterfaces = info.interfaces.where((i) => i.isUp).toList();
     final primaryInterface = activeInterfaces.isNotEmpty
         ? activeInterfaces.firstWhere(
@@ -142,7 +140,6 @@ class NetworkStatusCard extends ConsumerWidget {
 
     return Column(
       children: [
-        // Traffic summary with real-time speed
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -151,7 +148,6 @@ class NetworkStatusCard extends ConsumerWidget {
           ),
           child: Column(
             children: [
-              // Real-time speed row
               Row(
                 children: [
                   Expanded(
@@ -183,7 +179,6 @@ class NetworkStatusCard extends ConsumerWidget {
                 color: colorScheme.outlineVariant.withValues(alpha: 0.3),
               ),
               const SizedBox(height: 12),
-              // Total traffic row
               Row(
                 children: [
                   Expanded(
@@ -213,7 +208,6 @@ class NetworkStatusCard extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 16),
-
         if (primaryInterface != null) ...[
           Container(
             padding: const EdgeInsets.all(16),
@@ -311,7 +305,6 @@ class NetworkStatusCard extends ConsumerWidget {
                 ),
                 if (primaryInterface.ipAddresses.isNotEmpty) ...[
                   const SizedBox(height: 12),
-                  // LAN IP
                   Row(
                     children: [
                       Icon(
@@ -363,7 +356,6 @@ class NetworkStatusCard extends ConsumerWidget {
                     ],
                   ),
                 ],
-                // 公网 IP
                 if (publicIp != null && publicIp.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   Row(
@@ -442,8 +434,6 @@ class NetworkStatusCard extends ConsumerWidget {
             ),
           ),
         ],
-
-        // Other interfaces count
         if (info.interfaces.length > 1) ...[
           const SizedBox(height: 12),
           Container(
@@ -616,7 +606,7 @@ class _TrafficMetric extends StatelessWidget {
 class _SpeedMetric extends StatelessWidget {
   final IconData icon;
   final String label;
-  final int speed; // bytes per second
+  final int speed;
   final Color color;
 
   const _SpeedMetric({

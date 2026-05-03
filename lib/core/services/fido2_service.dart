@@ -6,29 +6,25 @@ import 'package:local_auth/local_auth.dart' as local_auth;
 
 import '../network/api_service.dart';
 
-// FIDO2 服务 Provider
 final fido2ServiceProvider = Provider<Fido2Service>((ref) {
   final api = ref.read(apiServiceProvider);
   return Fido2Service(api);
 });
 
-// 已注册的安全密钥 Provider
 final registeredKeysProvider = FutureProvider<List<SecurityKey>>((ref) async {
   final service = ref.read(fido2ServiceProvider);
   return await service.getRegisteredKeys();
 });
 
-// FIDO2 可用性 Provider
 final fido2AvailableProvider = FutureProvider<bool>((ref) async {
   final service = ref.read(fido2ServiceProvider);
   return await service.isAvailable();
 });
 
-// 安全密钥模型
 class SecurityKey {
   final String id;
   final String name;
-  final String type; // 'platform' or 'cross-platform'
+  final String type;
   final DateTime createdAt;
   final DateTime? lastUsedAt;
   final String? aaguid;
@@ -59,7 +55,6 @@ class SecurityKey {
   bool get isCrossPlatformKey => type == 'cross-platform';
 }
 
-// FIDO2 注册选项
 class Fido2RegistrationOptions {
   final String challenge;
   final String rpId;
@@ -101,7 +96,6 @@ class Fido2RegistrationOptions {
   }
 }
 
-// FIDO2 认证选项
 class Fido2AuthenticationOptions {
   final String challenge;
   final String rpId;
@@ -128,18 +122,14 @@ class Fido2AuthenticationOptions {
   }
 }
 
-// FIDO2 服务
 class Fido2Service {
   final ApiService _api;
   static const _channel = MethodChannel('rockzero/fido2');
 
   Fido2Service(this._api);
 
-  // 检查平台是否支持 FIDO2
-  // Windows Hello acts as a platform authenticator via WebAuthn/CTAP2
-  // macOS supports platform authenticator via Touch ID
   bool get isPlatformSupported {
-    if (kIsWeb) return true; // Web 支持 WebAuthn
+    if (kIsWeb) return true;
     return Platform.isAndroid ||
         Platform.isIOS ||
         Platform.isWindows ||
@@ -147,23 +137,19 @@ class Fido2Service {
         Platform.isLinux;
   }
 
-  /// 桌面平台是否通过 local_auth 提供平台认证器支持
   bool get _isDesktop {
     if (kIsWeb) return false;
     return Platform.isWindows || Platform.isMacOS || Platform.isLinux;
   }
 
-  // 检查 FIDO2 是否可用
   Future<bool> isAvailable() async {
     if (!isPlatformSupported) return false;
 
     try {
       if (kIsWeb) {
-        // Web 平台检查 WebAuthn 支持
-        return true; // 假设现代浏览器都支持
+        return true;
       }
 
-      // 桌面平台：通过 local_auth 检查
       if (_isDesktop) {
         final localAuth = local_auth.LocalAuthentication();
         return await localAuth.isDeviceSupported();
@@ -179,12 +165,10 @@ class Fido2Service {
     }
   }
 
-  // 检查是否支持平台认证器 (Face ID, Touch ID, Windows Hello)
   Future<bool> isPlatformAuthenticatorAvailable() async {
     if (!isPlatformSupported) return false;
 
     try {
-      // 桌面平台：通过 local_auth 检查
       if (_isDesktop) {
         final localAuth = local_auth.LocalAuthentication();
         return await localAuth.canCheckBiometrics ||
@@ -202,7 +186,6 @@ class Fido2Service {
     }
   }
 
-  // 获取已注册的安全密钥
   Future<List<SecurityKey>> getRegisteredKeys() async {
     try {
       final response = await _api.get('/api/v1/auth/fido2/credentials');
@@ -214,7 +197,6 @@ class Fido2Service {
     }
   }
 
-  // 开始注册新的安全密钥
   Future<Fido2RegistrationOptions?> startRegistration({
     String? keyName,
     bool platformKey = true,
@@ -235,7 +217,6 @@ class Fido2Service {
     }
   }
 
-  // 完成注册
   Future<bool> completeRegistration({
     required String credentialId,
     required String clientDataJson,
@@ -259,19 +240,16 @@ class Fido2Service {
     }
   }
 
-  // 注册平台密钥 (Passkey)
   Future<bool> registerPlatformKey({String? keyName}) async {
     if (!isPlatformSupported) return false;
 
     try {
-      // 1. 从服务器获取注册选项
       final options = await startRegistration(
         keyName: keyName,
         platformKey: true,
       );
       if (options == null) return false;
 
-      // 桌面平台：通过 local_auth 验证身份后注册
       if (_isDesktop) {
         final localAuth = local_auth.LocalAuthentication();
         final authenticated = await localAuth.authenticate(
@@ -287,7 +265,6 @@ class Fido2Service {
 
         if (!authenticated) return false;
 
-        // 桌面平台的平台密钥注册 — 使用设备 ID 作为凭证
         return await completeRegistration(
           credentialId:
               'desktop-platform-key-${DateTime.now().millisecondsSinceEpoch}',
@@ -298,7 +275,6 @@ class Fido2Service {
         );
       }
 
-      // 2. 调用平台 API 创建凭证
       final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
         'createCredential',
         {
@@ -316,7 +292,6 @@ class Fido2Service {
 
       if (result == null) return false;
 
-      // 3. 将凭证发送到服务器完成注册
       return await completeRegistration(
         credentialId: result['credentialId'] as String,
         clientDataJson: result['clientDataJson'] as String,
@@ -332,27 +307,22 @@ class Fido2Service {
     }
   }
 
-  // 注册跨平台密钥 (USB 安全密钥)
   Future<bool> registerCrossPlatformKey({String? keyName}) async {
     if (!isPlatformSupported) return false;
 
     try {
-      // 1. 从服务器获取注册选项
       final options = await startRegistration(
         keyName: keyName,
         platformKey: false,
       );
       if (options == null) return false;
 
-      // 桌面平台目前不支持跨平台密钥（USB 安全密钥）
-      // WebAuthn CTAP2 需要原生平台支持
       if (_isDesktop) {
         debugPrint(
             '[FIDO2] Cross-platform key registration not supported on desktop');
         return false;
       }
 
-      // 2. 调用平台 API 创建凭证
       final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
         'createCredential',
         {
@@ -370,7 +340,6 @@ class Fido2Service {
 
       if (result == null) return false;
 
-      // 3. 将凭证发送到服务器完成注册
       return await completeRegistration(
         credentialId: result['credentialId'] as String,
         clientDataJson: result['clientDataJson'] as String,
@@ -386,7 +355,6 @@ class Fido2Service {
     }
   }
 
-  // 开始认证
   Future<Fido2AuthenticationOptions?> startAuthentication() async {
     try {
       final response = await _api.post('/api/v1/auth/fido2/authenticate/start');
@@ -397,16 +365,13 @@ class Fido2Service {
     }
   }
 
-  // 使用 FIDO2 进行认证
   Future<String?> authenticate() async {
     if (!isPlatformSupported) return null;
 
     try {
-      // 1. 从服务器获取认证选项
       final options = await startAuthentication();
       if (options == null) return null;
 
-      // 桌面平台：通过 local_auth 验证身份
       if (_isDesktop) {
         final localAuth = local_auth.LocalAuthentication();
         final authenticated = await localAuth.authenticate(
@@ -421,7 +386,6 @@ class Fido2Service {
 
         if (!authenticated) return null;
 
-        // 发送桌面平台认证结果到服务器
         final response = await _api.post(
           '/api/v1/auth/fido2/authenticate/complete',
           data: {
@@ -437,7 +401,6 @@ class Fido2Service {
         return response.data['access_token'];
       }
 
-      // 2. 调用平台 API 获取断言
       final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
         'getAssertion',
         {
@@ -451,7 +414,6 @@ class Fido2Service {
 
       if (result == null) return null;
 
-      // 3. 将断言发送到服务器验证
       final response = await _api.post(
         '/api/v1/auth/fido2/authenticate/complete',
         data: {
@@ -463,7 +425,6 @@ class Fido2Service {
         },
       );
 
-      // 返回访问令牌
       return response.data['access_token'];
     } on PlatformException catch (e) {
       debugPrint('FIDO2 authentication failed: ${e.message}');
@@ -474,7 +435,6 @@ class Fido2Service {
     }
   }
 
-  // 删除安全密钥
   Future<bool> deleteKey(String keyId) async {
     try {
       await _api.delete('/api/v1/auth/fido2/credentials/$keyId');
@@ -485,7 +445,6 @@ class Fido2Service {
     }
   }
 
-  // 重命名安全密钥
   Future<bool> renameKey(String keyId, String newName) async {
     try {
       await _api.put(

@@ -153,22 +153,17 @@ class MediaKitInitializer {
   static bool get isInitialized => _initialized;
 
   static Future<String?> getFfmpegPath() async {
-    // Android 和 iOS 不使用 FFmpeg 可执行文件
     if (Platform.isAndroid || Platform.isIOS) {
       debugPrint('[MediaKit] FFmpeg path not applicable for mobile platforms');
       return null;
     }
 
-    // Windows 桌面
     if (Platform.isWindows) {
       final ffmpegPath = '$_desktopAssetsPath\\ffmpeg.exe';
       if (await File(ffmpegPath).exists()) {
         return ffmpegPath;
       }
-    }
-
-    // Linux 桌面
-    else if (Platform.isLinux) {
+    } else if (Platform.isLinux) {
       try {
         final appDir = await getApplicationSupportDirectory();
         final ffmpegPath = '${appDir.path}/ffmpeg/ffmpeg';
@@ -180,7 +175,6 @@ class MediaKitInitializer {
       }
     }
 
-    // 尝试查找系统 FFmpeg
     try {
       final result = await Process.run(
         Platform.isWindows ? 'where' : 'which',

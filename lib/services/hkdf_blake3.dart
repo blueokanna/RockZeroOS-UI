@@ -12,7 +12,6 @@ class HkdfBlake3 {
   }) : _prk = _extract(salt ?? Uint8List(32), ikm);
 
   factory HkdfBlake3.withSessionSalt(String sessionId, Uint8List pmk) {
-    // 与 Rust 端一致：salt = blake3("hls-session-salt:" + session_id)
     final saltInput = 'hls-session-salt:$sessionId';
     final saltHash =
         Uint8List.fromList(blake3.blake3(utf8.encode(saltInput), 32));
@@ -25,7 +24,6 @@ class HkdfBlake3 {
     var counter = 1;
 
     while (output.length < length) {
-      // T(i) = HMAC-Blake3(PRK, T(i-1) || info || counter)
       final hmacInput = Uint8List.fromList([...t, ...info, counter]);
       t = _blake3KeyedHash(_prk, hmacInput);
       output.addAll(t);
@@ -35,7 +33,6 @@ class HkdfBlake3 {
     return Uint8List.fromList(output.sublist(0, length));
   }
 
-  /// HKDF-Extract: PRK = HMAC-Blake3(salt, IKM)
   static Uint8List _extract(Uint8List salt, Uint8List ikm) {
     return _blake3KeyedHash(salt, ikm);
   }

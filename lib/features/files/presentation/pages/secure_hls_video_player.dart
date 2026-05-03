@@ -74,7 +74,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
   int _latestRetryDelta = 0;
   int _latestBufferAheadSec = 0;
 
-  // 安全代理：拦截 libmpv 请求，解密 AES-256-GCM 加密的视频段
   SecureHlsProxyServer? _proxyServer;
 
   bool _isPlaying = false;
@@ -960,14 +959,9 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
   bool _isPlaylistReadyForPlayback(String content) {
     if (!content.contains('#EXTM3U')) return false;
 
-    // ★ 修复：代理将 segment_N.ts 重写为 http://127.0.0.1:PORT/segment_N.ts，
-    //   旧的 ^segment_ 锚点无法匹配代理 URL，导致 segmentCount 始终为 0。
-    //   去掉行首锚点，匹配 segment 模式在行内任意位置出现的情况。
     final segmentCount = RegExp(r'segment_\d+\.ts').allMatches(content).length;
     final hasEndList = content.contains('#EXT-X-ENDLIST');
 
-    // 进行中的长视频：至少 2 段再开播，避免播放器立刻请求 segment_1 命中 404。
-    // 已结束短视频：允许单段播放。
     if (hasEndList) {
       return segmentCount >= 1;
     }
@@ -1006,10 +1000,6 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
     }
   }
 
-  /// Seek 到指定位置（接收 **显示坐标** = 用户看到的时间轴）
-  ///
-  /// 内部自动转换为播放器原始 PTS 坐标。
-  /// ★ 改进：异步预请求目标分片，触发服务端按需生成（减少 seek 延迟）。
   void _seekTo(Duration displayPos) {
     if (_player == null) return;
 
@@ -1022,18 +1012,13 @@ class _SecureHlsVideoPlayerState extends ConsumerState<SecureHlsVideoPlayer>
             : targetMs);
     final clampedMs = targetMs.clamp(minMs, maxMs);
 
-    // ★ 预请求目标分片及相邻分片：触发服务端按需生成
-    // 当用户 seek 到远超缓冲区的位置时，服务端 get_segment_direct
-    // 会自动调用 generate_segment_on_demand 按需生成目标分片。
-    // 通过 HEAD 请求预触发生成，减少 mpv 实际请求时的等待时间。
     final displaySeconds = displayPos.inSeconds;
-    final targetSegmentIndex = displaySeconds ~/ 2; // 2 秒一个分片
+    final targetSegmentIndex = displaySeconds ~/ 2;
     _proxyServer?.prefetchAroundSegment(targetSegmentIndex);
 
     _player!.seek(Duration(milliseconds: clampedMs));
   }
 
-  /// 基于当前 **显示位置** 做相对 seek
   void _seekRelative(int seconds) {
     _seekTo(_displayPosition + Duration(seconds: seconds));
   }
@@ -2656,7 +2641,6 @@ class _NodeCard extends StatelessWidget {
   }
 }
 
-/// 流水线连接管道绘制器 —— 带流动粒子
 class _PipelineConnectorPainter extends CustomPainter {
   final double progress;
   final double particlePhase;
@@ -2676,7 +2660,6 @@ class _PipelineConnectorPainter extends CustomPainter {
     final top = 0.0;
     final bottom = size.height * progress;
 
-    // 管道线（渐变）
     final linePaint = Paint()
       ..shader = LinearGradient(
         begin: Alignment.topCenter,
@@ -2691,7 +2674,6 @@ class _PipelineConnectorPainter extends CustomPainter {
 
     canvas.drawLine(Offset(centerX, top), Offset(centerX, bottom), linePaint);
 
-    // 发光管道背景
     final glowPaint = Paint()
       ..shader = LinearGradient(
         begin: Alignment.topCenter,
@@ -2707,17 +2689,16 @@ class _PipelineConnectorPainter extends CustomPainter {
 
     canvas.drawLine(Offset(centerX, top), Offset(centerX, bottom), glowPaint);
 
-    // 流动粒子（5 个粒子沿管道流动，使用正弦曲线实现流畅运动）
     if (progress > 0.3) {
       for (int i = 0; i < 5; i++) {
         final phase = (particlePhase + i / 5.0) % 1.0;
-        // 使用 sin 曲线让粒子在端点减速，中间加速（更自然的流动感）
+
         final easedPhase = 0.5 - 0.5 * cos(phase * pi);
         final y = top + (bottom - top) * easedPhase;
-        // 使用 sin² 曲线平滑淡入淡出
+
         final opacity = sin(phase * pi);
         final blendColor = Color.lerp(fromColor, toColor, phase)!;
-        // 粒子大小随位置变化（中间最大）
+
         final radius = 2.0 + opacity * 1.5;
         final particlePaint = Paint()
           ..color = blendColor.withValues(alpha: opacity * 0.7)
@@ -2727,7 +2708,6 @@ class _PipelineConnectorPainter extends CustomPainter {
       }
     }
 
-    // 箭头 (▽) 在管道末端
     if (progress > 0.9) {
       final arrowPaint = Paint()
         ..color = toColor.withValues(alpha: 0.7)

@@ -26,7 +26,6 @@ class GlassmorphicBackground extends ConsumerWidget {
 
     return Stack(
       children: [
-        // 背景层
         Positioned.fill(
           child: _buildBackground(
             backgroundMode,
@@ -53,7 +52,6 @@ class GlassmorphicBackground extends ConsumerWidget {
     ColorScheme colorScheme,
   ) {
     if (mode == BackgroundMode.customWallpaper && wallpaperPath != null) {
-      // 自定义壁纸模式
       return Image.file(
         File(wallpaperPath),
         fit: BoxFit.cover,
@@ -63,7 +61,6 @@ class GlassmorphicBackground extends ConsumerWidget {
       );
     }
 
-    // 默认模式 - 使用渐变背景
     return _buildGradientBackground(colorScheme);
   }
 
@@ -85,7 +82,6 @@ class GlassmorphicBackground extends ConsumerWidget {
   }
 }
 
-/// 简化版毛玻璃卡片
 class GlassmorphicCard extends StatelessWidget {
   final Widget child;
   final double blurSigma;

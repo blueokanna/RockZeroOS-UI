@@ -15,7 +15,6 @@ import '../../../../core/services/fido2_service.dart';
 import '../../../../core/services/wallpaper_service.dart';
 import '../../../auth/providers/auth_provider.dart';
 
-// Check if running on mobile platform
 bool get _isMobilePlatform {
   if (kIsWeb) return false;
   return defaultTargetPlatform == TargetPlatform.iOS ||
@@ -39,7 +38,6 @@ class SettingsPage extends ConsumerWidget {
         ref.watch(backgroundModeProvider) == BackgroundMode.customWallpaper &&
             (ref.watch(customWallpaperPathProvider)?.isNotEmpty ?? false);
 
-    // Use system color if dynamic color is enabled
     final effectiveColor = dynamicColorEnabled && systemAccentColor != null
         ? systemAccentColor
         : seedColor;
@@ -226,7 +224,6 @@ class SettingsPage extends ConsumerWidget {
               );
             },
           ),
-        // Background/Wallpaper Settings
         const Divider(height: 1, indent: 16, endIndent: 16),
         ListTile(
           leading: Container(
@@ -248,7 +245,6 @@ class SettingsPage extends ConsumerWidget {
           trailing: const Icon(Icons.chevron_right_rounded),
           onTap: () => _showBackgroundSettings(context, ref),
         ),
-        // Show wallpaper preview if custom wallpaper is set
         if (backgroundMode == BackgroundMode.customWallpaper &&
             customWallpaperPath != null)
           Padding(
@@ -375,8 +371,6 @@ class SettingsPage extends ConsumerWidget {
                     ],
                   ),
                   const SizedBox(height: 24),
-
-                  // Default mode option
                   _BackgroundOptionTile(
                     title: 'Default',
                     subtitle: '70% system color + 30% wallpaper color',
@@ -389,8 +383,6 @@ class SettingsPage extends ConsumerWidget {
                     },
                   ),
                   const SizedBox(height: 12),
-
-                  // Custom wallpaper option
                   _BackgroundOptionTile(
                     title: 'Custom Wallpaper',
                     subtitle: 'Use your own image for theme colors',
@@ -403,8 +395,6 @@ class SettingsPage extends ConsumerWidget {
                           .setMode(BackgroundMode.customWallpaper);
                     },
                   ),
-
-                  // Custom wallpaper controls
                   if (backgroundMode == BackgroundMode.customWallpaper) ...[
                     const SizedBox(height: 20),
                     Row(
@@ -447,8 +437,6 @@ class SettingsPage extends ConsumerWidget {
                         ],
                       ],
                     ),
-
-                    // Wallpaper preview with live blur
                     if (customWallpaperPath != null) ...[
                       const SizedBox(height: 16),
                       Builder(
@@ -494,8 +482,6 @@ class SettingsPage extends ConsumerWidget {
                           );
                         },
                       ),
-
-                      // Blur amount slider
                       const SizedBox(height: 20),
                       Builder(
                         builder: (context) {
@@ -572,7 +558,6 @@ class SettingsPage extends ConsumerWidget {
                           );
                         },
                       ),
-
                       if (wallpaperColor != null) ...[
                         const SizedBox(height: 12),
                         Row(
@@ -599,7 +584,6 @@ class SettingsPage extends ConsumerWidget {
                       ],
                     ],
                   ],
-
                   const SizedBox(height: 20),
                 ],
               ),
@@ -1136,7 +1120,6 @@ class SettingsPage extends ConsumerWidget {
     final fido2Service = ref.read(fido2ServiceProvider);
     final colorScheme = Theme.of(context).colorScheme;
 
-    // First check if FIDO2 is available
     final isAvailable = await fido2Service.isAvailable();
     if (!isAvailable) {
       if (context.mounted) {
@@ -1158,7 +1141,6 @@ class SettingsPage extends ConsumerWidget {
       return;
     }
 
-    // Show loading dialog with cancel option
     bool cancelled = false;
     if (!context.mounted) return;
     showDialog(
@@ -1225,7 +1207,7 @@ class SettingsPage extends ConsumerWidget {
               keyName: 'Security Key');
 
       if (context.mounted && !cancelled) {
-        Navigator.pop(context); // Close loading dialog
+        Navigator.pop(context);
 
         if (success) {
           ref.invalidate(registeredKeysProvider);
@@ -1479,7 +1461,6 @@ class _SecurityKeyTile extends StatelessWidget {
   }
 }
 
-/// Invite Code Dialog with real-time countdown and auto-refresh
 class _InviteCodeDialog extends ConsumerStatefulWidget {
   @override
   ConsumerState<_InviteCodeDialog> createState() => _InviteCodeDialogState();
@@ -1491,7 +1472,7 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
   @override
   void initState() {
     super.initState();
-    // Start countdown
+
     _startCountdown();
   }
 
@@ -1508,12 +1489,10 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
       if (mounted) {
         final inviteState = ref.read(inviteCodeProvider);
 
-        // If expired, auto refresh
         if (inviteState.isExpired && !inviteState.isLoading) {
           ref.read(inviteCodeProvider.notifier).refresh();
         }
 
-        // Force rebuild UI to update countdown
         setState(() {});
       } else {
         timer.cancel();
@@ -1679,7 +1658,6 @@ class _InviteCodeDialogState extends ConsumerState<_InviteCodeDialog> {
                       begin: const Offset(0.95, 0.95),
                       curve: M3Curves.emphasized),
               const SizedBox(height: 20),
-              // Countdown timer with progress indicator
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(

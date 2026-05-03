@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
-// Theme mode provider (Riverpod 3.x Notifier API)
 final themeModeProvider = NotifierProvider<ThemeModeNotifier, ThemeMode>(
   ThemeModeNotifier.new,
 );
@@ -30,7 +29,6 @@ class ThemeModeNotifier extends Notifier<ThemeMode> {
   }
 }
 
-// Seed color provider for dynamic theming
 final seedColorProvider = NotifierProvider<SeedColorNotifier, Color>(
   SeedColorNotifier.new,
 );
@@ -105,7 +103,6 @@ class SystemAccentColorNotifier extends Notifier<Color?> {
   }
 }
 
-// Dynamic Color Service - handles platform communication
 class DynamicColorService {
   static const _channel = MethodChannel('rockzero/system_colors');
 
@@ -170,17 +167,16 @@ class DynamicColorService {
 class AppTheme {
   AppTheme._();
 
-  // Material Design 3 预设颜色
   static const List<Color> presetColors = [
-    Color(0xFF6750A4), // Material Purple (默认)
-    Color(0xFF006C4C), // Green
-    Color(0xFF0061A4), // Blue
-    Color(0xFF9C4234), // Red
-    Color(0xFF7D5260), // Pink
-    Color(0xFF006874), // Teal
-    Color(0xFF6B5778), // Violet
-    Color(0xFF855318), // Orange
-    Color(0xFF4A6267), // Slate
+    Color(0xFF6750A4),
+    Color(0xFF006C4C),
+    Color(0xFF0061A4),
+    Color(0xFF9C4234),
+    Color(0xFF7D5260),
+    Color(0xFF006874),
+    Color(0xFF6B5778),
+    Color(0xFF855318),
+    Color(0xFF4A6267),
   ];
 
   static ThemeData light(Color seedColor) {
@@ -409,74 +405,56 @@ class AppTheme {
   }
 }
 
-// Material Design 3 Expressive 动画曲线 - 优化性能
 class M3Curves {
   M3Curves._();
 
-  // 标准缓动 - 用于大多数动画
   static const Curve standard = Curves.easeInOutCubicEmphasized;
 
-  // 强调缓动 - 用于需要强调的动画
   static const Curve emphasized = Cubic(0.2, 0.0, 0.0, 1.0);
 
-  // 强调减速 - 用于进入动画
   static const Curve emphasizedDecelerate = Cubic(0.05, 0.7, 0.1, 1.0);
 
-  // 强调加速 - 用于退出动画
   static const Curve emphasizedAccelerate = Cubic(0.3, 0.0, 0.8, 0.15);
 
-  // 标准减速 - 用于简单进入
   static const Curve standardDecelerate = Cubic(0.0, 0.0, 0.0, 1.0);
 
-  // 标准加速 - 用于简单退出
   static const Curve standardAccelerate = Cubic(0.3, 0.0, 1.0, 1.0);
 
-  // 弹性曲线 - 用于有趣的交互 (M3 Expressive)
   static const Curve expressive = Cubic(0.0, 0.0, 0.0, 1.0);
 
-  // 弹跳效果 - 用于强调性动画
   static const Curve bounce = Curves.elasticOut;
 
-  // 快速出慢速入 - 用于列表项动画
   static const Curve fastOutSlowIn = Curves.fastOutSlowIn;
 
-  // 容器变换曲线
   static const Curve containerTransform = Cubic(0.05, 0.7, 0.1, 1.0);
 
-  // 线性曲线 - 用于简单过渡，减少GPU负担
   static const Curve linear = Curves.linear;
 }
 
-// Material Design 3 动画时长
 class M3Durations {
   M3Durations._();
 
-  // 短动画 - 简单状态变化
   static const Duration short1 = Duration(milliseconds: 50);
   static const Duration short2 = Duration(milliseconds: 100);
   static const Duration short3 = Duration(milliseconds: 150);
   static const Duration short4 = Duration(milliseconds: 200);
 
-  // 中等动画 - 复杂状态变化
   static const Duration medium1 = Duration(milliseconds: 250);
   static const Duration medium2 = Duration(milliseconds: 300);
   static const Duration medium3 = Duration(milliseconds: 350);
   static const Duration medium4 = Duration(milliseconds: 400);
 
-  // 长动画 - 页面转换
   static const Duration long1 = Duration(milliseconds: 450);
   static const Duration long2 = Duration(milliseconds: 500);
   static const Duration long3 = Duration(milliseconds: 550);
   static const Duration long4 = Duration(milliseconds: 600);
 
-  // 超长动画 - 复杂页面转换
   static const Duration extraLong1 = Duration(milliseconds: 700);
   static const Duration extraLong2 = Duration(milliseconds: 800);
   static const Duration extraLong3 = Duration(milliseconds: 900);
   static const Duration extraLong4 = Duration(milliseconds: 1000);
 }
 
-// M3 Expressive Animation Extensions
 extension M3AnimationExtension on Widget {
   Widget m3FadeIn({
     Duration delay = Duration.zero,

@@ -18,7 +18,6 @@ import 'core/services/media_kit_initializer.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 使用自定义初始化器，支持本地库加载
   await MediaKitInitializer.initialize();
 
   if (kReleaseMode) {
@@ -29,7 +28,6 @@ void main() async {
   await Hive.openBox('settings');
   await Hive.openBox('cache');
 
-  // 设置 Android 全面屏手势导航 (edge-to-edge) 与透明系统栏
   if (!kIsWeb && Platform.isAndroid) {
     SystemChrome.setEnabledSystemUIMode(
       SystemUiMode.edgeToEdge,
@@ -83,10 +81,10 @@ class _RockZeroAppState extends ConsumerState<RockZeroApp> {
   @override
   void initState() {
     super.initState();
-    // Start device discovery on app launch
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(deviceDiscoveryServiceProvider).startDiscovery();
-      // Refresh system accent color if dynamic color is enabled
+
       if (ref.read(dynamicColorEnabledProvider)) {
         ref.read(systemAccentColorProvider.notifier).refresh();
       }
@@ -102,7 +100,6 @@ class _RockZeroAppState extends ConsumerState<RockZeroApp> {
     final systemAccentColor = ref.watch(systemAccentColorProvider);
     final blendedColor = ref.watch(blendedThemeColorProvider);
 
-    // Priority: blended color > system color > seed color
     final effectiveColor = blendedColor ??
         (dynamicColorEnabled && systemAccentColor != null
             ? systemAccentColor
@@ -123,7 +120,6 @@ class _RockZeroAppState extends ConsumerState<RockZeroApp> {
         GlobalCupertinoLocalizations.delegate,
       ],
       builder: (context, child) {
-        // 根据实际亮度更新系统栏图标颜色
         final brightness = Theme.of(context).brightness;
         final iconBrightness =
             brightness == Brightness.dark ? Brightness.light : Brightness.dark;
@@ -139,7 +135,6 @@ class _RockZeroAppState extends ConsumerState<RockZeroApp> {
           ));
         }
 
-        // Clamp text scale factor to prevent layout breakage
         final mediaQuery = MediaQuery.of(context);
         final clampedTextScaler = mediaQuery.textScaler.clamp(
           minScaleFactor: 0.8,

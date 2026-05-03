@@ -150,7 +150,7 @@ class _StarburstPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final outerRadius = size.width / 2 - strokeWidth;
-    // morphPhase 让凹陷深度动态变化，形成 "呼吸" 效果
+
     final dynamicInnerRatio =
         innerRadiusRatio + (1.0 - innerRadiusRatio) * 0.3 * morphPhase;
     final innerRadius = outerRadius * dynamicInnerRatio;
@@ -172,7 +172,6 @@ class _StarburstPainter extends CustomPainter {
     }
     path.close();
 
-    // 渐变色绘制
     final gradient = SweepGradient(
       center: Alignment.center,
       startAngle: rotation,
@@ -201,7 +200,6 @@ class _StarburstPainter extends CustomPainter {
       ..strokeJoin = StrokeJoin.round;
     canvas.drawPath(path, strokePaint);
 
-    // 中心圆点
     final dotRadius = outerRadius * 0.12;
     final dotPaint = Paint()
       ..color = primaryColor.withValues(alpha: 0.4 + 0.4 * morphPhase)
@@ -216,14 +214,6 @@ class _StarburstPainter extends CustomPainter {
       old.primaryColor != primaryColor;
 }
 
-// ============================================================================
-// 波浪进度条
-// ============================================================================
-
-/// 波浪进度条 — Material Design 3 Expressive 风格
-///
-/// [progress] 0.0 ~ 1.0 表示进度（null 表示不确定进度，循环动画）。
-/// [waveAmplitude] 波峰高度（像素），[waveFrequency] 波浪周期数。
 class WavyProgressIndicator extends StatefulWidget {
   final double? progress;
   final double height;
@@ -325,7 +315,6 @@ class _WavyProgressPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final centerY = size.height / 2;
 
-    // 绘制轨道（灰色波浪线）
     _drawWavyLine(
       canvas,
       size,
@@ -338,16 +327,13 @@ class _WavyProgressPainter extends CustomPainter {
       height * 0.8,
     );
 
-    // 绘制活动进度（彩色波浪线）
     final double activeWidth;
     final double activePhase;
 
     if (progress != null) {
-      // 确定进度模式
       activeWidth = size.width * progress!.clamp(0.0, 1.0);
       activePhase = wavePhase;
     } else {
-      // 不确定进度：波浪在轨道上来回运动
       final shuttle = (math.sin(wavePhase * 0.5) + 1) / 2;
       final barWidth = size.width * 0.35;
       activeWidth = barWidth;
@@ -395,7 +381,6 @@ class _WavyProgressPainter extends CustomPainter {
     final path = Path();
     final halfThickness = thickness / 2;
 
-    // 上边界（波浪）
     path.moveTo(startX, centerY - halfThickness);
     for (double x = startX; x <= endX; x += 1.0) {
       final t = (x - startX) / (endX - startX == 0 ? 1 : (endX - startX));
@@ -405,7 +390,6 @@ class _WavyProgressPainter extends CustomPainter {
       path.lineTo(x, centerY - halfThickness + waveY);
     }
 
-    // 下边界（反向波浪）
     for (double x = endX; x >= startX; x -= 1.0) {
       final t = (x - startX) / (endX - startX == 0 ? 1 : (endX - startX));
       final waveY = amplitude *
@@ -416,7 +400,6 @@ class _WavyProgressPainter extends CustomPainter {
 
     path.close();
 
-    // 渐变填充
     final gradient = LinearGradient(
       colors: [
         color.withValues(alpha: 0.7),
@@ -433,7 +416,6 @@ class _WavyProgressPainter extends CustomPainter {
     );
   }
 
-  /// 边缘淡出系数（头尾柔和衰减）
   double _edgeFade(double t) {
     if (t < 0.1) return t / 0.1;
     if (t > 0.9) return (1.0 - t) / 0.1;
@@ -447,11 +429,6 @@ class _WavyProgressPainter extends CustomPainter {
       old.activeColor != activeColor;
 }
 
-// ============================================================================
-// 脉冲点加载指示器
-// ============================================================================
-
-/// 三点脉冲加载指示器 — MD3 风格
 class MD3PulsingDots extends StatefulWidget {
   final double dotSize;
   final Color? color;
@@ -525,11 +502,6 @@ class _MD3PulsingDotsState extends State<MD3PulsingDots>
   }
 }
 
-// ============================================================================
-// 分段弧线旋转指示器
-// ============================================================================
-
-/// 多段弧线旋转加载指示器 — MD3 Expressive
 class MD3SegmentedSpinner extends StatefulWidget {
   final double size;
   final Color? color;
@@ -612,14 +584,14 @@ class _SegmentedSpinnerPainter extends CustomPainter {
     final radius = (size.width - strokeWidth) / 2;
     final rect = Rect.fromCircle(center: center, radius: radius);
 
-    final gapAngle = math.pi / 12; // gap between segments
+    final gapAngle = math.pi / 12;
     final totalGap = gapAngle * segmentCount;
     final totalSweep = 2 * math.pi - totalGap;
     final segmentSweep = totalSweep / segmentCount;
 
     for (int i = 0; i < segmentCount; i++) {
       final startAngle = rotation + i * (segmentSweep + gapAngle);
-      // 每段弧长度随 phase 波动（呼吸效果）
+
       final phase = (sweepPhase + i / segmentCount) % 1.0;
       final breathe = 0.6 + 0.4 * math.sin(phase * 2 * math.pi);
       final actualSweep = segmentSweep * breathe;
@@ -640,11 +612,6 @@ class _SegmentedSpinnerPainter extends CustomPainter {
       old.rotation != rotation || old.sweepPhase != sweepPhase;
 }
 
-// ============================================================================
-// 全屏加载遮罩
-// ============================================================================
-
-/// MD3 风格带模糊背景的加载遮罩
 class MD3LoadingOverlay extends StatelessWidget {
   final String? message;
   final String? submessage;
@@ -708,11 +675,6 @@ class MD3LoadingOverlay extends StatelessWidget {
   }
 }
 
-// ============================================================================
-// 安全连接动画指示器（用于视频/音频播放器的安全握手阶段）
-// ============================================================================
-
-/// 安全连接建立动画 — 盾牌 + 波浪 + 状态文字
 class SecureConnectionIndicator extends StatefulWidget {
   final String statusText;
   final String? detailText;
@@ -774,7 +736,6 @@ class _SecureConnectionIndicatorState extends State<SecureConnectionIndicator>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 动画盾牌
             SizedBox(
               width: 96,
               height: 96,
@@ -803,7 +764,6 @@ class _SecureConnectionIndicatorState extends State<SecureConnectionIndicator>
               ),
             ),
             const SizedBox(height: 28),
-            // 波浪进度条
             SizedBox(
               width: 200,
               child: WavyProgressIndicator(
@@ -815,7 +775,6 @@ class _SecureConnectionIndicatorState extends State<SecureConnectionIndicator>
               ),
             ),
             const SizedBox(height: 24),
-            // 状态文字
             Text(
               widget.statusText,
               style: const TextStyle(
@@ -861,7 +820,6 @@ class _SecureShieldPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final maxRadius = size.width / 2;
 
-    // 外圈脉冲光环
     final pulseRadius = maxRadius * (0.85 + pulsePhase * 0.15);
     final glowPaint = Paint()
       ..color = primaryColor.withValues(alpha: 0.1 + pulsePhase * 0.15)
@@ -870,7 +828,6 @@ class _SecureShieldPainter extends CustomPainter {
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
     canvas.drawCircle(center, pulseRadius, glowPaint);
 
-    // 旋转虚线环
     final dashRect = Rect.fromCircle(center: center, radius: maxRadius * 0.92);
     const dashCount = 12;
     const dashGap = math.pi / 30;
@@ -887,7 +844,6 @@ class _SecureShieldPainter extends CustomPainter {
       canvas.drawArc(dashRect, startAngle, dashSweep, false, arcPaint);
     }
 
-    // 内圈实线
     final innerPaint = Paint()
       ..color = primaryColor.withValues(alpha: 0.2 + pulsePhase * 0.1)
       ..style = PaintingStyle.stroke
@@ -900,11 +856,6 @@ class _SecureShieldPainter extends CustomPainter {
       old.pulsePhase != pulsePhase || old.ringRotation != ringRotation;
 }
 
-// ============================================================================
-// 视频/音频缓冲动画
-// ============================================================================
-
-/// 优雅的缓冲指示器 — 替代默认 CircularProgressIndicator
 class MD3BufferingIndicator extends StatefulWidget {
   final double size;
   final Color? color;

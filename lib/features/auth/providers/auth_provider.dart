@@ -12,12 +12,10 @@ import '../../../core/network/api_client.dart';
 import '../../../core/network/api_service.dart';
 import '../../../core/services/biometric_service.dart';
 
-// Secure storage provider
 final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
   return const FlutterSecureStorage();
 });
 
-// Auth state
 class AuthState {
   final User? user;
   final bool isLoading;
@@ -46,7 +44,6 @@ class AuthState {
   }
 }
 
-// Auth state provider (Riverpod 3.x Notifier API)
 final authStateProvider =
     NotifierProvider<AuthNotifier, AuthState>(AuthNotifier.new);
 
@@ -64,12 +61,10 @@ class AuthNotifier extends Notifier<AuthState> {
     final accessToken = await _storage.read(key: 'access_token');
     final userJson = await _storage.read(key: 'user');
 
-    // Keep the cached user for UI restoration, but require a fresh local
-    // authentication step before marking the session as fully authenticated.
     if (accessToken != null && userJson != null) {
       try {
         final user = User.fromJson(jsonDecode(userJson));
-        // Do not mark the user authenticated until biometric/password recheck completes.
+
         state = state.copyWith(user: user, isAuthenticated: false);
       } catch (e) {
         debugPrint('[Auth] Failed to parse stored user: $e');
@@ -95,7 +90,6 @@ class AuthNotifier extends Notifier<AuthState> {
         return false;
       }
 
-      // Persist tokens, user data, and the derived password hash used by SAE.
       await _saveAuthData(response, password: password);
 
       state = state.copyWith(
@@ -132,7 +126,6 @@ class AuthNotifier extends Notifier<AuthState> {
       }
 
       try {
-        // 灏濊瘯鍒锋柊token浠ラ獙璇佷細璇濇槸鍚︽湁鏁?
         final newTokens = await _api.refreshToken(refreshToken);
         await _storage.write(key: 'access_token', value: newTokens.accessToken);
         await _storage.write(
@@ -148,7 +141,7 @@ class AuthNotifier extends Notifier<AuthState> {
         return true;
       } catch (e) {
         debugPrint('[Auth] Token refresh failed: $e');
-        // The stored session can no longer be trusted after refresh failure.
+
         await _storage.deleteAll();
         state = state.copyWith(
           isLoading: false,
@@ -174,7 +167,6 @@ class AuthNotifier extends Notifier<AuthState> {
     state = state.copyWith(isLoading: true, error: null);
 
     try {
-      // Use provided username, or derive from email as fallback
       final effectiveUsername = (username != null && username.trim().isNotEmpty)
           ? username.trim()
           : email.split('@').first;
@@ -196,7 +188,6 @@ class AuthNotifier extends Notifier<AuthState> {
         return false;
       }
 
-      // Auto-login after registration
       return await login(email: email, password: password);
     } on ApiException catch (e) {
       state = state.copyWith(isLoading: false, error: e.message);
@@ -212,14 +203,13 @@ class AuthNotifier extends Notifier<AuthState> {
 
   Future<void> logout() async {
     await _storage.deleteAll();
-    // Disable biometric login so next app launch doesn't try to use deleted tokens
+
     try {
       ref.read(biometricEnabledProvider.notifier).setEnabled(false);
     } catch (_) {}
     state = const AuthState();
   }
 
-  /// Persist tokens after a successful password or ZKP-based sign-in.
   Future<void> saveTokens({
     required String accessToken,
     required String refreshToken,
@@ -227,7 +217,6 @@ class AuthNotifier extends Notifier<AuthState> {
     await _storage.write(key: 'access_token', value: accessToken);
     await _storage.write(key: 'refresh_token', value: refreshToken);
 
-    // Refresh the user snapshot so the provider state stays complete.
     try {
       final userResponse = await _api.getCurrentUser();
       if (userResponse != null) {
@@ -262,8 +251,6 @@ class AuthNotifier extends Notifier<AuthState> {
       await _storage.write(key: 'user_email', value: response.user!.email);
       await _storage.write(key: 'user_role', value: response.user!.role);
 
-      // Persist only a derived hash for later SAE handshakes. Plaintext passwords
-      // are deleted immediately after the hash is stored.
       if (password != null) {
         final passwordHash = _hashPassword(password);
         await _storage.write(key: 'user_password_hash', value: passwordHash);
@@ -273,18 +260,12 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
-  /// Compute the Blake3 digest used as the SAE-side password secret.
-  ///
-  /// This value is only for handshake material alignment with the Rust backend;
-  /// request authentication still relies on JWT tokens.
   String _hashPassword(String password) {
-    // Match the backend's blake3::hash behavior byte-for-byte.
     final hash = blake3.blake3(utf8.encode(password), 32);
     return hash.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 }
 
-// Invite code provider with persistent state
 class InviteCodeState {
   final InviteCodeResponse? code;
   final DateTime? expiresAt;

@@ -15,10 +15,6 @@ import '../../../files/presentation/pages/lan_transfer_page.dart';
 import '../widgets/platform_game_tab.dart';
 import 'in_app_browser_page.dart';
 
-// ============================================================================
-// Providers
-// ============================================================================
-
 final wasmStoreOverviewProvider =
     FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
   final api = ref.read(apiServiceProvider);
@@ -70,7 +66,6 @@ final gameSearchProvider = FutureProvider.autoDispose
   }
 });
 
-/// Steam 用户游戏库 Provider
 final steamLibraryProvider = FutureProvider.autoDispose
     .family<Map<String, dynamic>, ({String steamId, String? apiKey})>(
         (ref, params) async {
@@ -84,7 +79,6 @@ final steamLibraryProvider = FutureProvider.autoDispose
   }
 });
 
-/// Steam 用户资料 Provider
 final steamPlayerProvider = FutureProvider.autoDispose
     .family<Map<String, dynamic>, ({String steamId, String? apiKey})>(
         (ref, params) async {
@@ -98,7 +92,6 @@ final steamPlayerProvider = FutureProvider.autoDispose
   }
 });
 
-/// 每日 Top 30 推荐 Provider
 final dailyRecommendationsProvider =
     FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
   final api = ref.read(apiServiceProvider);
@@ -110,10 +103,6 @@ final dailyRecommendationsProvider =
     return {'items': <dynamic>[], 'total': 0};
   }
 });
-
-// ============================================================================
-// WASM Store Page - 游戏中心 (Gaming Hub like 小黑盒)
-// ============================================================================
 
 class WasmStorePage extends ConsumerStatefulWidget {
   const WasmStorePage({super.key});
@@ -130,7 +119,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
   String? _searchQuery;
   Timer? _searchDebounce;
 
-  // Steam settings
   String? _steamId;
   String? _steamApiKey;
 
@@ -301,7 +289,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // 搜索栏
                     Padding(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 8),
@@ -360,11 +347,12 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                         ),
                       ),
                     ),
-                    // Tab 栏
                     TabBar(
                       controller: _tabController,
                       isScrollable: true,
                       tabAlignment: TabAlignment.start,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      labelPadding: const EdgeInsets.symmetric(horizontal: 14),
                       labelStyle: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
@@ -447,10 +435,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
       ),
     );
   }
-
-  // ============================================================================
-  // Steam 设置对话框
-  // ============================================================================
 
   void _showSteamSettingsDialog() {
     final steamIdCtrl = TextEditingController(text: _steamId ?? '');
@@ -544,10 +528,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     );
   }
 
-  // ============================================================================
-  // 搜索结果
-  // ============================================================================
-
   Widget _buildSearchResults() {
     final searchAsync = ref.watch(gameSearchProvider(_searchQuery!));
 
@@ -571,10 +551,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     );
   }
 
-  // ============================================================================
-  // 推荐 Tab
-  // ============================================================================
-
   Widget _buildOverviewTab() {
     final overviewAsync = ref.watch(wasmStoreOverviewProvider);
 
@@ -590,11 +566,8 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              // Hero Banner
               _buildHeroBanner(),
               const SizedBox(height: 20),
-
-              // Steam 精选
               if (featured.isNotEmpty) ...[
                 _buildSectionTitle('Steam 精选', Icons.star_rounded),
                 const SizedBox(height: 8),
@@ -612,8 +585,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                 ),
                 const SizedBox(height: 24),
               ],
-
-              // Epic 免费游戏
               if (freeGames.isNotEmpty) ...[
                 _buildSectionTitle('Epic 免费领取', Icons.card_giftcard_rounded),
                 const SizedBox(height: 8),
@@ -631,8 +602,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                 ),
                 const SizedBox(height: 24),
               ],
-
-              // WASM 应用
               if (wasmApps.isNotEmpty) ...[
                 _buildSectionTitle('WASM 应用', Icons.web_asset_rounded),
                 const SizedBox(height: 8),
@@ -642,8 +611,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                 }),
                 const SizedBox(height: 24),
               ],
-
-              // 插件
               if (plugins.isNotEmpty) ...[
                 _buildSectionTitle('扩展插件', Icons.extension_rounded),
                 const SizedBox(height: 8),
@@ -652,8 +619,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                   return _PluginTile(plugin: p);
                 }),
               ],
-
-              // 空状态
               if (featured.isEmpty &&
                   freeGames.isEmpty &&
                   wasmApps.isEmpty &&
@@ -667,10 +632,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
       error: (e, _) => _buildErrorState('加载失败: $e'),
     );
   }
-
-  // ============================================================================
-  // Hero Banner
-  // ============================================================================
 
   Widget _buildHeroBanner() {
     final colorScheme = Theme.of(context).colorScheme;
@@ -733,17 +694,12 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     ).m3ScaleIn(duration: M3Durations.medium3);
   }
 
-  // ============================================================================
-  // 我的游戏库 Tab — 多平台游戏库
-  // ============================================================================
-
   Widget _buildMyLibraryTab() {
     final colorScheme = Theme.of(context).colorScheme;
     final hasSteam = _steamId != null && _steamApiKey != null;
 
     return CustomScrollView(
       slivers: [
-        // 多平台快捷入口
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
@@ -834,8 +790,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
             ),
           ),
         ),
-
-        // Steam 游戏库区域
         if (hasSteam) ...[
           SliverToBoxAdapter(
             child: Padding(
@@ -867,14 +821,12 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     );
   }
 
-  /// Steam 游戏库详细内容（profile + stats + game list）
   List<Widget> _buildSteamLibrarySection() {
     final params = (steamId: _steamId!, apiKey: _steamApiKey);
     final libraryAsync = ref.watch(steamLibraryProvider(params));
     final playerAsync = ref.watch(steamPlayerProvider(params));
 
     return [
-      // Player profile header
       SliverToBoxAdapter(
         child: playerAsync.when(
           data: (player) => _buildPlayerProfileCard(player),
@@ -882,8 +834,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
           error: (_, __) => const SizedBox.shrink(),
         ),
       ),
-
-      // Game library stats
       SliverToBoxAdapter(
         child: libraryAsync.when(
           data: (data) {
@@ -894,8 +844,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
           error: (_, __) => const SizedBox.shrink(),
         ),
       ),
-
-      // Game list
       libraryAsync.when(
         data: (data) {
           final games = (data['games'] as List?) ?? [];
@@ -1042,7 +990,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
       ),
       child: Row(
         children: [
-          // Avatar
           Container(
             decoration: BoxDecoration(
               shape: BoxShape.circle,
@@ -1182,10 +1129,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     ).m3FadeIn(duration: M3Durations.medium2);
   }
 
-  // ============================================================================
-  // 每日 Top 30 推荐 Tab
-  // ============================================================================
-
   Widget _buildRecommendationsTab() {
     final recAsync = ref.watch(dailyRecommendationsProvider);
 
@@ -1265,10 +1208,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
       ),
     ).animate().fadeIn(duration: 400.ms).slideY(begin: -0.1);
   }
-
-  // ============================================================================
-  // GitHub 导入对话框
-  // ============================================================================
 
   void _showGitHubImportDialog() {
     final repoUrlCtrl = TextEditingController();
@@ -1399,10 +1338,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
       ),
     );
   }
-
-  // ============================================================================
-  // WASM 脚本执行对话框
-  // ============================================================================
 
   void _showRunScriptDialog() {
     final sourceCtrl = TextEditingController();
@@ -1632,10 +1567,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     );
   }
 
-  // ============================================================================
-  // Steam Tab
-  // ============================================================================
-
   Widget _buildSteamTab() {
     final steamAsync = ref.watch(steamFeaturedProvider);
 
@@ -1665,11 +1596,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
       error: (e, _) => _buildErrorState('加载 Steam 数据失败: $e'),
     );
   }
-
-  // ============================================================================
-  // ============================================================================
-  // WASM Apps Tab
-  // ============================================================================
 
   Widget _buildWasmAppsTab() {
     final overviewAsync = ref.watch(wasmStoreOverviewProvider);
@@ -1706,7 +1632,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     );
   }
 
-  /// 打开内置 WASM 应用的交互界面
   void _openBuiltinApp(Map<String, dynamic> app) {
     final appId = app['id'] as String? ?? '';
     switch (appId) {
@@ -1813,7 +1738,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     );
   }
 
-  /// SteamDB 数据查看器对话框
   void _showSteamDbDialog() {
     final appIdCtrl = TextEditingController();
     final nameCtrl = TextEditingController();
@@ -1842,7 +1766,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 游戏名称搜索（优先展示）
                     TextField(
                       controller: nameCtrl,
                       decoration: InputDecoration(
@@ -1864,7 +1787,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                       onChanged: (_) => setDialogState(() {}),
                     ),
                     const SizedBox(height: 8),
-                    // App ID 直接查询
                     TextField(
                       controller: appIdCtrl,
                       keyboardType: TextInputType.number,
@@ -1882,7 +1804,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                         child: Text(error!,
                             style: TextStyle(color: colorScheme.error)),
                       ),
-                    // 名称搜索结果列表 — 点击选择后查询详情
                     if (searchResults != null && searchResults!.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       Text(
@@ -1923,7 +1844,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                                   fontSize: 11,
                                   color: colorScheme.onSurfaceVariant)),
                           onTap: () async {
-                            // 选择游戏后查询详情
                             appIdCtrl.text = appId.toString();
                             setDialogState(() {
                               isLoading = true;
@@ -1965,7 +1885,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                 onPressed: () => Navigator.pop(ctx),
                 child: const Text('关闭'),
               ),
-              // 名称搜索按钮
               if (nameCtrl.text.trim().isNotEmpty &&
                   appIdCtrl.text.trim().isEmpty)
                 OutlinedButton.icon(
@@ -2006,14 +1925,12 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                   icon: const Icon(Icons.search_rounded),
                   label: const Text('搜索'),
                 ),
-              // AppID 查询按钮
               FilledButton.icon(
                 onPressed: isLoading
                     ? null
                     : () async {
                         final id = appIdCtrl.text.trim();
                         if (id.isEmpty) {
-                          // 如果没有 AppID 但有名称搜索，走名称搜索
                           final name = nameCtrl.text.trim();
                           if (name.isNotEmpty) {
                             setDialogState(() {
@@ -2081,7 +1998,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     );
   }
 
-  /// M3U8 下载器对话框
   void _showM3u8DownloaderDialog() {
     final urlCtrl = TextEditingController();
     final nameCtrl = TextEditingController();
@@ -2091,7 +2007,7 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     bool isDownloading = false;
     String? error;
     String? downloadStatus;
-    String selectedSaveDir = 'default'; // 'default' | 'downloads' | 'custom'
+    String selectedSaveDir = 'default';
     String customSavePath = '';
 
     showDialog(
@@ -2131,8 +2047,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                       ),
                     ),
                     const SizedBox(height: 12),
-
-                    // 保存位置选择
                     Text('保存位置',
                         style: TextStyle(
                             fontWeight: FontWeight.w600,
@@ -2189,7 +2103,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                           fontSize: 11, color: colorScheme.onSurfaceVariant),
                     ),
                     const SizedBox(height: 12),
-
                     if (isParsing || isDownloading)
                       const LinearProgressIndicator(),
                     if (error != null)
@@ -2285,7 +2198,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                         final url = urlCtrl.text.trim();
                         if (url.isEmpty) return;
 
-                        // 构建保存目录参数
                         String? saveDir;
                         if (selectedSaveDir == 'downloads') {
                           saveDir = 'Downloads';
@@ -2340,7 +2252,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     );
   }
 
-  /// Steam P2P 连接信息对话框
   void _showSteamP2PInfoDialog() {
     final steamIdCtrl = TextEditingController();
     final colorScheme = Theme.of(context).colorScheme;
@@ -2377,7 +2288,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 使用说明 — 可折叠
                     if (showHelp)
                       Container(
                         width: double.infinity,
@@ -2504,10 +2414,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 
-  // ============================================================================
-  // Plugins Tab
-  // ============================================================================
-
   Widget _buildPluginsTab() {
     final overviewAsync = ref.watch(wasmStoreOverviewProvider);
 
@@ -2539,10 +2445,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
       error: (e, _) => _buildErrorState('加载插件列表失败: $e'),
     );
   }
-
-  // ============================================================================
-  // 通用组件
-  // ============================================================================
 
   Widget _buildSectionTitle(String title, IconData icon) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -2612,11 +2514,6 @@ class _WasmStorePageState extends ConsumerState<WasmStorePage>
   }
 }
 
-// ============================================================================
-// 子组件
-// ============================================================================
-
-/// 统计卡片
 class _StatCard extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -2667,7 +2564,6 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-/// 游戏库列表项 (like 小黑盒 style)
 class _LibraryGameTile extends StatelessWidget {
   final Map<String, dynamic> game;
 
@@ -2686,7 +2582,6 @@ class _LibraryGameTile extends StatelessWidget {
     final playtimeLinux = (game['playtime_linux'] as num?)?.toInt() ?? 0;
     final playtimeMac = (game['playtime_mac'] as num?)?.toInt() ?? 0;
 
-    // Last played time formatting
     String lastPlayedText = '';
     if (lastPlayed > 0) {
       final dt = DateTime.fromMillisecondsSinceEpoch(lastPlayed * 1000);
@@ -2707,7 +2602,6 @@ class _LibraryGameTile extends StatelessWidget {
       }
     }
 
-    // Platform breakdown
     final platforms = <String>[];
     if (playtimeWindows > 0) {
       platforms.add('Win: ${_formatMinutes(playtimeWindows)}');
@@ -2738,7 +2632,6 @@ class _LibraryGameTile extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Game header image
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: SizedBox(
@@ -2760,7 +2653,6 @@ class _LibraryGameTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              // Game info
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -2851,7 +2743,6 @@ class _LibraryGameTile extends StatelessWidget {
   }
 }
 
-/// 平台登录卡片 — 多平台游戏库入口
 class _PlatformLoginCard extends StatelessWidget {
   final String name;
   final IconData icon;
@@ -2936,7 +2827,6 @@ class _PlatformLoginCard extends StatelessWidget {
   }
 }
 
-/// 游戏卡片（横向滚动用）
 class _GameCard extends StatelessWidget {
   final Map<String, dynamic> game;
   final double width;
@@ -2966,7 +2856,6 @@ class _GameCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 封面图（带已拥有角标）
             Stack(
               children: [
                 SizedBox(
@@ -3042,7 +2931,6 @@ class _GameCard extends StatelessWidget {
                   ),
               ],
             ),
-            // 信息
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.all(12),
@@ -3064,7 +2952,6 @@ class _GameCard extends StatelessWidget {
                       children: [
                         _PlatformBadge(platform: platform),
                         const Spacer(),
-                        // 价格
                         Text(
                           isFree ? '免费' : price?['formatted'] ?? '',
                           style: TextStyle(
@@ -3098,7 +2985,6 @@ class _GameCard extends StatelessWidget {
   }
 }
 
-/// 推荐列表项（带排名编号和推荐来源）
 class _RecommendationTile extends StatelessWidget {
   final Map<String, dynamic> game;
   final int rank;
@@ -3170,7 +3056,6 @@ class _RecommendationTile extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // 排名编号
               SizedBox(
                 width: 32,
                 child: Text(
@@ -3184,7 +3069,6 @@ class _RecommendationTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              // 缩略图
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: SizedBox(
@@ -3223,7 +3107,6 @@ class _RecommendationTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              // 信息
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -3279,10 +3162,8 @@ class _RecommendationTile extends StatelessWidget {
                     const SizedBox(height: 6),
                     Row(
                       children: [
-                        // 平台标签
                         _PlatformBadge(platform: platform),
                         const SizedBox(width: 6),
-                        // 推荐来源
                         Flexible(
                           child: Container(
                             padding: const EdgeInsets.symmetric(
@@ -3312,7 +3193,6 @@ class _RecommendationTile extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 6),
-                        // 价格
                         Text(
                           isFree ? '免费' : price?['formatted'] ?? '',
                           style: TextStyle(
@@ -3334,7 +3214,6 @@ class _RecommendationTile extends StatelessWidget {
   }
 }
 
-/// 平台标签组件（统一样式 Steam / Epic / WASM）
 class _PlatformBadge extends StatelessWidget {
   final String platform;
 
@@ -3394,7 +3273,6 @@ class _PlatformBadge extends StatelessWidget {
   }
 }
 
-/// 游戏列表项（带平台标签和已拥有标记）
 class _GameListTile extends StatelessWidget {
   final Map<String, dynamic> game;
 
@@ -3431,7 +3309,6 @@ class _GameListTile extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 缩略图
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: SizedBox(
@@ -3470,7 +3347,6 @@ class _GameListTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              // 信息
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -3563,7 +3439,6 @@ class _GameListTile extends StatelessWidget {
   }
 }
 
-/// WASM 应用列表项
 class _WasmAppTile extends StatelessWidget {
   final Map<String, dynamic> app;
   final VoidCallback? onTap;
@@ -3643,7 +3518,6 @@ class _WasmAppTile extends StatelessWidget {
     );
   }
 
-  /// 为已知的内置应用返回特定图标，否则基于分类回退
   IconData _getBuiltinAppIcon(String appId, String category) {
     switch (appId) {
       case 'steamdb-viewer':
@@ -3687,7 +3561,6 @@ class _WasmAppTile extends StatelessWidget {
   }
 }
 
-/// 插件列表项
 class _PluginTile extends StatelessWidget {
   final Map<String, dynamic> plugin;
 
@@ -3755,7 +3628,6 @@ class _PluginTile extends StatelessWidget {
   }
 }
 
-/// SteamDB 查询结果展示卡片
 class _SteamDbResultCard extends StatelessWidget {
   final Map<String, dynamic> data;
 
@@ -3785,14 +3657,12 @@ class _SteamDbResultCard extends StatelessWidget {
     final genres = data['genres'] as List?;
     final categories = data['categories'] as List?;
 
-    // 好评率
     final positiveRate =
         totalReviews > 0 ? (totalPositive * 100 ~/ totalReviews) : 0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 头部图片
         if (headerImage.isNotEmpty)
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
@@ -3809,8 +3679,6 @@ class _SteamDbResultCard extends StatelessWidget {
             ),
           ),
         const SizedBox(height: 12),
-
-        // 游戏名称
         Text(
           name,
           style: TextStyle(
@@ -3820,8 +3688,6 @@ class _SteamDbResultCard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 4),
-
-        // 简介
         if (shortDesc.isNotEmpty)
           Text(
             shortDesc,
@@ -3833,8 +3699,6 @@ class _SteamDbResultCard extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
           ),
         const SizedBox(height: 12),
-
-        // 核心数据网格
         Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -3886,8 +3750,6 @@ class _SteamDbResultCard extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 12),
-
-        // 平台支持
         if (platforms != null)
           Row(
             children: [
@@ -3914,14 +3776,10 @@ class _SteamDbResultCard extends StatelessWidget {
             ],
           ),
         const SizedBox(height: 8),
-
-        // 开发者/发行商
         if (developers.isNotEmpty) _InfoRow(label: '开发', value: developers),
         if (publishers.isNotEmpty) _InfoRow(label: '发行', value: publishers),
         if (releaseDate != null)
           _InfoRow(label: '发售', value: releaseDate['date'] as String? ?? ''),
-
-        // 类别标签
         if (genres != null && genres.isNotEmpty) ...[
           const SizedBox(height: 8),
           Wrap(
@@ -3940,8 +3798,6 @@ class _SteamDbResultCard extends StatelessWidget {
             }).toList(),
           ),
         ],
-
-        // 功能特性标签
         if (categories != null && categories.isNotEmpty) ...[
           const SizedBox(height: 8),
           Text('功能',
@@ -3969,8 +3825,6 @@ class _SteamDbResultCard extends StatelessWidget {
             }).toList(),
           ),
         ],
-
-        // 评价详情
         if (totalReviews > 0) ...[
           const SizedBox(height: 12),
           Row(
@@ -4004,7 +3858,6 @@ class _SteamDbResultCard extends StatelessWidget {
   }
 }
 
-/// Steam P2P 连接信息结果卡片
 class _SteamP2PResultCard extends StatelessWidget {
   final Map<String, dynamic> data;
 
@@ -4021,14 +3874,12 @@ class _SteamP2PResultCard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 玩家信息卡
         if (player != null) ...[
           Card(
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Row(
                 children: [
-                  // 头像
                   CircleAvatar(
                     radius: 28,
                     backgroundImage: player['avatar'] != null
@@ -4039,7 +3890,6 @@ class _SteamP2PResultCard extends StatelessWidget {
                         : null,
                   ),
                   const SizedBox(width: 12),
-                  // 信息
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -4092,7 +3942,6 @@ class _SteamP2PResultCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  // 好友数
                   if (friendsCount != null)
                     Column(
                       children: [
@@ -4119,8 +3968,6 @@ class _SteamP2PResultCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
         ],
-
-        // 最近游戏
         if (recentGames != null && recentGames.isNotEmpty) ...[
           Text(
             '最近游玩',
@@ -4143,7 +3990,6 @@ class _SteamP2PResultCard extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 8),
               child: Row(
                 children: [
-                  // 游戏图标
                   ClipRRect(
                     borderRadius: BorderRadius.circular(6),
                     child: SizedBox(
@@ -4167,7 +4013,6 @@ class _SteamP2PResultCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 10),
-                  // 游戏名和时长
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -4203,7 +4048,6 @@ class _SteamP2PResultCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  // P2P 标记
                   if (hasP2p)
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -4228,8 +4072,6 @@ class _SteamP2PResultCard extends StatelessWidget {
           }),
           const SizedBox(height: 12),
         ],
-
-        // P2P 连接类型
         if (p2pInfo != null) ...[
           Text(
             'P2P 连接模式',
@@ -4293,7 +4135,6 @@ class _SteamP2PResultCard extends StatelessWidget {
               );
             })),
           const SizedBox(height: 8),
-          // 提示
           if (p2pInfo['note'] != null)
             Container(
               padding: const EdgeInsets.all(8),
@@ -4375,7 +4216,6 @@ class _SteamP2PResultCard extends StatelessWidget {
   }
 }
 
-/// 数据统计小标签
 class _StatChip extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -4430,7 +4270,6 @@ class _StatChip extends StatelessWidget {
   }
 }
 
-/// 信息行（标签 + 值）
 class _InfoRow extends StatelessWidget {
   final String label;
   final String value;

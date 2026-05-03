@@ -5,24 +5,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:local_auth/local_auth.dart' as local_auth;
 
-// 生物识别服务 Provider
 final biometricServiceProvider = Provider<BiometricService>((ref) {
   return BiometricService();
 });
 
-// 生物识别可用性 Provider
 final biometricAvailableProvider = FutureProvider<bool>((ref) async {
   final service = ref.read(biometricServiceProvider);
   return await service.isAvailable();
 });
 
-// 生物识别类型 Provider
 final biometricTypesProvider = FutureProvider<List<BiometricType>>((ref) async {
   final service = ref.read(biometricServiceProvider);
   return await service.getAvailableBiometrics();
 });
 
-// 生物识别启用状态 Provider
 final biometricEnabledProvider =
     NotifierProvider<BiometricEnabledNotifier, bool>(
   BiometricEnabledNotifier.new,
@@ -37,14 +33,12 @@ class BiometricEnabledNotifier extends Notifier<bool> {
 
   Future<void> setEnabled(bool enabled) async {
     if (enabled) {
-      // 验证生物识别是否可用
       final service = ref.read(biometricServiceProvider);
       final available = await service.isAvailable();
       if (!available) {
         return;
       }
 
-      // 尝试进行一次认证以确认用户意图
       final authenticated = await service.authenticate(
         reason: 'Enable biometric authentication',
       );
@@ -59,7 +53,6 @@ class BiometricEnabledNotifier extends Notifier<bool> {
   }
 }
 
-// 生物识别类型枚举
 enum BiometricType {
   fingerprint,
   face,
@@ -68,33 +61,21 @@ enum BiometricType {
   weak,
 }
 
-// 生物识别服务 — 支持所有平台
-//
-// Windows: Windows Hello (指纹/人脸/PIN) — 通过 local_auth
-//          支持 Broadcom CV3_WBF_PROVIDER_TOUCH 等 WBF 兼容传感器
-// macOS:   Touch ID — 通过 local_auth
-// Linux:   PAM 认证（指纹/密码） — 通过 local_auth
-// Android: 指纹/人脸 — 通过原生平台通道
-// iOS:     Touch ID/Face ID — 通过原生平台通道
 class BiometricService {
   static final BiometricService _instance = BiometricService._internal();
   factory BiometricService() => _instance;
   BiometricService._internal();
 
-  // 原有平台通道（Android/iOS）
   static const _channel = MethodChannel('rockzero/biometric');
 
-  // 桌面平台使用 local_auth
   final local_auth.LocalAuthentication _localAuth =
       local_auth.LocalAuthentication();
 
-  /// 是否使用 local_auth（桌面平台）
   bool get _useLocalAuth {
     if (kIsWeb) return false;
     return Platform.isWindows || Platform.isMacOS || Platform.isLinux;
   }
 
-  // 检查当前平台是否支持生物识别
   bool get isPlatformSupported {
     if (kIsWeb) return false;
     return Platform.isAndroid ||
@@ -104,7 +85,6 @@ class BiometricService {
         Platform.isLinux;
   }
 
-  // 检查设备是否支持生物识别
   Future<bool> isAvailable() async {
     if (!isPlatformSupported) return false;
 
@@ -112,7 +92,6 @@ class BiometricService {
       return _isAvailableDesktop();
     }
 
-    // 移动平台：使用原有平台通道
     try {
       final result = await _channel.invokeMethod<bool>('isAvailable');
       return result ?? false;
@@ -125,7 +104,6 @@ class BiometricService {
     }
   }
 
-  /// 桌面平台：通过 local_auth 检查可用性
   Future<bool> _isAvailableDesktop() async {
     try {
       final canAuthenticateWithBiometrics = await _localAuth.canCheckBiometrics;
@@ -152,7 +130,6 @@ class BiometricService {
     }
   }
 
-  // 检查是否可以进行生物识别认证
   Future<bool> canAuthenticate() async {
     if (!isPlatformSupported) return false;
 
@@ -171,7 +148,6 @@ class BiometricService {
     }
   }
 
-  // 获取可用的生物识别类型
   Future<List<BiometricType>> getAvailableBiometrics() async {
     if (!isPlatformSupported) return [];
 
@@ -179,7 +155,6 @@ class BiometricService {
       return _getAvailableBiometricsDesktop();
     }
 
-    // 移动平台：使用原有平台通道
     try {
       final result =
           await _channel.invokeMethod<List<dynamic>>('getAvailableBiometrics');
@@ -209,7 +184,6 @@ class BiometricService {
     }
   }
 
-  /// 桌面平台：通过 local_auth 获取可用生物识别类型
   Future<List<BiometricType>> _getAvailableBiometricsDesktop() async {
     try {
       final biometrics = await _localAuth.getAvailableBiometrics();
@@ -230,7 +204,6 @@ class BiometricService {
         }
       }
 
-      // Windows Hello 统一报告为 strong 类型（兼容指纹/人脸/PIN）
       if (Platform.isWindows && result.isEmpty) {
         final isDeviceSupported = await _localAuth.isDeviceSupported();
         if (isDeviceSupported) {
@@ -246,7 +219,6 @@ class BiometricService {
     }
   }
 
-  // 执行生物识别认证
   Future<bool> authenticate({
     String reason = 'Please authenticate to continue',
     bool biometricOnly = false,
@@ -260,7 +232,6 @@ class BiometricService {
       );
     }
 
-    // 移动平台：使用原有平台通道
     try {
       final result = await _channel.invokeMethod<bool>('authenticate', {
         'reason': reason,
@@ -276,12 +247,6 @@ class BiometricService {
     }
   }
 
-  /// 桌面平台：通过 local_auth 执行认证
-  ///
-  /// Windows: 弹出 Windows Hello 对话框（指纹/人脸/PIN，取决于硬件）
-  ///          Broadcom CV3_WBF_PROVIDER_TOUCH 等 WBF 传感器自动被 Windows Hello 识别
-  /// macOS:   弹出 Touch ID 或密码对话框
-  /// Linux:   通过 PAM 进行认证（系统密码或已注册的指纹）
   Future<bool> _authenticateDesktop({
     required String reason,
     bool biometricOnly = false,
@@ -301,7 +266,7 @@ class BiometricService {
       return authenticated;
     } on PlatformException catch (e) {
       debugPrint('[Biometric] Desktop authentication error: ${e.message}');
-      // 常见错误处理
+
       if (e.code == 'NotAvailable') {
         debugPrint(
             '[Biometric] No biometric hardware or Windows Hello not configured');
@@ -322,10 +287,8 @@ class BiometricService {
     }
   }
 
-  // 获取生物识别类型的显示名称
   String getBiometricTypeName(BiometricType type) {
     if (!kIsWeb && Platform.isWindows) {
-      // Windows 使用 Windows Hello 品牌名称
       switch (type) {
         case BiometricType.fingerprint:
           return 'Windows Hello Fingerprint';
@@ -362,7 +325,6 @@ class BiometricService {
     }
   }
 
-  // 获取生物识别类型的图标
   String getBiometricTypeIcon(BiometricType type) {
     switch (type) {
       case BiometricType.fingerprint:

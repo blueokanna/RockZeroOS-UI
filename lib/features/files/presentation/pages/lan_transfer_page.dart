@@ -40,7 +40,6 @@ class _LanTransferPageState extends ConsumerState<LanTransferPage>
     _loadSessions();
     _scanPeers();
 
-    // 每 3 秒刷新传输进度
     _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       if (mounted) _loadSessions();
     });
@@ -84,11 +83,9 @@ class _LanTransferPageState extends ConsumerState<LanTransferPage>
   Future<void> _scanPeers() async {
     setState(() => _isScanning = true);
     try {
-      // 使用现有的设备发现服务
       var discoveryState = ref.read(deviceDiscoveryStateProvider);
       var devices = discoveryState.devices;
 
-      // 如果设备列表为空，触发一次扫描
       if (devices.isEmpty) {
         final service = ref.read(deviceDiscoveryServiceProvider);
         await service.startDiscovery();
@@ -99,7 +96,6 @@ class _LanTransferPageState extends ConsumerState<LanTransferPage>
 
       final peers = <_PeerDevice>[];
       for (final device in devices) {
-        // 查询对端的 LAN transfer 能力
         try {
           final peerDio = Dio(BaseOptions(
             baseUrl: device.baseUrl,
@@ -122,9 +118,7 @@ class _LanTransferPageState extends ConsumerState<LanTransferPage>
               activeTransfers: info['active_transfers'] as int? ?? 0,
             ));
           }
-        } catch (_) {
-          // 不支持 LAN transfer 的设备，跳过
-        }
+        } catch (_) {}
       }
 
       setState(() {
@@ -182,7 +176,6 @@ class _LanTransferPageState extends ConsumerState<LanTransferPage>
   }
 
   Future<void> _browseAndReceive(_PeerDevice peer) async {
-    // 获取对端共享列表
     try {
       final peerDio = Dio(BaseOptions(
         baseUrl: peer.device.baseUrl,
@@ -301,7 +294,7 @@ class _LanTransferPageState extends ConsumerState<LanTransferPage>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('开始从 ${peer.deviceName} 下载 ${item['name']}')),
         );
-        // 切换到传输 tab
+
         _tabController.animateTo(2);
         await _loadSessions();
       }
@@ -352,7 +345,6 @@ class _LanTransferPageState extends ConsumerState<LanTransferPage>
     );
   }
 
-  /// 设备发现 Tab
   Widget _buildDevicesTab(ColorScheme colorScheme) {
     return RefreshIndicator(
       onRefresh: _scanPeers,
@@ -476,11 +468,9 @@ class _LanTransferPageState extends ConsumerState<LanTransferPage>
     );
   }
 
-  /// 本机共享 Tab
   Widget _buildSharedTab(ColorScheme colorScheme) {
     return Column(
       children: [
-        // 操作按钮栏
         Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
@@ -501,7 +491,6 @@ class _LanTransferPageState extends ConsumerState<LanTransferPage>
             ],
           ),
         ),
-        // 共享列表
         Expanded(
           child: _isLoadingShared
               ? const Center(child: CircularProgressIndicator())
@@ -652,11 +641,9 @@ class _LanTransferPageState extends ConsumerState<LanTransferPage>
     );
   }
 
-  /// 传输会话 Tab
   Widget _buildTransfersTab(ColorScheme colorScheme) {
     return Column(
       children: [
-        // 清理按钮
         if (_sessions.any((s) =>
             s['status'] == 'completed' ||
             s['status'] == 'failed' ||
@@ -809,7 +796,6 @@ class _LanTransferPageState extends ConsumerState<LanTransferPage>
               ),
             ],
             const SizedBox(height: 12),
-            // 进度条
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(

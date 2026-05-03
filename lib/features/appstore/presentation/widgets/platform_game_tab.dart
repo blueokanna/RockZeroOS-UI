@@ -6,28 +6,23 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../../core/i18n/app_localizations.dart';
 import '../../../../core/network/api_service.dart';
 
-// ============================================================================
-// 平台配置 & 游戏数据模型
-// ============================================================================
-
 enum GamePlatform { wegame, ubisoft, xbox, epic }
 
-/// 游戏数据模型 — 包含完整的游戏信息用于原生展示
 class GameData {
   final String id;
   final String name;
   final String developer;
   final String genre;
-  final String? price; // null = 未知
+  final String? price;
   final bool isFree;
-  final double rating; // 0.0 - 5.0
+  final double rating;
   final String description;
   final List<String> tags;
-  final List<Color> coverGradient; // 封面渐变色
-  final IconData coverIcon; // 封面图标
+  final List<Color> coverGradient;
+  final IconData coverIcon;
   final bool isFeatured;
-  final String? headerImageUrl; // 官方封面图 URL (从 API 获取)
-  final String? storeUrl; // 官方商店链接
+  final String? headerImageUrl;
+  final String? storeUrl;
 
   const GameData({
     required this.id,
@@ -47,7 +42,6 @@ class GameData {
   });
 }
 
-/// 平台配置（品牌色、图标、游戏目录等）
 class PlatformConfig {
   final String name;
   final String subtitle;
@@ -88,15 +82,73 @@ class PlatformConfig {
   }
 }
 
+class _GameCoverArt extends StatelessWidget {
+  final GameData game;
+  final double iconSize;
+  final double? decorativeIconSize;
+
+  const _GameCoverArt({
+    required this.game,
+    required this.iconSize,
+    this.decorativeIconSize,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: game.coverGradient,
+            ),
+          ),
+        ),
+        if (decorativeIconSize != null)
+          Positioned(
+            right: -10,
+            bottom: -10,
+            child: Icon(
+              game.coverIcon,
+              size: decorativeIconSize,
+              color: Colors.white.withValues(alpha: 0.08),
+            ),
+          ),
+        Center(
+          child: Icon(game.coverIcon, size: iconSize, color: Colors.white70),
+        ),
+        if (game.headerImageUrl != null && game.headerImageUrl!.isNotEmpty)
+          Image.network(
+            game.headerImageUrl!,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+              final visible = wasSynchronouslyLoaded || frame != null;
+              return AnimatedOpacity(
+                opacity: visible ? 1 : 0,
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+                child: child,
+              );
+            },
+            loadingBuilder: (context, child, progress) {
+              return progress == null ? child : const SizedBox.shrink();
+            },
+            errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+          ),
+      ],
+    );
+  }
+}
+
 class GameCategory {
   final String name;
   final IconData icon;
   const GameCategory(this.name, this.icon);
 }
-
-// ============================================================================
-// Epic Games 游戏数据 (https://store.epicgames.com/zh-CN/)
-// ============================================================================
 
 final PlatformConfig _epicConfig = PlatformConfig(
   name: 'Epic Games',
@@ -307,10 +359,6 @@ final PlatformConfig _epicConfig = PlatformConfig(
   ],
 );
 
-// ============================================================================
-// WeGame 游戏数据
-// ============================================================================
-
 final PlatformConfig _wegameConfig = PlatformConfig(
   name: 'WeGame',
   subtitle: '腾讯游戏平台 · 海量精品游戏',
@@ -511,10 +559,6 @@ final PlatformConfig _wegameConfig = PlatformConfig(
   ],
 );
 
-// ============================================================================
-// Ubisoft 游戏数据
-// ============================================================================
-
 final PlatformConfig _ubisoftConfig = PlatformConfig(
   name: 'Ubisoft Connect',
   subtitle: '育碧游戏平台 · 3A 大作云集',
@@ -694,10 +738,6 @@ final PlatformConfig _ubisoftConfig = PlatformConfig(
   ],
 );
 
-// ============================================================================
-// Xbox 游戏数据
-// ============================================================================
-
 final PlatformConfig _xboxConfig = PlatformConfig(
   name: 'Xbox',
   subtitle: 'Xbox Game Studios · Game Pass 订阅畅玩',
@@ -718,7 +758,7 @@ final PlatformConfig _xboxConfig = PlatformConfig(
       name: 'Halo Infinite',
       developer: '343 Industries',
       genre: '射击',
-      isFree: true, // 多人模式免费
+      isFree: true,
       rating: 4.3,
       description: 'Halo 系列最新作，多人模式免费游玩。在广阔的 Zeta Halo 上展开战役，'
           '经典 Halo 竞技对战与全新钩锁机制的完美结合。赛季更新带来'
@@ -894,10 +934,6 @@ final PlatformConfig _xboxConfig = PlatformConfig(
   ],
 );
 
-// ============================================================================
-// 收藏游戏（本地存储持久化）
-// ============================================================================
-
 class SavedGame {
   final String gameId;
   final String name;
@@ -922,10 +958,6 @@ class SavedGame {
       );
 }
 
-// ============================================================================
-// PlatformGameTab — 原生游戏展示标签页（无 WebView）
-// ============================================================================
-
 class PlatformGameTab extends StatefulWidget {
   final GamePlatform platform;
   final ApiService? apiService;
@@ -946,7 +978,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
 
-  /// 从后端 API 获取的实时游戏数据
   List<GameData> _liveGames = [];
   bool _isLiveData = false;
   bool _fetchingLive = false;
@@ -988,7 +1019,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     super.dispose();
   }
 
-  /// 从后端 API 获取对应平台的游戏数据（官方数据源）
   Future<void> _fetchPlatformGames() async {
     if (_fetchingLive) return;
     _fetchingLive = true;
@@ -1083,7 +1113,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
             .toList();
 
         if (parsed.isNotEmpty && mounted) {
-          // 标记前 5 款为精选
           for (int i = 0; i < parsed.length && i < 5; i++) {
             parsed[i] = GameData(
               id: parsed[i].id,
@@ -1110,13 +1139,11 @@ class _PlatformGameTabState extends State<PlatformGameTab>
         }
       }
     } catch (_) {
-      // API 不可用时静默降级为内置数据，不影响用户体验
     } finally {
       _fetchingLive = false;
     }
   }
 
-  /// 当前生效的游戏列表：优先使用 API 实时数据，否则使用内置数据
   List<GameData> get _activeGames =>
       _isLiveData && _liveGames.isNotEmpty ? _liveGames : _config.allGames;
 
@@ -1418,7 +1445,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     if (!mounted) return;
     setState(() {});
 
-    // 反馈
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -1434,7 +1460,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     );
   }
 
-  /// 根据搜索和分类筛选游戏列表
   List<GameData> get _filteredGames {
     var games = _selectedCategory != null
         ? _activeGames.where((g) => g.genre == _selectedCategory).toList()
@@ -1452,7 +1477,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     return games;
   }
 
-  /// 下拉刷新：重新加载收藏 + 刷新 API 数据
   Future<void> _onRefresh() async {
     await Future.wait([
       _loadSavedGames(),
@@ -1475,7 +1499,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
       onRefresh: _onRefresh,
       child: CustomScrollView(
         slivers: [
-          // 顶部内容（Hero + 精选 + 免费 + 搜索 + 分类）
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -1484,7 +1507,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                 children: [
                   _buildBrandHero(cs, tt),
                   const SizedBox(height: 20),
-
                   if (_selectedCategory == null && _searchQuery.isEmpty) ...[
                     _buildSectionTitle(
                       l10n.tr('appstore.section.featured'),
@@ -1521,16 +1543,10 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                       const SizedBox(height: 24),
                     ],
                   ],
-
-                  // 搜索框
                   _buildSearchBar(cs, tt),
                   const SizedBox(height: 12),
-
-                  // 分类筛选条
                   _buildCategoryChips(cs, tt),
                   const SizedBox(height: 12),
-
-                  // 游戏列表标题
                   _buildSectionTitle(
                     _selectedCategory != null
                         ? _localizedCategoryLabel(context, _selectedCategory!)
@@ -1551,8 +1567,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
               ),
             ),
           ),
-
-          // 游戏列表（SliverList 提供高效滚动）
           displayGames.isEmpty
               ? SliverToBoxAdapter(
                   child: Padding(
@@ -1593,9 +1607,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     );
   }
 
-  // --------------------------------------------------------------------------
-  // 品牌 Hero Banner
-  // --------------------------------------------------------------------------
   Widget _buildBrandHero(ColorScheme cs, TextTheme tt) {
     return Container(
       height: 130,
@@ -1684,9 +1695,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     );
   }
 
-  // --------------------------------------------------------------------------
-  // 搜索框
-  // --------------------------------------------------------------------------
   Widget _buildSearchBar(ColorScheme cs, TextTheme tt) {
     return TextField(
       controller: _searchController,
@@ -1720,9 +1728,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     );
   }
 
-  // --------------------------------------------------------------------------
-  // 精选推荐轮播
-  // --------------------------------------------------------------------------
   Widget _buildFeaturedCarousel(ColorScheme cs, TextTheme tt) {
     final featured = _activeFeaturedGames;
     if (featured.isEmpty) return const SizedBox.shrink();
@@ -1750,9 +1755,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     );
   }
 
-  // --------------------------------------------------------------------------
-  // 免费游戏横向滚动
-  // --------------------------------------------------------------------------
   Widget _buildFreeGamesRow(ColorScheme cs, TextTheme tt) {
     final freeGames = _activeFreeGames;
     return SizedBox(
@@ -1776,9 +1778,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     );
   }
 
-  // --------------------------------------------------------------------------
-  // 收藏游戏横向滚动
-  // --------------------------------------------------------------------------
   Widget _buildSavedGamesRow(ColorScheme cs, TextTheme tt) {
     final savedGames =
         _activeGames.where((g) => _savedGameIds.contains(g.id)).toList();
@@ -1806,9 +1805,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     );
   }
 
-  // --------------------------------------------------------------------------
-  // 分类筛选条
-  // --------------------------------------------------------------------------
   Widget _buildCategoryChips(ColorScheme cs, TextTheme tt) {
     return SizedBox(
       height: 40,
@@ -1849,9 +1845,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     );
   }
 
-  // --------------------------------------------------------------------------
-  // 游戏列表项（Material Card）
-  // --------------------------------------------------------------------------
   Widget _buildGameListItem(
       GameData game, ColorScheme cs, TextTheme tt, int index) {
     final isSaved = _savedGameIds.contains(game.id);
@@ -1866,7 +1859,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
           padding: const EdgeInsets.all(12),
           child: Row(
             children: [
-              // 封面
               Container(
                 width: 70,
                 height: 70,
@@ -1879,20 +1871,9 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                   ),
                 ),
                 clipBehavior: Clip.antiAlias,
-                child: game.headerImageUrl != null &&
-                        game.headerImageUrl!.isNotEmpty
-                    ? Image.network(
-                        game.headerImageUrl!,
-                        fit: BoxFit.cover,
-                        width: 70,
-                        height: 70,
-                        errorBuilder: (_, __, ___) => Icon(game.coverIcon,
-                            color: Colors.white70, size: 30),
-                      )
-                    : Icon(game.coverIcon, color: Colors.white70, size: 30),
+                child: _GameCoverArt(game: game, iconSize: 30),
               ),
               const SizedBox(width: 14),
-              // 信息
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1935,7 +1916,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                   ],
                 ),
               ),
-              // 价格 + 收藏
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
@@ -2000,9 +1980,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     );
   }
 
-  // --------------------------------------------------------------------------
-  // Section Title
-  // --------------------------------------------------------------------------
   Widget _buildSectionTitle(
     String title,
     IconData icon,
@@ -2026,9 +2003,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
     );
   }
 
-  // --------------------------------------------------------------------------
-  // 游戏详情底部面板
-  // --------------------------------------------------------------------------
   void _showGameDetail(GameData game) {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
@@ -2048,7 +2022,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
           ),
           child: Column(
             children: [
-              // 拖拽手柄
               Container(
                 width: 40,
                 height: 4,
@@ -2064,23 +2037,14 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                   padding:
                       const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                   children: [
-                    // 封面 Banner
                     _buildDetailBanner(game, cs),
                     const SizedBox(height: 20),
-
-                    // 标题 + 价格按钮
                     _buildDetailHeader(game, cs, tt),
                     const SizedBox(height: 16),
-
-                    // 评分 + 分类 + 收藏
                     _buildDetailMeta(game, cs, tt),
                     const SizedBox(height: 20),
-
-                    // 标签
                     _buildDetailTags(game, tt),
                     const SizedBox(height: 20),
-
-                    // 描述
                     Text(
                       context.l10n.tr('appstore.info.description'),
                       style:
@@ -2095,8 +2059,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
                       ),
                     ),
                     const SizedBox(height: 24),
-
-                    // 信息卡片
                     _buildDetailInfoCard(game, cs, tt),
                     const SizedBox(height: 32),
                   ],
@@ -2124,37 +2086,11 @@ class _PlatformGameTabState extends State<PlatformGameTab>
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // 优先显示官方封面图
-          if (game.headerImageUrl != null && game.headerImageUrl!.isNotEmpty)
-            Image.network(
-              game.headerImageUrl!,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Stack(
-                children: [
-                  Positioned(
-                    right: -10,
-                    bottom: -10,
-                    child: Icon(game.coverIcon,
-                        size: 140, color: Colors.white.withValues(alpha: 0.08)),
-                  ),
-                  Center(
-                    child:
-                        Icon(game.coverIcon, size: 64, color: Colors.white70),
-                  ),
-                ],
-              ),
-            )
-          else ...[
-            Positioned(
-              right: -10,
-              bottom: -10,
-              child: Icon(game.coverIcon,
-                  size: 140, color: Colors.white.withValues(alpha: 0.08)),
-            ),
-            Center(
-              child: Icon(game.coverIcon, size: 64, color: Colors.white70),
-            ),
-          ],
+          _GameCoverArt(
+            game: game,
+            iconSize: 64,
+            decorativeIconSize: 140,
+          ),
           Positioned(
             top: 12,
             left: 12,
@@ -2408,10 +2344,6 @@ class _PlatformGameTabState extends State<PlatformGameTab>
   }
 }
 
-// =============================================================================
-// 精选游戏大卡片（横向轮播用）
-// =============================================================================
-
 class _FeaturedGameCard extends StatelessWidget {
   final GameData game;
   final bool isSaved;
@@ -2441,7 +2373,6 @@ class _FeaturedGameCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 封面
             Container(
               height: 110,
               decoration: BoxDecoration(
@@ -2454,30 +2385,11 @@ class _FeaturedGameCard extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  // 优先显示官方封面图
-                  if (game.headerImageUrl != null &&
-                      game.headerImageUrl!.isNotEmpty)
-                    Image.network(
-                      game.headerImageUrl!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Center(
-                        child: Icon(game.coverIcon,
-                            size: 40, color: Colors.white60),
-                      ),
-                    )
-                  else ...[
-                    Positioned(
-                      right: -10,
-                      bottom: -10,
-                      child: Icon(game.coverIcon,
-                          size: 100,
-                          color: Colors.white.withValues(alpha: 0.08)),
-                    ),
-                    Center(
-                      child:
-                          Icon(game.coverIcon, size: 40, color: Colors.white60),
-                    ),
-                  ],
+                  _GameCoverArt(
+                    game: game,
+                    iconSize: 40,
+                    decorativeIconSize: 100,
+                  ),
                   if (game.isFree)
                     Positioned(
                       top: 8,
@@ -2551,7 +2463,6 @@ class _FeaturedGameCard extends StatelessWidget {
                 ],
               ),
             ),
-            // 信息
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
@@ -2603,10 +2514,6 @@ class _FeaturedGameCard extends StatelessWidget {
   }
 }
 
-// =============================================================================
-// 紧凑游戏卡片（免费游戏行 & 收藏行）
-// =============================================================================
-
 class _CompactGameCard extends StatelessWidget {
   final GameData game;
   final bool isSaved;
@@ -2646,21 +2553,7 @@ class _CompactGameCard extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (game.headerImageUrl != null &&
-                      game.headerImageUrl!.isNotEmpty)
-                    Image.network(
-                      game.headerImageUrl!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Center(
-                        child: Icon(game.coverIcon,
-                            size: 30, color: Colors.white60),
-                      ),
-                    )
-                  else
-                    Center(
-                      child:
-                          Icon(game.coverIcon, size: 30, color: Colors.white60),
-                    ),
+                  _GameCoverArt(game: game, iconSize: 30),
                   if (game.isFree)
                     Positioned(
                       top: 4,

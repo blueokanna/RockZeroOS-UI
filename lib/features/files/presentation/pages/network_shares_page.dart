@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
-/// Network share protocol types
 enum NetworkProtocol {
   smb('SMB/CIFS', 'Windows file sharing', Icons.computer_rounded, 445),
   nfs('NFS', 'Network File System', Icons.dns_rounded, 2049),
@@ -23,7 +22,6 @@ enum NetworkProtocol {
   );
 }
 
-/// Network share configuration model
 class NetworkShare {
   final String id;
   final String name;
@@ -105,7 +103,6 @@ class NetworkShare {
   }
 }
 
-/// Provider for network shares
 class NetworkSharesNotifier extends Notifier<List<NetworkShare>> {
   @override
   List<NetworkShare> build() {
@@ -161,7 +158,6 @@ final networkSharesProvider =
   NetworkSharesNotifier.new,
 );
 
-/// Network shares management page
 class NetworkSharesPage extends ConsumerStatefulWidget {
   const NetworkSharesPage({super.key});
 
@@ -233,7 +229,6 @@ class _NetworkSharesPageState extends ConsumerState<NetworkSharesPage> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 32),
-            // Protocol cards
             Wrap(
               spacing: 12,
               runSpacing: 12,
@@ -346,7 +341,6 @@ class _NetworkSharesPageState extends ConsumerState<NetworkSharesPage> {
   Future<void> _connectToShare(NetworkShare share) async {
     final colorScheme = Theme.of(context).colorScheme;
 
-    // Show connecting dialog
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -361,13 +355,11 @@ class _NetworkSharesPageState extends ConsumerState<NetworkSharesPage> {
       ),
     );
 
-    // Simulate connection (in real implementation, this would connect to the server)
     await Future.delayed(const Duration(seconds: 2));
 
     if (mounted) {
-      Navigator.pop(context); // Close connecting dialog
+      Navigator.pop(context);
 
-      // For now, show a message that this feature requires server support
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -809,7 +801,6 @@ class _AddEditShareDialogState extends State<_AddEditShareDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Protocol selector
             Text(
               'Protocol',
               style: TextStyle(
@@ -843,8 +834,6 @@ class _AddEditShareDialogState extends State<_AddEditShareDialog> {
               }).toList(),
             ),
             const SizedBox(height: 16),
-
-            // Name field
             TextField(
               controller: _nameController,
               decoration: const InputDecoration(
@@ -854,8 +843,6 @@ class _AddEditShareDialogState extends State<_AddEditShareDialog> {
               ),
             ),
             const SizedBox(height: 12),
-
-            // Host field
             TextField(
               controller: _hostController,
               decoration: const InputDecoration(
@@ -865,8 +852,6 @@ class _AddEditShareDialogState extends State<_AddEditShareDialog> {
               ),
             ),
             const SizedBox(height: 12),
-
-            // Port field
             TextField(
               controller: _portController,
               keyboardType: TextInputType.number,
@@ -877,8 +862,6 @@ class _AddEditShareDialogState extends State<_AddEditShareDialog> {
               ),
             ),
             const SizedBox(height: 12),
-
-            // Username field
             TextField(
               controller: _usernameController,
               decoration: const InputDecoration(
@@ -887,8 +870,6 @@ class _AddEditShareDialogState extends State<_AddEditShareDialog> {
               ),
             ),
             const SizedBox(height: 12),
-
-            // Password field
             TextField(
               controller: _passwordController,
               obscureText: true,
@@ -898,8 +879,6 @@ class _AddEditShareDialogState extends State<_AddEditShareDialog> {
               ),
             ),
             const SizedBox(height: 12),
-
-            // Remote path field
             TextField(
               controller: _pathController,
               decoration: InputDecoration(

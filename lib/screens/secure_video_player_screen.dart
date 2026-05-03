@@ -81,14 +81,13 @@ class _SecureVideoPlayerScreenState
       fileName: widget.fileName,
     );
 
-    // 标记为全屏模式
     service.enterFullscreen();
   }
 
   @override
   void dispose() {
     _isDisposed = true;
-    // 不停止播放器，让它继续在小窗模式播放
+
     final service = ref.read(videoPlayerServiceProvider.notifier);
     service.exitFullscreen();
     _exitFullscreen();
@@ -107,7 +106,6 @@ class _SecureVideoPlayerScreenState
     ref.read(videoPlayerServiceProvider.notifier).seekRelative(seconds);
   }
 
-  /// 进入小窗模式并返回上一页
   void _enterPipAndGoBack() {
     final service = ref.read(videoPlayerServiceProvider.notifier);
     service.enterPipMode();
@@ -349,7 +347,6 @@ class _SecureVideoPlayerScreenState
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                // 小窗模式按钮
                 IconButton(
                   icon: const Icon(Icons.picture_in_picture_alt,
                       color: Colors.white),
@@ -450,10 +447,8 @@ class _SecureVideoPlayerScreenState
                 ],
               ),
               const SizedBox(height: 16),
-              // 进度条
               Stack(
                 children: [
-                  // 缓冲进度
                   SliderTheme(
                     data: SliderTheme.of(context).copyWith(
                       trackHeight: 4,
@@ -467,7 +462,6 @@ class _SecureVideoPlayerScreenState
                       onChanged: null,
                     ),
                   ),
-                  // 播放进度（可拖动）
                   SliderTheme(
                     data: SliderTheme.of(context).copyWith(
                       trackHeight: 4,

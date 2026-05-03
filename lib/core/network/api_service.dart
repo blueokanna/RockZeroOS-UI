@@ -7,7 +7,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/api_models.dart';
 import 'api_client.dart';
 
-// API Service Provider
 final apiServiceProvider = Provider<ApiService>((ref) {
   final dio = ref.watch(dioProvider);
   return ApiService(dio);
@@ -17,8 +16,6 @@ class ApiService {
   final Dio _dio;
   ApiService(this._dio);
   String get baseUrl => _dio.options.baseUrl;
-
-  // ============ Generic HTTP Methods ============
 
   Future<Response<T>> get<T>(
     String path, {
@@ -74,8 +71,6 @@ class ApiService {
     );
   }
 
-  // ============ Auth API ============
-
   Future<AuthResponse> register({
     required String username,
     required String email,
@@ -100,7 +95,7 @@ class ApiService {
   }) async {
     final response = await _dio.post(
       '/api/v1/auth/login',
-      data: {'username': email, 'password': password}, // 修复：使用 username 字段
+      data: {'username': email, 'password': password},
     );
     return AuthResponse.fromJson(response.data);
   }
@@ -118,12 +113,10 @@ class ApiService {
     return InviteCodeResponse.fromJson(response.data);
   }
 
-  /// 登出
   Future<void> logout() async {
     await _dio.post('/api/v1/auth/logout');
   }
 
-  /// 获取当前用户信息
   Future<User?> getCurrentUser() async {
     try {
       final response = await _dio.get('/api/v1/auth/me');
@@ -134,9 +127,6 @@ class ApiService {
     }
   }
 
-  // ============ ZKP API (零知识证明) ============
-
-  /// 生成 ZKP 密码证明
   Future<ZkpProofResponse> generateZkpProof(String password) async {
     final response = await _dio.post(
       '/api/v1/auth/zkp/proof',
@@ -145,7 +135,6 @@ class ApiService {
     return ZkpProofResponse.fromJson(response.data);
   }
 
-  /// 生成增强的 ZKP 密码证明
   Future<EnhancedZkpProofResponse> generateEnhancedZkpProof(
     String password,
   ) async {
@@ -156,7 +145,6 @@ class ApiService {
     return EnhancedZkpProofResponse.fromJson(response.data);
   }
 
-  /// 使用 ZKP 登录
   Future<AuthResponse> loginWithZkp({
     required String email,
     required ZkpPasswordProof proof,
@@ -168,7 +156,6 @@ class ApiService {
     return AuthResponse.fromJson(response.data);
   }
 
-  /// 使用增强 ZKP 登录
   Future<AuthResponse> loginWithEnhancedZkp({
     required String email,
     required EnhancedZkpProof proof,
@@ -180,7 +167,6 @@ class ApiService {
     return AuthResponse.fromJson(response.data);
   }
 
-  /// 检查密码强度
   Future<PasswordStrengthResponse> checkPasswordStrength(
     String password,
   ) async {
@@ -191,7 +177,6 @@ class ApiService {
     return PasswordStrengthResponse.fromJson(response.data);
   }
 
-  /// 生成范围证明
   Future<RangeProofResponse> generateRangeProof({
     required int value,
     required int nBits,
@@ -203,7 +188,6 @@ class ApiService {
     return RangeProofResponse.fromJson(response.data);
   }
 
-  /// 验证范围证明
   Future<bool> verifyRangeProof(RangeProofData proof) async {
     final response = await _dio.post(
       '/api/v1/auth/zkp/range-proof/verify',
@@ -212,7 +196,6 @@ class ApiService {
     return response.data['valid'] ?? false;
   }
 
-  /// 派生加密密钥
   Future<String> deriveEncryptionKey({
     required String password,
     required String context,
@@ -223,8 +206,6 @@ class ApiService {
     );
     return response.data['key'] ?? '';
   }
-
-  // ============ Files API ============
 
   Future<List<FileResponse>> uploadFiles(
     List<File> files, {
@@ -266,8 +247,6 @@ class ApiService {
   String getFileDownloadUrl(String id) {
     return '${_dio.options.baseUrl}/api/v1/files/$id/download';
   }
-
-  // ============ Media API ============
 
   Future<List<MediaResponse>> listMedia() async {
     final response = await _dio.get('/api/v1/media');
@@ -321,8 +300,6 @@ class ApiService {
       },
     );
   }
-
-  // ============ Widgets API ============
 
   Future<List<WidgetResponse>> listWidgets() async {
     final response = await _dio.get('/api/v1/widgets');
@@ -384,8 +361,6 @@ class ApiService {
     await _dio.delete('/api/v1/widgets/$id');
   }
 
-  // ============ System API ============
-
   Future<SystemInfo> getSystemInfo() async {
     final response = await _dio.get('/api/v1/system/info');
     return SystemInfo.fromJson(response.data);
@@ -416,7 +391,6 @@ class ApiService {
     return HardwareInfo.fromJson(response.data);
   }
 
-  /// 获取服务器公网 IP（后端通过 ip.sb 等服务检测）
   Future<String?> getPublicIp() async {
     try {
       final response = await _dio.get('/api/v1/system/public-ip');
@@ -426,8 +400,6 @@ class ApiService {
       return null;
     }
   }
-
-  // ============ Disk Manager API ============
 
   Future<List<DiskDetail>> listDisks() async {
     final response = await _dio.get('/api/v1/disk/list');
@@ -482,7 +454,6 @@ class ApiService {
     await _dio.post('/api/v1/disk/eject/$device');
   }
 
-  /// Initialize a new disk with partition table and filesystem
   Future<Map<String, dynamic>> initializeDisk({
     required String device,
     required String fileSystem,
@@ -501,7 +472,6 @@ class ApiService {
     return response.data;
   }
 
-  /// Rename disk label
   Future<Map<String, dynamic>> renameDisk({
     required String device,
     required String newLabel,
@@ -516,45 +486,37 @@ class ApiService {
     return response.data;
   }
 
-  /// Scan for new disks
   Future<List<DiskDetail>> scanDisks() async {
     final response = await _dio.post('/api/v1/disk/scan');
     return (response.data as List).map((e) => DiskDetail.fromJson(e)).toList();
   }
 
-  /// Get detailed disk information
   Future<Map<String, dynamic>> getDiskDetails(String device) async {
     final response = await _dio.get('/api/v1/disk/details/$device');
     return response.data;
   }
 
-  /// Get ZFS status and pools
   Future<Map<String, dynamic>> getZfsStatus() async {
     final response = await _dio.get('/api/v1/disk/zfs');
     return response.data;
   }
 
-  /// Get supported filesystems
   Future<List<Map<String, dynamic>>> getSupportedFilesystems() async {
     final response = await _dio.get('/api/v1/disk/filesystems');
     return (response.data as List).cast<Map<String, dynamic>>();
   }
 
-  /// Get backend disk management capabilities
   Future<Map<String, dynamic>> getDiskCapabilities() async {
     final response = await _dio.get('/api/v1/disk/capabilities');
     return Map<String, dynamic>.from(response.data as Map);
   }
 
-  // ============ App Store API ============
-
-  // CasaOS App Store
   Future<List<AppStoreItem>> listCasaosApps() async {
     try {
       final response = await _dio.get(
         '/api/v1/appstore/casaos',
         options: Options(
-          receiveTimeout: const Duration(seconds: 120), // 增加超时到120秒
+          receiveTimeout: const Duration(seconds: 120),
           sendTimeout: const Duration(seconds: 60),
         ),
       );
@@ -573,12 +535,11 @@ class ApiService {
       if (kDebugMode) {
         print('❌ Failed to fetch CasaOS apps: $e');
       }
-      // 返回空列表而不是抛出异常，这样 UI 可以显示空状态
+
       return [];
     }
   }
 
-  // iStoreOS App Store
   Future<List<AppStoreItem>> listIstoreosApps() async {
     try {
       final response = await _dio.get(
@@ -607,9 +568,7 @@ class ApiService {
     }
   }
 
-  // Legacy method for backward compatibility
   Future<List<AppStoreItem>> listStoreApps() async {
-    // 并行获取两个应用商店的应用
     try {
       final results = await Future.wait([
         listCasaosApps(),
@@ -628,7 +587,6 @@ class ApiService {
         return allApps;
       }
 
-      // 如果并行获取失败，尝试单独获取
       final casaosApps = await listCasaosApps();
       if (casaosApps.isNotEmpty) {
         return casaosApps;
@@ -638,7 +596,7 @@ class ApiService {
       if (kDebugMode) {
         print('❌ Failed to fetch store apps: $e');
       }
-      // 最后尝试 iStoreOS
+
       try {
         return await listIstoreosApps();
       } catch (e2) {
@@ -693,8 +651,6 @@ class ApiService {
     await _dio.post('/api/v1/appstore/restart/$id');
   }
 
-  // ============ File Manager API ============
-
   Future<StorageRootBindingStatus> getStorageScopeStatus() async {
     final response = await _dio.get('/api/v1/filemanager/scope/status');
     return StorageRootBindingStatus.fromJson(response.data);
@@ -726,14 +682,87 @@ class ApiService {
     );
   }
 
+  Future<PrivateSpaceStatus> getPrivateSpaceStatus() async {
+    final response = await _dio.get('/api/v1/secure/private-space/status');
+    return PrivateSpaceStatus.fromJson(response.data);
+  }
+
+  Future<List<PrivateSpaceItem>> importPrivateSpaceItems({
+    required String masterPassword,
+    required List<String> paths,
+    bool deleteOriginal = false,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/secure/private-space/import',
+      data: {
+        'master_password': masterPassword,
+        'paths': paths,
+        'delete_original': deleteOriginal,
+      },
+      options: Options(
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ),
+    );
+    final items = response.data['imported'] as List<dynamic>? ?? [];
+    return items
+        .map((item) => PrivateSpaceItem.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<PrivateSpaceItem>> listPrivateSpaceItems({
+    required String masterPassword,
+  }) async {
+    final response = await _dio.post(
+      '/api/v1/secure/private-space/list',
+      data: {'master_password': masterPassword},
+      options: Options(
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ),
+    );
+    final items = response.data['items'] as List<dynamic>? ?? [];
+    return items
+        .map((item) => PrivateSpaceItem.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> exportPrivateSpaceItem({
+    required String masterPassword,
+    required String id,
+    required String targetDirectory,
+    bool overwrite = false,
+  }) async {
+    await _dio.post(
+      '/api/v1/secure/private-space/export',
+      data: {
+        'master_password': masterPassword,
+        'id': id,
+        'target_directory': targetDirectory,
+        'overwrite': overwrite,
+      },
+      options: Options(
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ),
+    );
+  }
+
+  Future<void> deletePrivateSpaceItem({
+    required String masterPassword,
+    required String id,
+  }) async {
+    await _dio.delete(
+      '/api/v1/secure/private-space/delete',
+      data: {'master_password': masterPassword, 'id': id},
+      options: Options(
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ),
+    );
+  }
+
   Future<DirectoryListing> listDirectory({
     String? path,
     String? sortBy,
     String? order,
   }) async {
-    // Ensure path is properly handled for UTF-8 characters (Chinese, etc.)
-    // Dio will automatically encode query parameters, but we need to ensure
-    // the path is passed as-is without double encoding
     final response = await _dio.get(
       '/api/v1/filemanager/list',
       queryParameters: {
@@ -764,7 +793,6 @@ class ApiService {
     List<File> files, {
     void Function(int, int)? onProgress,
   }) async {
-    // 验证路径不为空
     if (path.isEmpty) {
       throw Exception(
           'Upload path cannot be empty. Please select a directory first.');
@@ -777,7 +805,6 @@ class ApiService {
       final fileSize = file.lengthSync();
       totalSize += fileSize;
 
-      // 使用 path 包来正确提取文件名（跨平台兼容）
       final filename = file.path.split(RegExp(r'[/\\]')).last;
 
       formData.files.add(
@@ -791,11 +818,8 @@ class ApiService {
       );
     }
 
-    // 根据文件大小动态计算超时时间
-    // 假设最低速度 100KB/s，加上30秒的缓冲时间
     final estimatedSeconds = (totalSize / (100 * 1024)).ceil() + 30;
-    final sendTimeout =
-        Duration(seconds: estimatedSeconds.clamp(60, 3600)); // 最少1分钟，最多1小时
+    final sendTimeout = Duration(seconds: estimatedSeconds.clamp(60, 3600));
 
     debugPrint(
         '[Upload] Path: $path, Total size: ${totalSize / (1024 * 1024)} MB, timeout: ${sendTimeout.inSeconds}s');
@@ -808,7 +832,6 @@ class ApiService {
       options: Options(
         sendTimeout: sendTimeout,
         receiveTimeout: const Duration(minutes: 5),
-        // 完全不设置 headers，让 FormData 自动处理 Content-Type
         contentType: Headers.multipartFormDataContentType,
       ),
     );
@@ -818,7 +841,6 @@ class ApiService {
     required String oldPath,
     required String newName,
   }) async {
-    // Ensure proper UTF-8 encoding for file paths and names
     await _dio.post(
       '/api/v1/filemanager/rename',
       data: {'old_path': oldPath, 'new_name': newName},
@@ -870,13 +892,9 @@ class ApiService {
   }
 
   String getFileManagerDownloadUrl(String path) {
-    // Properly URL-encode the path for UTF-8 compatibility
     return '${_dio.options.baseUrl}/api/v1/filemanager/download?path=${Uri.encodeComponent(path)}';
   }
 
-  // ============ File Preview API ============
-
-  /// Preview text file content
   Future<FilePreviewResponse> previewTextFile(String path) async {
     final response = await _dio.get(
       '/api/v1/filemanager/preview',
@@ -898,7 +916,6 @@ class ApiService {
     );
   }
 
-  /// Get media file information
   Future<MediaFileInfo> getMediaInfo(String path) async {
     final response = await _dio.get(
       '/api/v1/filemanager/media/info',
@@ -907,17 +924,14 @@ class ApiService {
     return MediaFileInfo.fromJson(response.data);
   }
 
-  /// Get media stream URL (for video/audio playback)
   String getMediaStreamUrl(String path) {
     return '${_dio.options.baseUrl}/api/v1/filemanager/media/stream?path=${Uri.encodeComponent(path)}';
   }
 
-  /// Get image URL (for image viewing)
   String getImageUrl(String path) {
     return '${_dio.options.baseUrl}/api/v1/filemanager/media/image?path=${Uri.encodeComponent(path)}';
   }
 
-  /// Get thumbnail URL
   String getThumbnailUrlForFile(String path, {String? timestamp}) {
     final url =
         '${_dio.options.baseUrl}/api/v1/filemanager/media/thumbnail?path=${Uri.encodeComponent(path)}';
@@ -926,8 +940,6 @@ class ApiService {
     }
     return url;
   }
-
-  // ============ WebDAV API ============
 
   String getWebDavUrl() {
     return '${_dio.options.baseUrl}/webdav';
@@ -938,7 +950,7 @@ class ApiService {
       '/webdav/$path',
       options: Options(method: 'PROPFIND', headers: {'Depth': '1'}),
     );
-    // 解析 XML 响应
+
     return _parseWebDavResponse(response.data);
   }
 
@@ -971,11 +983,8 @@ class ApiService {
   }
 
   List<WebDavEntry> _parseWebDavResponse(dynamic data) {
-    // 简化的 WebDAV 响应解析
     return [];
   }
-
-  // ============ Streaming API ============
 
   Future<Map<String, dynamic>> getSupportedFormats() async {
     final response = await _dio.get('/api/v1/streaming/formats');
@@ -1013,8 +1022,6 @@ class ApiService {
     return url;
   }
 
-  // ============ Storage API (底层硬件访问) ============
-
   Future<List<StorageDevice>> listStorageDevices() async {
     final response = await _dio.get('/api/v1/storage/devices');
     return (response.data as List)
@@ -1022,7 +1029,6 @@ class ApiService {
         .toList();
   }
 
-  /// 获取外部存储统计信息（排除eMMC）
   Future<ExternalStorageStats> getExternalStorageStats() async {
     final response = await _dio.get('/api/v1/storage/stats');
     return ExternalStorageStats.fromJson(response.data);
@@ -1105,8 +1111,6 @@ class ApiService {
   Future<void> deleteStoragePath(String path) async {
     await _dio.delete('/api/v1/storage/delete/$path');
   }
-
-  // ============ Docker API ============
 
   Future<DockerStatus> getDockerStatus() async {
     final response = await _dio.get('/api/v1/docker/status');
@@ -1267,7 +1271,6 @@ class ApiService {
     await _dio.delete('/api/v1/docker/images/$id');
   }
 
-  // Docker Compose
   Future<List<ComposeApp>> listComposeApps() async {
     final response = await _dio.get('/api/v1/docker/compose');
     return (response.data as List).map((e) => ComposeApp.fromJson(e)).toList();
@@ -1300,27 +1303,21 @@ class ApiService {
     await _dio.delete('/api/v1/docker/compose/$name');
   }
 
-  // ============ WASM Store API (Steam/Epic/Web3/WASM) ============
-
-  /// 获取商店概览
   Future<Map<String, dynamic>> getWasmStoreOverview() async {
     final response = await _dio.get('/api/v1/wasm-store/overview');
     return response.data as Map<String, dynamic>;
   }
 
-  /// 获取 Steam 精选游戏
   Future<Map<String, dynamic>> getSteamFeatured() async {
     final response = await _dio.get('/api/v1/wasm-store/steam/featured');
     return response.data as Map<String, dynamic>;
   }
 
-  /// 获取 Steam 游戏详情
   Future<Map<String, dynamic>> getSteamAppDetails(String appId) async {
     final response = await _dio.get('/api/v1/wasm-store/steam/app/$appId');
     return response.data as Map<String, dynamic>;
   }
 
-  /// 获取 Steam 用户游戏库（含游玩时间）
   Future<Map<String, dynamic>> getSteamUserLibrary({
     required String steamId,
     String? apiKey,
@@ -1335,7 +1332,6 @@ class ApiService {
     return response.data as Map<String, dynamic>;
   }
 
-  /// 获取 Steam 用户资料
   Future<Map<String, dynamic>> getSteamPlayerSummary({
     required String steamId,
     String? apiKey,
@@ -1350,7 +1346,6 @@ class ApiService {
     return response.data as Map<String, dynamic>;
   }
 
-  /// 获取 Epic 免费游戏
   Future<Map<String, dynamic>> getEpicFreeGames() async {
     final response = await _dio.get('/api/v1/wasm-store/epic/free');
     return response.data as Map<String, dynamic>;
@@ -1370,7 +1365,6 @@ class ApiService {
     return response.data as Map<String, dynamic>;
   }
 
-  /// 搜索游戏
   Future<Map<String, dynamic>> searchGames({
     String? query,
     String? platform,
@@ -1389,13 +1383,11 @@ class ApiService {
     return response.data as Map<String, dynamic>;
   }
 
-  /// 获取 WASM 应用列表
   Future<List<dynamic>> getWasmApps() async {
     final response = await _dio.get('/api/v1/wasm-store/wasm/apps');
     return response.data as List<dynamic>;
   }
 
-  /// 安装 WASM 应用
   Future<Map<String, dynamic>> installWasmApp({
     required String appId,
     required String wasmUrl,
@@ -1414,7 +1406,6 @@ class ApiService {
     return response.data as Map<String, dynamic>;
   }
 
-  /// 运行 WASM 应用
   Future<Map<String, dynamic>> runWasmApp(
     String appId, {
     String? function,
@@ -1432,18 +1423,15 @@ class ApiService {
     return response.data as Map<String, dynamic>;
   }
 
-  /// 卸载 WASM 应用
   Future<void> uninstallWasmApp(String appId) async {
     await _dio.delete('/api/v1/wasm-store/wasm/$appId');
   }
 
-  /// 获取插件列表
   Future<List<dynamic>> getPlugins() async {
     final response = await _dio.get('/api/v1/wasm-store/plugins');
     return response.data as List<dynamic>;
   }
 
-  /// 注册插件
   Future<Map<String, dynamic>> registerPlugin({
     required Map<String, dynamic> manifest,
     required String wasmUrl,
@@ -1458,18 +1446,15 @@ class ApiService {
     return response.data as Map<String, dynamic>;
   }
 
-  /// 注销插件
   Future<void> unregisterPlugin(String pluginId) async {
     await _dio.delete('/api/v1/wasm-store/plugins/$pluginId');
   }
 
-  /// 每日 Top 30 推荐
   Future<Map<String, dynamic>> getDailyRecommendations() async {
     final response = await _dio.get('/api/v1/wasm-store/recommendations');
     return response.data as Map<String, dynamic>;
   }
 
-  /// Steam 商店搜索
   Future<Map<String, dynamic>> searchSteamStore(String query) async {
     final response = await _dio.get(
       '/api/v1/wasm-store/steam/search',
@@ -1478,7 +1463,6 @@ class ApiService {
     return response.data as Map<String, dynamic>;
   }
 
-  /// 从 GitHub 导入 WASM 模块
   Future<Map<String, dynamic>> importFromGitHub({
     required String repoUrl,
     String? tag,
@@ -1497,7 +1481,6 @@ class ApiService {
     return response.data as Map<String, dynamic>;
   }
 
-  /// 执行 WASM 脚本（带输出捕获）
   Future<Map<String, dynamic>> runWasmScript({
     required String source,
     String? function,
@@ -1521,7 +1504,6 @@ class ApiService {
   }
 }
 
-// WebDAV Entry Model
 class WebDavEntry {
   final String href;
   final String displayName;
@@ -1551,7 +1533,6 @@ class WebDavEntry {
   }
 }
 
-// Media Library Entry Model
 class MediaLibraryEntry {
   final String id;
   final String title;
@@ -1578,7 +1559,6 @@ class MediaLibraryEntry {
   }
 }
 
-// Media Stream Info Model
 class MediaStreamInfo {
   final String filename;
   final String contentType;
@@ -1620,9 +1600,6 @@ class MediaStreamInfo {
   }
 }
 
-// ============ Secure Storage API (零知识加密存储) ============
-
-/// 安全存储响应
 class SecureStorageResponse {
   final int blockId;
   final String message;
@@ -1637,7 +1614,6 @@ class SecureStorageResponse {
   }
 }
 
-/// 安全存储数据响应
 class SecureDataResponse {
   final String data;
   final int blockId;
@@ -1652,7 +1628,6 @@ class SecureDataResponse {
   }
 }
 
-/// 完整性检查响应
 class IntegrityCheckResponse {
   final int totalBlocks;
   final List<int> corruptedBlocks;
@@ -1673,7 +1648,6 @@ class IntegrityCheckResponse {
   }
 }
 
-/// 数据库统计响应
 class DatabaseStatsResponse {
   final int totalBlocks;
   final int totalSize;
@@ -1698,7 +1672,6 @@ class DatabaseStatsResponse {
 }
 
 extension SecureStorageApiExtension on ApiService {
-  /// 初始化安全数据库
   Future<DatabaseStatsResponse> initSecureDatabase(
     String masterPassword,
   ) async {
@@ -1709,7 +1682,6 @@ extension SecureStorageApiExtension on ApiService {
     return DatabaseStatsResponse.fromJson(response.data);
   }
 
-  /// 存储加密数据
   Future<SecureStorageResponse> storeSecureData({
     required String masterPassword,
     required String data,
@@ -1721,7 +1693,6 @@ extension SecureStorageApiExtension on ApiService {
     return SecureStorageResponse.fromJson(response.data);
   }
 
-  /// 读取加密数据
   Future<SecureDataResponse> retrieveSecureData({
     required String masterPassword,
     required int blockId,
@@ -1733,7 +1704,6 @@ extension SecureStorageApiExtension on ApiService {
     return SecureDataResponse.fromJson(response.data);
   }
 
-  /// 删除加密数据
   Future<void> deleteSecureData({
     required String masterPassword,
     required int blockId,
@@ -1744,7 +1714,6 @@ extension SecureStorageApiExtension on ApiService {
     );
   }
 
-  /// 检查数据完整性
   Future<IntegrityCheckResponse> checkSecureStorageIntegrity(
     String masterPassword,
   ) async {
@@ -1755,7 +1724,6 @@ extension SecureStorageApiExtension on ApiService {
     return IntegrityCheckResponse.fromJson(response.data);
   }
 
-  /// 修复损坏的数据
   Future<Map<String, dynamic>> repairSecureStorage(
     String masterPassword,
   ) async {
@@ -1766,7 +1734,6 @@ extension SecureStorageApiExtension on ApiService {
     return response.data;
   }
 
-  /// 获取数据库统计信息
   Future<DatabaseStatsResponse> getSecureStorageStats(
     String masterPassword,
   ) async {
@@ -1776,8 +1743,6 @@ extension SecureStorageApiExtension on ApiService {
     );
     return DatabaseStatsResponse.fromJson(response.data);
   }
-
-  // ============ App Storage Stats API ============
 
   Future<AppStorageStats> getAppStorageStats() async {
     final response = await _dio.get('/api/v1/storage-management/stats');
@@ -1799,14 +1764,10 @@ extension SecureStorageApiExtension on ApiService {
     return response.data;
   }
 
-  // ============ Assets API (Logo, README, About) ============
-
-  /// 获取Logo URL
   String getLogoUrl() {
     return '$baseUrl/api/v1/assets/logo';
   }
 
-  /// 获取README内容
   Future<String> getReadme() async {
     final response = await _dio.get(
       '/api/v1/assets/readme',
@@ -1815,14 +1776,12 @@ extension SecureStorageApiExtension on ApiService {
     return response.data.toString();
   }
 
-  /// 获取关于信息
   Future<AboutInfo> getAboutInfo() async {
     final response = await _dio.get('/api/v1/assets/about');
     return AboutInfo.fromJson(response.data);
   }
 }
 
-/// 关于信息模型
 class AboutInfo {
   final String name;
   final String version;

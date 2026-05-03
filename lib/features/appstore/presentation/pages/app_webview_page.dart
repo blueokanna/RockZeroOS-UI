@@ -9,7 +9,6 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../../../core/models/api_models.dart';
 
-/// WebView page for displaying installed Docker apps
 class AppWebViewPage extends ConsumerStatefulWidget {
   final DockerApp app;
   final String baseUrl;
@@ -38,7 +37,7 @@ class _AppWebViewPageState extends ConsumerState<AppWebViewPage> {
   @override
   void initState() {
     super.initState();
-    // Delay initialization to ensure widget is fully mounted
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initWebView();
     });
@@ -51,12 +50,11 @@ class _AppWebViewPageState extends ConsumerState<AppWebViewPage> {
   }
 
   String get _appUrl {
-    // Get the first available port mapping
     if (widget.app.ports.isEmpty) {
       return widget.baseUrl;
     }
     final port = widget.app.ports.first.hostPort;
-    // Extract host from baseUrl
+
     final uri = Uri.parse(widget.baseUrl);
     return '${uri.scheme}://${uri.host}:$port';
   }
@@ -114,7 +112,7 @@ class _AppWebViewPageState extends ConsumerState<AppWebViewPage> {
             onWebResourceError: (error) {
               debugPrint(
                   'WebView error: ${error.errorCode} - ${error.description}');
-              // Only show error for main frame errors
+
               if ((error.isForMainFrame ?? false) && mounted) {
                 setState(() {
                   _error = _getErrorMessage(error);
@@ -136,13 +134,12 @@ class _AppWebViewPageState extends ConsumerState<AppWebViewPage> {
             },
             onNavigationRequest: (request) {
               debugPrint('Navigation request: ${request.url}');
-              // Allow all navigation within the app
+
               return NavigationDecision.navigate;
             },
           ),
         );
 
-      // Set user agent to avoid mobile detection issues
       controller.setUserAgent(
           'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36');
 
@@ -150,7 +147,6 @@ class _AppWebViewPageState extends ConsumerState<AppWebViewPage> {
         _controller = controller;
       });
 
-      // Load the URL
       controller.loadRequest(Uri.parse(_appUrl)).catchError((e) {
         debugPrint('Error loading URL: $e');
         if (mounted) {
@@ -162,7 +158,6 @@ class _AppWebViewPageState extends ConsumerState<AppWebViewPage> {
         }
       });
 
-      // Set a timeout for initial load
       _initTimer = Timer(const Duration(seconds: 30), () {
         if (mounted && _isInitializing) {
           setState(() {
@@ -187,15 +182,15 @@ class _AppWebViewPageState extends ConsumerState<AppWebViewPage> {
 
   String _getErrorMessage(WebResourceError error) {
     switch (error.errorCode) {
-      case -2: // ERR_FAILED
+      case -2:
         return 'Connection failed. Make sure the app is running and accessible.';
-      case -6: // ERR_CONNECTION_REFUSED
+      case -6:
         return 'Connection refused. The app may not be running on port ${widget.app.ports.isNotEmpty ? widget.app.ports.first.hostPort : "unknown"}.';
-      case -7: // ERR_CONNECTION_TIMED_OUT
+      case -7:
         return 'Connection timed out. The app is not responding.';
-      case -105: // ERR_NAME_NOT_RESOLVED
+      case -105:
         return 'Could not resolve host. Check your network connection.';
-      case -106: // ERR_INTERNET_DISCONNECTED
+      case -106:
         return 'No internet connection.';
       default:
         final desc = error.description;

@@ -71,7 +71,6 @@ class AudioPlayerState {
   bool get hasAudio => currentUrl != null && currentUrl!.isNotEmpty;
 }
 
-/// Background audio handler for system media controls & notification
 class RockZeroAudioHandler extends BaseAudioHandler with SeekHandler {
   AudioPlayer _player;
   final List<StreamSubscription> _subs = [];
@@ -80,7 +79,6 @@ class RockZeroAudioHandler extends BaseAudioHandler with SeekHandler {
     _bindPlayer();
   }
 
-  /// Rebind to a new AudioPlayer instance (e.g. after stop→play cycle)
   void rebindPlayer(AudioPlayer newPlayer) {
     for (final sub in _subs) {
       sub.cancel();
@@ -91,7 +89,6 @@ class RockZeroAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   void _bindPlayer() {
-    // Forward player state to audio_service
     _subs.add(_player.playbackEventStream.listen((event) {
       final playing = _player.playing;
       playbackState.add(playbackState.value.copyWith(
@@ -164,12 +161,8 @@ class RockZeroAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 }
 
-/// Singleton holder for the audio handler
 RockZeroAudioHandler? _globalAudioHandler;
 
-/// Whether the current platform supports AudioService (system media controls).
-/// AudioService requires platform-specific setup; on desktop (Windows/Linux)
-/// it may fail or behave unexpectedly, so we guard initialization.
 bool get _supportsAudioService {
   if (kIsWeb) return false;
   return Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
@@ -178,7 +171,6 @@ bool get _supportsAudioService {
 Future<RockZeroAudioHandler?> _getOrCreateHandler(AudioPlayer player) async {
   if (!_supportsAudioService) return null;
   if (_globalAudioHandler != null) {
-    // Rebind the existing handler to the new player instance
     _globalAudioHandler!.rebindPlayer(player);
     return _globalAudioHandler!;
   }
@@ -195,7 +187,7 @@ Future<RockZeroAudioHandler?> _getOrCreateHandler(AudioPlayer player) async {
     );
   } catch (e) {
     debugPrint('[AudioPlayerService] AudioService.init() failed: $e');
-    // On platforms where AudioService isn't available, continue without it
+
     _globalAudioHandler = null;
   }
   return _globalAudioHandler;
@@ -269,7 +261,6 @@ class AudioPlayerService extends Notifier<AudioPlayerState> {
 
       _audioPlayer = AudioPlayer();
 
-      // Initialize background audio handler
       _audioHandler = await _getOrCreateHandler(_audioPlayer!);
 
       final headers = <String, String>{};
@@ -316,7 +307,6 @@ class AudioPlayerService extends Notifier<AudioPlayerState> {
           .setUrl(streamUrl, headers: headers)
           .timeout(const Duration(seconds: 30));
 
-      // Set media item for notification display
       _audioHandler?.mediaItem.add(MediaItem(
         id: streamUrl,
         title: fileName,
@@ -386,7 +376,7 @@ class AudioPlayerService extends Notifier<AudioPlayerState> {
     _subscriptions.add(_audioPlayer!.durationStream.listen((duration) {
       if (duration != null) {
         state = state.copyWith(duration: duration);
-        // Update notification duration
+
         final item = _audioHandler?.mediaItem.value;
         if (item != null) {
           _audioHandler?.mediaItem.add(item.copyWith(duration: duration));
@@ -504,7 +494,7 @@ class AudioPlayerService extends Notifier<AudioPlayerState> {
     await _audioPlayer?.stop();
     await _audioPlayer?.dispose();
     _audioPlayer = null;
-    // Don't null out _audioHandler - it's a singleton
+
     state = const AudioPlayerState();
   }
 

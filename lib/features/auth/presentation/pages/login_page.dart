@@ -33,7 +33,6 @@ class _LoginPageState extends ConsumerState<LoginPage>
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
 
-    // 延迟触发生物识别，确保页面完全加载
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future.delayed(const Duration(milliseconds: 300), () {
         if (mounted) {
@@ -91,19 +90,16 @@ class _LoginPageState extends ConsumerState<LoginPage>
       );
 
       if (authenticated && mounted) {
-        // Biometric success - proceed with stored credentials or session
         final success =
             await ref.read(authStateProvider.notifier).loginWithBiometric();
 
         if (success && mounted) {
-          // Use pushReplacementNamed instead of go to prevent back navigation loop
-          // and ensure proper state refresh
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
               context.go('/dashboard');
             }
           });
-          return; // Exit early to prevent showing error
+          return;
         } else if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -164,7 +160,6 @@ class _LoginPageState extends ConsumerState<LoginPage>
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Logo with pulse animation
                     Center(
                       child: AnimatedBuilder(
                         animation: _pulseController,
@@ -267,8 +262,6 @@ class _LoginPageState extends ConsumerState<LoginPage>
                         ).animate().fadeIn(delay: 100.ms, duration: 200.ms),
                       ),
                     const SizedBox(height: 28),
-
-                    // Glass card wrapping the form
                     DynamicColorCard(
                       padding: const EdgeInsets.all(24),
                       borderRadius: BorderRadius.circular(24),
@@ -489,8 +482,6 @@ class _LoginPageState extends ConsumerState<LoginPage>
                       ),
                     ),
                     const SizedBox(height: 20),
-
-                    // Register Link
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -506,10 +497,7 @@ class _LoginPageState extends ConsumerState<LoginPage>
                         ),
                       ],
                     ).animate().fadeIn(delay: 200.ms, duration: 200.ms),
-
                     const SizedBox(height: 16),
-
-                    // Back to Discovery
                     OutlinedButton.icon(
                       onPressed: () => context.go('/discover'),
                       icon: const Icon(Icons.arrow_back_rounded),

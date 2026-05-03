@@ -492,12 +492,10 @@ class _DiskCard extends ConsumerWidget {
   }
 
   void _showMountDialog(BuildContext context, WidgetRef ref) {
-    // 检查磁盘是否需要初始化
     final fs = disk.fileSystem.trim().toLowerCase();
     final needsInitialization = fs.isEmpty || fs == 'unknown';
 
     if (needsInitialization) {
-      // 磁盘没有文件系统，需要先初始化
       showDialog(
         context: context,
         builder: (dialogContext) => AlertDialog(
@@ -580,7 +578,6 @@ class _DiskCard extends ConsumerWidget {
       return;
     }
 
-    // 磁盘已有文件系统，显示挂载对话框
     final mountPointController = TextEditingController(
       text: '/mnt/${disk.name}',
     );
@@ -781,7 +778,6 @@ class _DiskCard extends ConsumerWidget {
     String fileSystem,
     String label,
   ) async {
-    // 显示进度对话框
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -812,14 +808,14 @@ class _DiskCard extends ConsumerWidget {
       );
 
       if (!context.mounted) return;
-      Navigator.pop(context); // 关闭进度对话框
+      Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('磁盘初始化成功')),
       );
       ref.invalidate(diskListProvider);
     } catch (e) {
       if (!context.mounted) return;
-      Navigator.pop(context); // 关闭进度对话框
+      Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('初始化失败: $e')),
       );
@@ -932,9 +928,7 @@ class _DiskCard extends ConsumerWidget {
   }
 
   void _showFormatDialog(BuildContext context, WidgetRef ref) {
-    // 检查磁盘是否已挂载
     if (disk.isMounted) {
-      // 磁盘已挂载，需要先卸载
       showDialog(
         context: context,
         builder: (dialogContext) => AlertDialog(
@@ -999,7 +993,7 @@ class _DiskCard extends ConsumerWidget {
             FilledButton.icon(
               onPressed: () {
                 Navigator.pop(dialogContext);
-                // 先卸载，然后显示格式化对话框
+
                 _unmountAndFormat(context, ref);
               },
               icon: const Icon(Icons.eject),
@@ -1011,12 +1005,10 @@ class _DiskCard extends ConsumerWidget {
       return;
     }
 
-    // 磁盘未挂载，直接显示格式化对话框
     _showFormatOptionsDialog(context, ref);
   }
 
   Future<void> _unmountAndFormat(BuildContext context, WidgetRef ref) async {
-    // 显示卸载进度
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1037,21 +1029,18 @@ class _DiskCard extends ConsumerWidget {
       await api.unmountDisk(disk.devicePath);
 
       if (!context.mounted) return;
-      Navigator.pop(context); // 关闭进度对话框
+      Navigator.pop(context);
 
-      // 刷新磁盘列表
       ref.invalidate(diskListProvider);
 
-      // 等待一下让状态更新
       await Future.delayed(const Duration(milliseconds: 500));
 
-      // 显示格式化对话框
       if (context.mounted) {
         _showFormatOptionsDialog(context, ref);
       }
     } catch (e) {
       if (!context.mounted) return;
-      Navigator.pop(context); // 关闭进度对话框
+      Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('卸载失败: $e')),
       );
@@ -1176,7 +1165,6 @@ class _DiskCard extends ConsumerWidget {
     String label,
     bool quick,
   ) async {
-    // 显示进度对话框
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1200,7 +1188,6 @@ class _DiskCard extends ConsumerWidget {
     try {
       final api = ref.read(apiServiceProvider);
 
-      // 使用 initializeDisk 而不是 formatDisk，因为它会创建分区表和格式化
       await api.initializeDisk(
         device: disk.devicePath,
         fileSystem: fileSystem,
@@ -1209,7 +1196,7 @@ class _DiskCard extends ConsumerWidget {
       );
 
       if (!context.mounted) return;
-      Navigator.pop(context); // 关闭进度对话框
+      Navigator.pop(context);
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1219,14 +1206,12 @@ class _DiskCard extends ConsumerWidget {
         ),
       );
 
-      // 等待文件系统信息更新
       await Future.delayed(const Duration(seconds: 3));
 
-      // 刷新磁盘列表以显示新的文件系统
       ref.invalidate(diskListProvider);
     } catch (e) {
       if (!context.mounted) return;
-      Navigator.pop(context); // 关闭进度对话框
+      Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('格式化失败: $e'),
@@ -1237,7 +1222,6 @@ class _DiskCard extends ConsumerWidget {
   }
 
   Future<void> _checkHealth(BuildContext context, WidgetRef ref) async {
-    // Show loading dialog
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1258,12 +1242,12 @@ class _DiskCard extends ConsumerWidget {
       final response = await api.checkDiskHealth(disk.devicePath);
 
       if (!context.mounted) return;
-      Navigator.pop(context); // Close loading dialog
+      Navigator.pop(context);
 
       _showHealthResultDialog(context, response);
     } catch (e) {
       if (!context.mounted) return;
-      Navigator.pop(context); // Close loading dialog
+      Navigator.pop(context);
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Failed to check health: $e')));

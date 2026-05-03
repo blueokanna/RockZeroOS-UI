@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/services/download_manager.dart';
 
-/// Widget to display download/upload progress list
 class DownloadListWidget extends ConsumerWidget {
   final bool showUploads;
   final bool showDownloads;
@@ -55,7 +54,6 @@ class DownloadListWidget extends ConsumerWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Header
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
             child: Row(
@@ -104,7 +102,6 @@ class DownloadListWidget extends ConsumerWidget {
               ],
             ),
           ),
-          // Active transfers (max 3)
           ...activeDownloads.take(3).map((task) => _DownloadTaskTile(
                 task: task,
                 compact: compact,
@@ -162,7 +159,6 @@ class _DownloadTaskTile extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Row(
         children: [
-          // Icon
           Container(
             width: 40,
             height: 40,
@@ -177,7 +173,6 @@ class _DownloadTaskTile extends ConsumerWidget {
             ),
           ),
           const SizedBox(width: 12),
-          // Info
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -228,7 +223,6 @@ class _DownloadTaskTile extends ConsumerWidget {
               ],
             ),
           ),
-          // Actions
           if (task.status == DownloadStatus.downloading)
             IconButton(
               icon: const Icon(Icons.pause_rounded, size: 20),
@@ -305,7 +299,6 @@ class _UploadTaskTile extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Row(
         children: [
-          // Icon
           Container(
             width: 40,
             height: 40,
@@ -320,7 +313,6 @@ class _UploadTaskTile extends ConsumerWidget {
             ),
           ),
           const SizedBox(width: 12),
-          // Info
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -360,7 +352,6 @@ class _UploadTaskTile extends ConsumerWidget {
               ],
             ),
           ),
-          // Cancel button
           IconButton(
             icon: Icon(Icons.close_rounded, size: 20, color: colorScheme.error),
             onPressed: () => ref
@@ -385,7 +376,6 @@ class _FullTransferList extends ConsumerWidget {
 
     return Column(
       children: [
-        // Handle
         Container(
           margin: const EdgeInsets.only(top: 12),
           width: 40,
@@ -395,7 +385,6 @@ class _FullTransferList extends ConsumerWidget {
             borderRadius: BorderRadius.circular(2),
           ),
         ),
-        // Header
         Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
@@ -417,7 +406,6 @@ class _FullTransferList extends ConsumerWidget {
             ],
           ),
         ),
-        // List
         Expanded(
           child: ListView(
             controller: scrollController,
@@ -472,7 +460,6 @@ class _FullTransferList extends ConsumerWidget {
   }
 }
 
-/// Floating download indicator button
 class DownloadIndicatorButton extends ConsumerWidget {
   const DownloadIndicatorButton({super.key});
 
@@ -484,7 +471,6 @@ class DownloadIndicatorButton extends ConsumerWidget {
     final activeCount = state.activeDownloads + state.activeUploads;
     if (activeCount == 0) return const SizedBox.shrink();
 
-    // Calculate overall progress
     double totalProgress = 0;
     int count = 0;
     for (final d in state.downloads) {

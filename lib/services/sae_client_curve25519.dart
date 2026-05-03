@@ -1,5 +1,3 @@
-// ignore_for_file: constant_identifier_names
-
 import 'dart:convert';
 import 'dart:math';
 
@@ -8,9 +6,9 @@ import 'package:flutter/foundation.dart';
 import 'package:thirds/blake3.dart' as blake3;
 
 class SaeClientCurve25519 {
-  static const int GROUP_ID = 19;
-  static const int SAE_MAX_PWE_LOOP = 40;
-  static const int SAE_PWE_OFFSET_ITERATIONS = 8;
+  static const int groupId = 19;
+  static const int saeMaxPweLoop = 40;
+  static const int saePweOffsetIterations = 8;
 
   final Uint8List password;
   final Uint8List _deviceIdSelf32;
@@ -83,7 +81,7 @@ class SaeClientCurve25519 {
     _committed = true;
 
     return {
-      'group_id': GROUP_ID,
+      'group_id': groupId,
       'scalar': base64Encode(_scalarToBytes(_scalar!)),
       'element': base64Encode(_pointToBytes(_element!)),
     };
@@ -95,9 +93,9 @@ class SaeClientCurve25519 {
     }
 
     final groupId = peerCommit['group_id'] as int;
-    if (groupId != GROUP_ID) {
+    if (groupId != SaeClientCurve25519.groupId) {
       throw ArgumentError(
-          'Unsupported group ID: $groupId (expected $GROUP_ID)');
+          'Unsupported group ID: $groupId (expected ${SaeClientCurve25519.groupId})');
     }
 
     final peerScalarBytes = base64Decode(peerCommit['scalar'] as String);
@@ -185,7 +183,7 @@ class SaeClientCurve25519 {
       id2 = _deviceIdSelf32;
     }
 
-    for (int counter = 1; counter <= SAE_MAX_PWE_LOOP; counter++) {
+    for (int counter = 1; counter <= saeMaxPweLoop; counter++) {
       final initialHash = _blake3Hash([
         ...id1,
         ...id2,
@@ -194,7 +192,7 @@ class SaeClientCurve25519 {
           ..buffer.asByteData().setInt32(0, counter, Endian.little),
       ]);
 
-      for (int offset = 0; offset < SAE_PWE_OFFSET_ITERATIONS; offset++) {
+      for (int offset = 0; offset < saePweOffsetIterations; offset++) {
         Uint8List seed;
         if (offset == 0) {
           seed = initialHash;

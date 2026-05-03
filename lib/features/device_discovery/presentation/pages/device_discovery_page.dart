@@ -41,7 +41,6 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
   Future<void> _connectToDevice(DiscoveredDevice device) async {
     final service = ref.read(deviceDiscoveryServiceProvider);
 
-    // Show connecting dialog
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -60,7 +59,7 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
     final success = await service.testConnection(device);
 
     if (mounted) {
-      Navigator.of(context).pop(); // Close dialog
+      Navigator.of(context).pop();
 
       if (success) {
         ref.read(connectedDeviceProvider.notifier).setDevice(device);
@@ -80,16 +79,13 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
     final input = _manualIpController.text.trim();
     if (input.isEmpty) return;
 
-    // 解析用户输入
     String ip;
     int? port;
 
-    // 获取端口输入
     final portInput = _portController.text.trim();
     final customPort = int.tryParse(portInput);
 
     if (input.startsWith('http://') || input.startsWith('https://')) {
-      // 完整URL格式 - 直接使用指定的协议
       try {
         final uri = Uri.parse(input);
         ip = uri.host;
@@ -119,17 +115,14 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
         return;
       }
     } else if (input.contains(':')) {
-      // IP:端口格式
       final parts = input.split(':');
       ip = parts[0];
       port = int.tryParse(parts[1]) ?? customPort;
     } else {
-      // 纯IP格式 - 使用端口输入框的值
       ip = input;
       port = customPort;
     }
 
-    // 显示连接中对话框
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -150,12 +143,11 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
       ),
     );
 
-    // 自动探测 HTTP/HTTPS
     final service = ref.read(deviceDiscoveryServiceProvider);
     final device = await service.autoDetectDevice(ip, port: port);
 
     if (mounted) {
-      Navigator.of(context).pop(); // 关闭对话框
+      Navigator.of(context).pop();
 
       if (device != null) {
         ref.read(connectedDeviceProvider.notifier).setDevice(device);
@@ -191,7 +183,6 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // Animated Logo
                     AnimatedBuilder(
                       animation: _pulseController,
                       builder: (context, child) {
@@ -232,8 +223,6 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
                         .animate()
                         .scale(duration: 400.ms, curve: Curves.elasticOut),
                     const SizedBox(height: 32),
-
-                    // Title
                     Text(
                       'Discover RockZero Devices',
                       style: textTheme.headlineSmall?.copyWith(
@@ -249,7 +238,6 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
                       ),
                       textAlign: TextAlign.center,
                     ).animate().fadeIn(delay: 300.ms),
-
                     if (discoveryState.localIp != null) ...[
                       const SizedBox(height: 8),
                       Chip(
@@ -257,10 +245,7 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
                         label: Text('Your IP: ${discoveryState.localIp}'),
                       ).animate().fadeIn(delay: 400.ms),
                     ],
-
                     const SizedBox(height: 32),
-
-                    // Scanning indicator
                     if (discoveryState.isScanning)
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -282,10 +267,7 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
                           ),
                         ],
                       ).animate().fadeIn(),
-
                     const SizedBox(height: 16),
-
-                    // Device List
                     if (discoveryState.devices.isNotEmpty) ...[
                       Text(
                         'Found ${discoveryState.devices.length} device(s)',
@@ -336,10 +318,7 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
                         ),
                       ).animate().fadeIn(delay: 500.ms),
                     ],
-
                     const SizedBox(height: 24),
-
-                    // Manual Connection
                     if (_showManualInput) ...[
                       Card(
                         child: Padding(
@@ -407,10 +386,7 @@ class _DeviceDiscoveryPageState extends ConsumerState<DeviceDiscoveryPage>
                         label: const Text('Enter IP manually'),
                       ).animate().fadeIn(delay: 600.ms),
                     ],
-
                     const SizedBox(height: 16),
-
-                    // Refresh Button
                     OutlinedButton.icon(
                       onPressed: discoveryState.isScanning
                           ? null
@@ -522,7 +498,6 @@ class _DeviceCard extends StatelessWidget {
   }
 
   Widget _buildDeviceIcon(ColorScheme colorScheme) {
-    // 优先使用服务端提供的图标URL
     if (device.fullIconUrl != null) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(8),
@@ -532,7 +507,6 @@ class _DeviceCard extends StatelessWidget {
           height: 48,
           fit: BoxFit.contain,
           errorBuilder: (context, error, stackTrace) {
-            // 网络图标加载失败，使用本地图标
             return _buildLocalIcon(colorScheme);
           },
           loadingBuilder: (context, child, loadingProgress) {
@@ -555,7 +529,6 @@ class _DeviceCard extends StatelessWidget {
       );
     }
 
-    // 使用本地图标
     return _buildLocalIcon(colorScheme);
   }
 
@@ -570,7 +543,6 @@ class _DeviceCard extends StatelessWidget {
           height: 40,
           fit: BoxFit.contain,
           errorBuilder: (context, error, stackTrace) {
-            // 本地图标也加载失败，使用默认图标
             return Icon(Icons.dns,
                 color: colorScheme.onPrimaryContainer, size: 32);
           },

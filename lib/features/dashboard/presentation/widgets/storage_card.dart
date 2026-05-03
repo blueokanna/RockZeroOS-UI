@@ -7,7 +7,6 @@ import '../../../../core/theme/app_theme.dart';
 import '../pages/dashboard_page.dart';
 import '../../../storage/presentation/providers/disk_platform_capabilities_provider.dart';
 
-// Original StorageCard for backward compatibility
 class StorageCard extends StatelessWidget {
   final AsyncValue<StorageInfo?> storageInfo;
 
@@ -218,7 +217,6 @@ class StorageCard extends StatelessWidget {
   }
 }
 
-// New TotalStorageCard that shows ALL storage combined
 class TotalStorageCard extends StatelessWidget {
   final AsyncValue<TotalStorageInfo?> storageInfo;
   final AsyncValue<DiskPlatformCapabilities> diskCapabilities;
@@ -376,7 +374,6 @@ class TotalStorageCard extends StatelessWidget {
 
     return Column(
       children: [
-        // Main circular progress with improved design
         TweenAnimationBuilder<double>(
           tween: Tween(begin: 0, end: info.usagePercentage / 100),
           duration: M3Durations.long2,
@@ -433,8 +430,6 @@ class TotalStorageCard extends StatelessWidget {
           },
         ),
         const SizedBox(height: 20),
-
-        // Storage details with improved design
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -467,8 +462,6 @@ class TotalStorageCard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-
-        // Disk count badge with improved design
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(

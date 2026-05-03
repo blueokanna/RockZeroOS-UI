@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
@@ -17,7 +16,7 @@ class SecureHlsPlayer {
   final String jwtToken;
   static const int _requiredSaeGroup = 19;
 
-  Uint8List? _pmk; // Pairwise Master Key
+  Uint8List? _pmk;
   String? _sessionId;
   String? _password;
 

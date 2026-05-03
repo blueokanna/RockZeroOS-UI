@@ -5,10 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/services/download_manager.dart';
 
-/// SAE + AES 风格上传详情窗口 —— 带流水线加密动画和波浪进度条
-///
-/// Material Design 3 风格，显示每个文件的加密上传过程：
-/// SAE 握手 → AES-256 加密 → BLAKE3 校验 → 安全上传
 class UploadProgressSheet extends ConsumerStatefulWidget {
   const UploadProgressSheet({super.key});
 
@@ -34,7 +30,7 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
       vsync: this,
       duration: const Duration(milliseconds: 2200),
     )..repeat(reverse: true);
-    // Slower particle animation to reduce GPU load on mid-range SoCs
+
     _particleController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 4000),
@@ -75,7 +71,6 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
     final failedUploads =
         allUploads.where((u) => u.status == DownloadStatus.failed).toList();
 
-    // 计算整体进度
     double overallProgress = 0;
     if (allUploads.isNotEmpty) {
       final total = allUploads.length;
@@ -87,7 +82,6 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        // 桌面端检测：宽度 > 600 时使用紧凑布局
         final isDesktop = constraints.maxWidth > 600;
 
         return Container(
@@ -102,7 +96,6 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // 拖拽指示条 — 仅移动端显示
                 if (!isDesktop)
                   Center(
                     child: Container(
@@ -117,20 +110,14 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
                   )
                 else
                   const SizedBox(height: 12),
-
-                // 标题区
                 _buildHeader(
                     colorScheme, activeUploads.length, overallProgress),
-
                 SizedBox(height: isDesktop ? 8 : 12),
-
-                // 桌面端：将进度条 + 统计 + 管道放在一行
                 if (isDesktop) ...[
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: Row(
                       children: [
-                        // 波浪进度条
                         Expanded(
                           flex: 3,
                           child: _WaveProgressBar(
@@ -141,7 +128,6 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
                           ),
                         ),
                         const SizedBox(width: 16),
-                        // 统计概览
                         _StatChip(
                           label: '进行中',
                           count: activeUploads.length,
@@ -163,13 +149,11 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
                     ),
                   ),
                   const SizedBox(height: 8),
-                  // 加密管道 — 桌面端紧凑
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: _buildEncryptionPipeline(colorScheme),
                   ),
                 ] else ...[
-                  // 移动端：保持纵向堆叠
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: _WaveProgressBar(
@@ -209,10 +193,7 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
                     child: _buildEncryptionPipeline(colorScheme),
                   ),
                 ],
-
                 SizedBox(height: isDesktop ? 8 : 16),
-
-                // 文件列表
                 Flexible(
                   child: allUploads.isEmpty
                       ? _buildEmptyState(colorScheme)
@@ -234,9 +215,6 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
     );
   }
 
-  // --------------------------------------------------------------------------
-  // Header — 盾牌 + 脉冲光效
-  // --------------------------------------------------------------------------
   Widget _buildHeader(
       ColorScheme colorScheme, int activeCount, double progress) {
     return AnimatedBuilder(
@@ -293,7 +271,6 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
                   ],
                 ),
               ),
-              // 关闭按钮
               IconButton(
                 icon: const Icon(Icons.close_rounded, color: Colors.white54),
                 onPressed: () => Navigator.pop(context),
@@ -305,9 +282,6 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
     );
   }
 
-  // --------------------------------------------------------------------------
-  // 加密管道 — 4 步紧凑卡片
-  // --------------------------------------------------------------------------
   Widget _buildEncryptionPipeline(ColorScheme colorScheme) {
     const steps = [
       _PipeStep(Icons.vpn_key_rounded, 'SAE 握手', Colors.orangeAccent),
@@ -356,9 +330,6 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
     return (math.sin(shifted * math.pi * 2) * 0.5 + 0.5).clamp(0.0, 1.0);
   }
 
-  // --------------------------------------------------------------------------
-  // 单个上传文件项
-  // --------------------------------------------------------------------------
   Widget _buildUploadItem(
       UploadTask upload, ColorScheme colorScheme, int index) {
     final isActive = upload.status == DownloadStatus.downloading ||
@@ -451,9 +422,6 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
     );
   }
 
-  // --------------------------------------------------------------------------
-  // 空状态
-  // --------------------------------------------------------------------------
   Widget _buildEmptyState(ColorScheme colorScheme) {
     return Center(
       child: Padding(
@@ -484,10 +452,6 @@ class _UploadProgressSheetState extends ConsumerState<UploadProgressSheet>
     return '${(bytes / 1073741824).toStringAsFixed(2)}GB';
   }
 }
-
-// =============================================================================
-// 波浪进度条 — Material Design 3 风格
-// =============================================================================
 
 class _WaveProgressBar extends StatelessWidget {
   final double progress;
@@ -539,7 +503,6 @@ class _WaveProgressPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 背景轨道
     final bgPaint = Paint()
       ..color = color.withValues(alpha: 0.1)
       ..style = PaintingStyle.fill;
@@ -553,7 +516,6 @@ class _WaveProgressPainter extends CustomPainter {
 
     final fillWidth = size.width * progress.clamp(0.0, 1.0);
 
-    // 波浪裁剪区域
     canvas.save();
     canvas.clipRRect(
       RRect.fromRectAndRadius(
@@ -562,7 +524,6 @@ class _WaveProgressPainter extends CustomPainter {
       ),
     );
 
-    // 绘制渐变填充
     final fillPaint = Paint()
       ..shader = LinearGradient(
         colors: [
@@ -572,7 +533,6 @@ class _WaveProgressPainter extends CustomPainter {
       ).createShader(Offset.zero & size);
     canvas.drawRect(Offset.zero & size, fillPaint);
 
-    // 绘制波浪纹理
     final wavePaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.15)
       ..style = PaintingStyle.fill;
@@ -601,10 +561,6 @@ class _WaveProgressPainter extends CustomPainter {
   bool shouldRepaint(_WaveProgressPainter oldDelegate) =>
       oldDelegate.progress != progress || oldDelegate.wavePhase != wavePhase;
 }
-
-// =============================================================================
-// 加密管道步骤芯片
-// =============================================================================
 
 class _PipeStep {
   final IconData icon;
@@ -649,10 +605,6 @@ class _PipeStepChip extends StatelessWidget {
     );
   }
 }
-
-// =============================================================================
-// 统计芯片
-// =============================================================================
 
 class _StatChip extends StatelessWidget {
   final String label;

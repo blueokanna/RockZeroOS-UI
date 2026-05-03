@@ -6,7 +6,6 @@ import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
 import '../../../../core/theme/app_theme.dart';
 
-/// Port configuration for app installation
 class _PortConfig {
   int containerPort;
   int hostPort;
@@ -25,7 +24,6 @@ class _PortConfig {
       );
 }
 
-/// Volume configuration for app installation
 class _VolumeConfig {
   String containerPath;
   String hostPath;
@@ -44,7 +42,6 @@ class _VolumeConfig {
       );
 }
 
-/// Environment variable configuration
 class _EnvConfig {
   String key;
   String value;
@@ -55,7 +52,6 @@ class _EnvConfig {
   EnvVar toEnvVar() => EnvVar(key: key, value: value, required: required);
 }
 
-/// Advanced app installation configuration dialog
 class AppInstallDialog extends ConsumerStatefulWidget {
   final AppStoreItem app;
 
@@ -123,7 +119,6 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Header with smooth animation
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -161,7 +156,6 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
                       ],
                     ),
                   ),
-                  // Close button
                   IconButton(
                     onPressed: () => Navigator.pop(context),
                     icon: const Icon(Icons.close_rounded),
@@ -175,15 +169,11 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
                   duration: M3Durations.medium2,
                   curve: M3Curves.emphasizedDecelerate,
                 ),
-
-            // Content
             Flexible(
               child: _isInstalling
                   ? _buildInstallingView(colorScheme)
                   : _buildConfigView(colorScheme, textTheme),
             ),
-
-            // Actions
             if (!_isInstalling)
               Container(
                 padding: const EdgeInsets.all(16),
@@ -226,13 +216,10 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Description
           Text(widget.app.description).animate().fadeIn(
               duration: M3Durations.medium2,
               curve: M3Curves.emphasizedDecelerate),
           const SizedBox(height: 20),
-
-          // Ports section
           _buildSectionHeader(
             colorScheme,
             textTheme,
@@ -256,8 +243,6 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
             label: const Text('Add Port'),
           ),
           const SizedBox(height: 16),
-
-          // Volumes section
           _buildSectionHeader(
             colorScheme,
             textTheme,
@@ -283,8 +268,6 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
             label: const Text('Add Volume'),
           ),
           const SizedBox(height: 16),
-
-          // Environment variables
           if (_envVars.isNotEmpty) ...[
             _buildSectionHeader(
               colorScheme,
@@ -305,8 +288,6 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
                 .slideX(begin: -0.02, curve: M3Curves.emphasized)),
             const SizedBox(height: 16),
           ],
-
-          // Resource limits
           _buildSectionHeader(
             colorScheme,
             textTheme,
@@ -322,8 +303,6 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
               duration: M3Durations.medium2,
               curve: M3Curves.emphasizedDecelerate),
           const SizedBox(height: 16),
-
-          // Auto start option
           Card(
             elevation: 0,
             color: colorScheme.surfaceContainerLow,
@@ -575,7 +554,6 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
   Widget _buildResourceLimits(ColorScheme colorScheme) {
     return Column(
       children: [
-        // Memory limit
         Row(
           children: [
             const Text('Memory Limit:'),
@@ -602,7 +580,6 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
           ],
         ),
         const SizedBox(height: 12),
-        // CPU limit
         Row(
           children: [
             const Text('CPU Limit:'),
@@ -715,7 +692,6 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
   }
 
   Future<void> _startInstall() async {
-    // Validate required env vars
     for (final env in _envVars) {
       if (env.required && env.value.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -742,7 +718,6 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
         _installStatus = 'Pulling Docker image...';
       });
 
-      // Add a small delay to show progress
       await Future.delayed(const Duration(milliseconds: 500));
 
       setState(() {
@@ -764,12 +739,10 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
         _installStatus = 'Starting container...';
       });
 
-      // If autoStart is enabled, try to start the container
       if (_autoStart) {
         try {
           await api.startApp(widget.app.name);
         } catch (e) {
-          // Container created but failed to start - still consider it a partial success
           debugPrint('Failed to auto-start container: $e');
         }
       }
@@ -787,7 +760,6 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
     } catch (e) {
       String errorMessage = e.toString();
 
-      // Parse common error messages
       if (errorMessage.contains('port is already allocated') ||
           errorMessage.contains('address already in use')) {
         errorMessage =
@@ -810,12 +782,11 @@ class _AppInstallDialogState extends ConsumerState<AppInstallDialog> {
         errorMessage =
             'Connection timeout. The server may be busy pulling the image. Please try again later.';
       } else if (errorMessage.contains('DioException')) {
-        // Clean up Dio error messages
         final match = RegExp(r'Error:\s*(.+)').firstMatch(errorMessage);
         if (match != null) {
           errorMessage = match.group(1) ?? errorMessage;
         }
-        // Further cleanup
+
         if (errorMessage.contains('null')) {
           errorMessage =
               'Server error occurred. Please check the NAS logs for details.';

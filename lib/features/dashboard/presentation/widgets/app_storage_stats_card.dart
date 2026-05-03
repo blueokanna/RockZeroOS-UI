@@ -5,7 +5,6 @@ import 'package:flutter_animate/flutter_animate.dart';
 import '../../../../core/models/api_models.dart';
 import '../../../../core/network/api_service.dart';
 
-/// RockZeroOS 应用存储统计 Provider
 final appStorageStatsProvider = FutureProvider.autoDispose<AppStorageStats?>((
   ref,
 ) async {
@@ -19,14 +18,6 @@ final appStorageStatsProvider = FutureProvider.autoDispose<AppStorageStats?>((
   }
 });
 
-/// RockZeroOS 应用专用存储统计卡片
-///
-/// 显示应用实际占用的存储空间，包括：
-/// - 视频文件
-/// - HLS 缓存
-/// - 数据库
-/// - 日志
-/// - 临时文件
 class AppStorageStatsCard extends ConsumerWidget {
   const AppStorageStatsCard({super.key});
 
@@ -42,7 +33,6 @@ class AppStorageStatsCard extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header
             Row(
               children: [
                 Container(
@@ -92,7 +82,6 @@ class AppStorageStatsCard extends ConsumerWidget {
                     ],
                   ),
                 ),
-                // Refresh button
                 IconButton(
                   onPressed: () => ref.invalidate(appStorageStatsProvider),
                   icon: Icon(
@@ -104,7 +93,6 @@ class AppStorageStatsCard extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 20),
-            // Content
             statsAsync.when(
               data: (stats) {
                 if (stats == null) return _buildErrorState(context);
@@ -126,7 +114,6 @@ class AppStorageStatsCard extends ConsumerWidget {
 
     return Column(
       children: [
-        // Total app usage display
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(16),
@@ -193,10 +180,7 @@ class AppStorageStatsCard extends ConsumerWidget {
             ],
           ),
         ).animate().fadeIn(delay: 100.ms).slideY(begin: 0.05),
-
         const SizedBox(height: 16),
-
-        // Storage breakdown
         Container(
           decoration: BoxDecoration(
             color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
@@ -222,10 +206,7 @@ class AppStorageStatsCard extends ConsumerWidget {
             ],
           ),
         ),
-
         const SizedBox(height: 16),
-
-        // Auto-cleanup status (替代手动 Clean Cache / Clear Temp 按钮)
         _AutoCleanupStatusBanner(stats: stats),
       ],
     );
@@ -301,129 +282,6 @@ class AppStorageStatsCard extends ConsumerWidget {
     );
   }
 
-  // ignore: unused_element
-  Future<void> _showCleanupDialog(BuildContext context, WidgetRef ref) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        icon: const Icon(Icons.cleaning_services_rounded),
-        title: const Text('Clean HLS Cache'),
-        content: const Text(
-          'This will remove all cached HLS segments. '
-          'Videos will need to be re-transcoded on next playback.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Clean'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true || !context.mounted) return;
-
-    // Show loading
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Row(
-          children: [
-            SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(
-                  strokeWidth: 2, color: Colors.white),
-            ),
-            SizedBox(width: 12),
-            Text('Cleaning HLS cache...'),
-          ],
-        ),
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: 10),
-      ),
-    );
-
-    try {
-      final api = ref.read(apiServiceProvider);
-      await api.cleanupHlsCache();
-      ref.invalidate(appStorageStatsProvider);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✓ HLS cache cleaned successfully'),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to clean cache: $e'),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
-    }
-  }
-
-  // ignore: unused_element
-  Future<void> _clearTempFiles(BuildContext context, WidgetRef ref) async {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Row(
-          children: [
-            SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(
-                  strokeWidth: 2, color: Colors.white),
-            ),
-            SizedBox(width: 12),
-            Text('Clearing temp files...'),
-          ],
-        ),
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: 10),
-      ),
-    );
-
-    try {
-      final api = ref.read(apiServiceProvider);
-      await api.cleanupTempFiles();
-      ref.invalidate(appStorageStatsProvider);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✓ Temporary files cleared'),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to clear temp files: $e'),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
-    }
-  }
-
   String _formatBytes(int bytes) {
     if (bytes >= 1024 * 1024 * 1024 * 1024) {
       return '${(bytes / (1024 * 1024 * 1024 * 1024)).toStringAsFixed(2)} TB';
@@ -439,7 +297,6 @@ class AppStorageStatsCard extends ConsumerWidget {
   }
 }
 
-/// 存储明细行
 class _StorageBreakdownRow extends StatelessWidget {
   final StorageBreakdownItem item;
   final int totalSize;
@@ -460,7 +317,6 @@ class _StorageBreakdownRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       child: Row(
         children: [
-          // Icon
           Container(
             width: 36,
             height: 36,
@@ -475,7 +331,6 @@ class _StorageBreakdownRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          // Name and progress
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -499,7 +354,6 @@ class _StorageBreakdownRow extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 6),
-                // Progress bar
                 ClipRRect(
                   borderRadius: BorderRadius.circular(4),
                   child: LinearProgressIndicator(
@@ -535,12 +389,6 @@ class _StorageBreakdownRow extends StatelessWidget {
   }
 }
 
-/// 自动清理状态横幅（替代手动清理按钮）
-///
-/// 显示 2GB 阈值自动清理的实时状态，包括：
-/// - 当前缓存使用量和阈值进度条
-/// - 清理状态指示（健康/警告/清理中）
-/// - 下次检查倒计时
 class _AutoCleanupStatusBanner extends StatelessWidget {
   final AppStorageStats stats;
 
@@ -551,12 +399,10 @@ class _AutoCleanupStatusBanner extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
-    // 计算缓存使用量（HLS + Temp）
     final cacheUsage = stats.hlsCacheSize + stats.tempStorageSize;
-    const threshold = 2 * 1024 * 1024 * 1024; // 2 GB
+    const threshold = 2 * 1024 * 1024 * 1024;
     final usageRatio = (cacheUsage / threshold).clamp(0.0, 1.0);
 
-    // 状态颜色和图标
     final Color statusColor;
     final IconData statusIcon;
     final String statusText;
@@ -648,7 +494,6 @@ class _AutoCleanupStatusBanner extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          // 进度条
           ClipRRect(
             borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(

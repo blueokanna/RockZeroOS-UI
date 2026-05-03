@@ -2,8 +2,6 @@ import 'package:json_annotation/json_annotation.dart';
 
 part 'api_models.g.dart';
 
-// ============ Auth Models ============
-
 @JsonSerializable()
 class User {
   @JsonKey(defaultValue: '')
@@ -29,7 +27,6 @@ class User {
     try {
       return _$UserFromJson(json);
     } catch (e) {
-      // 如果解析失败，返回一个默认用户
       return User(
         id: json['id']?.toString() ?? '',
         username: json['username']?.toString() ?? '',
@@ -65,7 +62,6 @@ class TokenResponse {
     try {
       return _$TokenResponseFromJson(json);
     } catch (e) {
-      // 如果解析失败，返回一个空的 token 响应
       return TokenResponse(
         accessToken: json['access_token']?.toString() ?? '',
         refreshToken: json['refresh_token']?.toString() ?? '',
@@ -98,7 +94,6 @@ class AuthResponse {
     try {
       return _$AuthResponseFromJson(json);
     } catch (e) {
-      // 如果解析失败，返回一个错误响应
       return AuthResponse(
         success: false,
         message: 'Failed to parse response: $e',
@@ -124,9 +119,6 @@ class InviteCodeResponse {
   Map<String, dynamic> toJson() => _$InviteCodeResponseToJson(this);
 }
 
-// ============ ZKP Models (零知识证明) ============
-
-/// ZKP 密码证明数据
 @JsonSerializable()
 class ZkpPasswordProof {
   final String commitment;
@@ -147,7 +139,6 @@ class ZkpPasswordProof {
   Map<String, dynamic> toJson() => _$ZkpPasswordProofToJson(this);
 }
 
-/// 增强的 ZKP 证明
 @JsonSerializable()
 class EnhancedZkpProof {
   @JsonKey(name: 'schnorr_proof')
@@ -169,7 +160,6 @@ class EnhancedZkpProof {
   Map<String, dynamic> toJson() => _$EnhancedZkpProofToJson(this);
 }
 
-/// ZKP 证明响应
 @JsonSerializable()
 class ZkpProofResponse {
   final ZkpPasswordProof proof;
@@ -181,7 +171,6 @@ class ZkpProofResponse {
   Map<String, dynamic> toJson() => _$ZkpProofResponseToJson(this);
 }
 
-/// 增强 ZKP 证明响应
 @JsonSerializable()
 class EnhancedZkpProofResponse {
   final EnhancedZkpProof proof;
@@ -193,7 +182,6 @@ class EnhancedZkpProofResponse {
   Map<String, dynamic> toJson() => _$EnhancedZkpProofResponseToJson(this);
 }
 
-/// 密码强度响应
 @JsonSerializable()
 class PasswordStrengthResponse {
   final int entropy;
@@ -214,7 +202,6 @@ class PasswordStrengthResponse {
   Map<String, dynamic> toJson() => _$PasswordStrengthResponseToJson(this);
 }
 
-/// 范围证明数据
 @JsonSerializable()
 class RangeProofData {
   final String proof;
@@ -233,7 +220,6 @@ class RangeProofData {
   Map<String, dynamic> toJson() => _$RangeProofDataToJson(this);
 }
 
-/// 范围证明响应
 @JsonSerializable()
 class RangeProofResponse {
   final RangeProofData proof;
@@ -244,8 +230,6 @@ class RangeProofResponse {
       _$RangeProofResponseFromJson(json);
   Map<String, dynamic> toJson() => _$RangeProofResponseToJson(this);
 }
-
-// ============ File Models ============
 
 @JsonSerializable()
 class FileResponse {
@@ -288,8 +272,6 @@ class FileListResponse {
       _$FileListResponseFromJson(json);
   Map<String, dynamic> toJson() => _$FileListResponseToJson(this);
 }
-
-// ============ Media Models ============
 
 @JsonSerializable()
 class MediaResponse {
@@ -343,8 +325,6 @@ class MediaCodecInfo {
   Map<String, dynamic> toJson() => _$MediaCodecInfoToJson(this);
 }
 
-// ============ Widget Models ============
-
 @JsonSerializable()
 class WidgetResponse {
   final String id;
@@ -383,8 +363,6 @@ class WidgetResponse {
       _$WidgetResponseFromJson(json);
   Map<String, dynamic> toJson() => _$WidgetResponseToJson(this);
 }
-
-// ============ System Models ============
 
 @JsonSerializable()
 class SystemInfo {
@@ -680,8 +658,6 @@ class UsbDevice {
   Map<String, dynamic> toJson() => _$UsbDeviceToJson(this);
 }
 
-// ============ App Store Models ============
-
 @JsonSerializable()
 class AppStoreItem {
   final String id;
@@ -704,7 +680,7 @@ class AppStoreItem {
   final List<VolumeMapping> defaultVolumes;
   @JsonKey(name: 'required_env', defaultValue: [])
   final List<String> requiredEnv;
-  // 额外的元数据字段
+
   @JsonKey(defaultValue: null)
   final String? source;
   @JsonKey(defaultValue: null)
@@ -836,8 +812,6 @@ class EnvVar {
   factory EnvVar.fromJson(Map<String, dynamic> json) => _$EnvVarFromJson(json);
   Map<String, dynamic> toJson() => _$EnvVarToJson(this);
 }
-
-// ============ File Manager Models ============
 
 @JsonSerializable()
 class FileEntry {
@@ -990,7 +964,57 @@ class StorageRootBrowseResponse {
   Map<String, dynamic> toJson() => _$StorageRootBrowseResponseToJson(this);
 }
 
-// ============ File Preview Models ============
+class PrivateSpaceStatus {
+  final int itemCount;
+  final int encryptedBytes;
+  final String vaultPath;
+
+  PrivateSpaceStatus({
+    required this.itemCount,
+    required this.encryptedBytes,
+    required this.vaultPath,
+  });
+
+  factory PrivateSpaceStatus.fromJson(Map<String, dynamic> json) {
+    return PrivateSpaceStatus(
+      itemCount: json['item_count'] as int? ?? 0,
+      encryptedBytes: json['encrypted_bytes'] as int? ?? 0,
+      vaultPath: json['vault_path'] as String? ?? '',
+    );
+  }
+}
+
+class PrivateSpaceItem {
+  final String id;
+  final String originalPath;
+  final String relativePath;
+  final String fileName;
+  final int size;
+  final String encryptedAt;
+  final String pathHash;
+
+  PrivateSpaceItem({
+    required this.id,
+    required this.originalPath,
+    required this.relativePath,
+    required this.fileName,
+    required this.size,
+    required this.encryptedAt,
+    required this.pathHash,
+  });
+
+  factory PrivateSpaceItem.fromJson(Map<String, dynamic> json) {
+    return PrivateSpaceItem(
+      id: json['id'] as String? ?? '',
+      originalPath: json['original_path'] as String? ?? '',
+      relativePath: json['relative_path'] as String? ?? '',
+      fileName: json['file_name'] as String? ?? '',
+      size: json['size'] as int? ?? 0,
+      encryptedAt: json['encrypted_at'] as String? ?? '',
+      pathHash: json['path_hash'] as String? ?? '',
+    );
+  }
+}
 
 @JsonSerializable()
 class FilePreviewResponse {
@@ -1072,8 +1096,6 @@ class MediaFileInfo {
   }
 }
 
-// ============ Utility Extensions ============
-
 extension FileSizeFormatter on int {
   String toReadableSize() {
     if (this >= 1024 * 1024 * 1024) {
@@ -1128,8 +1150,6 @@ extension MediaTypeHelper on MediaResponse {
   bool get isAudio => mediaType == 'audio';
   bool get isImage => mediaType == 'image';
 }
-
-// ============ Storage Models (底层硬件访问) ============
 
 @JsonSerializable()
 class StorageDevice {
@@ -1192,7 +1212,6 @@ class StorageDevice {
       totalSize > 0 ? (usedSize / totalSize) * 100 : 0;
 }
 
-/// 外部存储统计信息（排除eMMC）
 @JsonSerializable()
 class ExternalStorageStats {
   @JsonKey(name: 'total_size')
@@ -1242,8 +1261,6 @@ class StorageStatsFormatted {
       _$StorageStatsFormattedFromJson(json);
   Map<String, dynamic> toJson() => _$StorageStatsFormattedToJson(this);
 }
-
-// ============ Docker Models ============
 
 @JsonSerializable()
 class DockerStatus {
@@ -1461,35 +1478,21 @@ class ComposeApp {
   bool get isRunning => status == 'running';
 }
 
-// ============ App Storage Stats ============
-
-/// RockZeroOS 应用专用存储统计
-///
-/// 显示 HLS 缓存、临时文件、日志、视频、数据库等的实际占用空间，
-/// 而不是整个分区的使用量。
 class AppStorageStats {
-  /// HLS 缓存大小（字节）
   final int hlsCacheSize;
 
-  /// 临时文件大小（字节）
   final int tempStorageSize;
 
-  /// 日志文件大小（字节）
   final int logSize;
 
-  /// 视频存储大小（字节）
   final int videoStorageSize;
 
-  /// 数据库文件大小（字节）
   final int databaseSize;
 
-  /// RockZeroOS 应用总占用（字节）
   final int totalAppUsage;
 
-  /// 可用空间（字节）
   final int availableSpace;
 
-  // 格式化值（MB/GB）
   final double hlsCacheSizeMb;
   final double tempStorageSizeMb;
   final double logSizeMb;
@@ -1557,42 +1560,40 @@ class AppStorageStats {
         'total_used_mb': totalUsedMb,
       };
 
-  /// 获取各项存储的详细信息列表
   List<StorageBreakdownItem> get breakdown => [
         StorageBreakdownItem(
           name: 'Video Files',
           icon: 'video_library',
           size: videoStorageSize,
-          color: 0xFF2196F3, // Blue
+          color: 0xFF2196F3,
         ),
         StorageBreakdownItem(
           name: 'HLS Cache',
           icon: 'cached',
           size: hlsCacheSize,
-          color: 0xFFFF9800, // Orange
+          color: 0xFFFF9800,
         ),
         StorageBreakdownItem(
           name: 'Database',
           icon: 'storage',
           size: databaseSize,
-          color: 0xFF4CAF50, // Green
+          color: 0xFF4CAF50,
         ),
         StorageBreakdownItem(
           name: 'Logs',
           icon: 'description',
           size: logSize,
-          color: 0xFF9C27B0, // Purple
+          color: 0xFF9C27B0,
         ),
         StorageBreakdownItem(
           name: 'Temp Files',
           icon: 'folder_open',
           size: tempStorageSize,
-          color: 0xFF607D8B, // Blue Grey
+          color: 0xFF607D8B,
         ),
       ];
 }
 
-/// 存储明细项
 class StorageBreakdownItem {
   final String name;
   final String icon;
@@ -1606,7 +1607,6 @@ class StorageBreakdownItem {
     required this.color,
   });
 
-  /// 格式化大小显示
   String get formattedSize {
     if (size >= 1024 * 1024 * 1024) {
       return '${(size / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';

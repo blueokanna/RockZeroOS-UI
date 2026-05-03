@@ -15,16 +15,14 @@ final storeAppsProvider = FutureProvider.autoDispose<List<AppStoreItem>>((
 ) async {
   final api = ref.read(apiServiceProvider);
   try {
-    // Add timeout to prevent infinite loading
     final apps = await api.listStoreApps().timeout(
-      const Duration(seconds: 180), // 增加超时到180秒
+      const Duration(seconds: 180),
       onTimeout: () {
         throw TimeoutException('App store request timed out');
       },
     );
     return apps;
   } catch (e) {
-    // Log the error and rethrow for the UI to handle
     debugPrint('Store apps fetch error: $e');
     rethrow;
   }
@@ -75,7 +73,6 @@ class _AppStorePageState extends ConsumerState<AppStorePage>
     ref.invalidate(storeAppsProvider);
     ref.invalidate(installedAppsProvider);
 
-    // 等待动画完成
     await Future.delayed(const Duration(milliseconds: 500));
 
     if (mounted) {
@@ -154,7 +151,6 @@ class _StoreTab extends ConsumerWidget {
           categories.putIfAbsent(app.category, () => []).add(app);
         }
 
-        // Sort categories
         final sortedCategories = categories.keys.toList()
           ..sort((a, b) {
             const order = [
@@ -203,7 +199,6 @@ class _StoreTab extends ConsumerWidget {
     WidgetRef ref,
     AppStoreItem app,
   ) async {
-    // Show advanced install dialog
     final result = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => install_dialog.AppInstallDialog(app: app),
@@ -343,7 +338,6 @@ class _InstalledTab extends ConsumerWidget {
     WidgetRef ref,
     DockerApp app,
   ) async {
-    // Get the base URL from the API client
     final baseUrl = ref.read(baseUrlProvider);
 
     Navigator.push(
@@ -539,8 +533,6 @@ class _InstalledTab extends ConsumerWidget {
   }
 }
 
-// ============ Widget Components ============
-
 class _CategorySection extends StatelessWidget {
   final String category;
   final List<AppStoreItem> apps;
@@ -596,7 +588,7 @@ class _CategorySection extends StatelessWidget {
           ),
         ),
         SizedBox(
-          height: 260, // Increased height to show more content
+          height: 260,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -674,7 +666,6 @@ class _StoreAppCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Icon and category row
               Row(
                 children: [
                   _AppIcon(iconUrl: app.icon, size: 52)
